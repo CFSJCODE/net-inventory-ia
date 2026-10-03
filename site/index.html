@@ -69,6 +69,7 @@
   .frame-bar span { margin-left: 12px; flex: 1; max-width: 340px; padding: 4px 12px; border-radius: 8px; background: #27272a; color: var(--muted); font: 12px var(--mono); text-align: left; }
 
   section { padding: 96px 0; }
+  section[id] { scroll-margin-top: 64px; }
   .eyebrow { color: var(--primary); font-weight: 600; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; }
   h2 { font-size: clamp(28px, 4vw, 42px); line-height: 1.15; letter-spacing: -.02em; margin: 10px 0 14px; }
   .section-head { max-width: 680px; margin-bottom: 48px; }
@@ -539,10 +540,10 @@
     </div>
 
     <div class="config-shot reveal">
-      <img src="screens/scan-config.webp" width="1440" height="250" alt="Card Scan da rede: campo Faixa de IP (CIDR) com 192.168.15.0/24, seletor Scan automático e botão Salvar">
-      <span class="marker" style="left: 13%; top: 50%;">1</span>
-      <span class="marker" style="left: 33%; top: 50%;">2</span>
-      <span class="marker" style="left: 44.7%; top: 50%;">3</span>
+      <img src="screens/scan-config.webp" width="1440" height="227" alt="Card Scan da rede: campo Faixa de IP (CIDR) com 192.168.15.0/24, seletor Scan automático e botão Salvar">
+      <span class="marker" style="left: 12.6%; top: 48%;">1</span>
+      <span class="marker" style="left: 32.6%; top: 48%;">2</span>
+      <span class="marker" style="left: 44.6%; top: 48%;">3</span>
     </div>
 
     <div class="config-grid">
@@ -647,7 +648,7 @@
         <a class="btn btn-primary" href="https://github.com/douglaspiero/net-inventory-ia/releases/download/v0.1.0/NetInventory-Setup-0.1.0.exe"><svg class="icon"><use href="#i-windows"/></svg>Baixar grátis para Windows</a>
         <div class="file">
           <span>NetInventory-Setup-0.1.0.exe · 47 MB · <a href="https://github.com/douglaspiero/net-inventory-ia/releases" target="_blank" rel="noopener" style="color: var(--text);">todas as versões</a></span>
-          <span class="hash">SHA-256: a264e05676dc8ff98ae199d047de0272a646c94b4a2efb39e45a2f52adeeda7f</span>
+          <span class="hash">SHA-256: af198c21fa6b797496ee59ad1efea004676b951753ccfb2e181a7109854d9bff</span>
         </div>
       </div>
       <div class="req">
@@ -755,6 +756,26 @@
   show(0);
 
   document.getElementById("year").textContent = new Date().getFullYear();
+
+  // Links internos (#ia, #ferramentas…) rolam até a seção sem deixar o "#" no endereço.
+  document.addEventListener("click", (e) => {
+    const link = e.target.closest('a[href^="#"]');
+    if (!link || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey) return;
+    const id = link.getAttribute("href").slice(1);
+    const target = id ? document.getElementById(id) : null;
+    if (id && !target) return;
+    e.preventDefault();
+    if (target) target.scrollIntoView({ behavior: "smooth" });
+    else window.scrollTo({ top: 0, behavior: "smooth" });
+    history.replaceState(null, "", location.pathname + location.search);
+  });
+  // Quem chega por um link antigo com "#seção" vai para a seção e, depois, o endereço fica limpo.
+  if (location.hash) {
+    window.addEventListener("load", () => {
+      document.getElementById(location.hash.slice(1))?.scrollIntoView();
+      history.replaceState(null, "", location.pathname + location.search);
+    });
+  }
 
   // Link do LinkedIn do desenvolvedor: preencha aqui e os botões aparecem.
   const LINKEDIN_URL = "https://www.linkedin.com/in/douglaspiero/";
