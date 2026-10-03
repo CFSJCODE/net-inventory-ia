@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetInventory — inventário e monitoramento da sua rede</title>
+<meta name="description" content="NetInventory: gratuito, desenvolvido por Douglas Piero. Descubra, mapeie e monitore todos os dispositivos da rede local — com topologia, alertas e inteligência artificial.">
+<meta name="author" content="Douglas Piero">
+<link rel="icon" href="logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #141416;
+    --bg-2: #1b1b1e;
+    --card: #222225;
+    --border: rgba(255, 255, 255, .09);
+    --text: #f4f4f5;
+    --muted: #a1a1aa;
+    --primary: oklch(72.3% 0.219 149.579);
+    --primary-soft: color-mix(in oklab, var(--primary) 14%, transparent);
+    --radius: 18px;
+    --mono: "Geist Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 "Open Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  img { max-width: 100%; display: block; }
+  a { color: inherit; }
+  .wrap { width: min(1180px, 100% - 32px); margin-inline: auto; }
+  .icon { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+
+  /* Navegação */
+  nav { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(14px); background: color-mix(in oklab, var(--bg) 78%, transparent); border-bottom: 1px solid var(--border); }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; gap: 16px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 18px; text-decoration: none; }
+  .brand img { width: 28px; height: 28px; }
+  .links { display: flex; gap: 28px; font-size: 14px; color: var(--muted); }
+  .links a { text-decoration: none; transition: color .15s; }
+  .links a:hover { color: var(--text); }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; border-radius: 999px; padding: 12px 22px; font-weight: 600; font-size: 15px; text-decoration: none; border: 1px solid transparent; cursor: pointer; transition: transform .15s, box-shadow .2s, background .2s; }
+  .btn-primary { background: var(--primary); color: #04140a; box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 50%, transparent); }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 30px -6px color-mix(in oklab, var(--primary) 60%, transparent); }
+  .btn-primary:hover .icon-dl { animation: bob .8s ease-in-out infinite; }
+  .btn-ghost { border-color: var(--border); color: var(--text); }
+  .btn-ghost:hover { background: rgba(255,255,255,.05); }
+  .btn-sm { padding: 8px 16px; font-size: 14px; }
+  @keyframes bob { 50% { transform: translateY(3px); } }
+
+  /* Hero */
+  .hero { position: relative; padding: 88px 0 40px; overflow: hidden; }
+  .hero::before { content: ""; position: absolute; inset: -20% -10% auto; height: 620px; background: radial-gradient(closest-side, color-mix(in oklab, var(--primary) 22%, transparent), transparent); filter: blur(30px); opacity: .55; pointer-events: none; }
+  .hero .wrap { position: relative; text-align: center; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; border: 1px solid color-mix(in oklab, var(--primary) 35%, transparent); background: var(--primary-soft); color: var(--primary); font-size: 13px; font-weight: 600; }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--primary); animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 60%, transparent); } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  h1 { font-size: clamp(36px, 6vw, 64px); line-height: 1.08; letter-spacing: -.025em; margin: 22px auto 18px; max-width: 16ch; font-weight: 700; }
+  h1 em { font-style: normal; color: var(--primary); white-space: nowrap; }
+  .lead { font-size: clamp(16px, 2vw, 19px); color: var(--muted); max-width: 640px; margin: 0 auto 32px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+  .hint { margin-top: 14px; font-size: 13px; color: var(--muted); }
+
+  .frame { margin: 56px auto 0; border-radius: 14px; border: 1px solid var(--border); background: var(--bg-2); box-shadow: 0 40px 120px -30px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.02); overflow: hidden; }
+  .frame-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: #18181b; }
+  .frame-bar i { width: 11px; height: 11px; border-radius: 50%; background: #3f3f46; }
+  .frame-bar span { margin-left: 12px; flex: 1; max-width: 340px; padding: 4px 12px; border-radius: 8px; background: #27272a; color: var(--muted); font: 12px var(--mono); text-align: left; }
+
+  section { padding: 96px 0; }
+  .eyebrow { color: var(--primary); font-weight: 600; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; }
+  h2 { font-size: clamp(28px, 4vw, 42px); line-height: 1.15; letter-spacing: -.02em; margin: 10px 0 14px; }
+  .section-head { max-width: 680px; margin-bottom: 48px; }
+  .section-head p { color: var(--muted); margin: 0; }
+  .center { text-align: center; margin-inline: auto; }
+
+  /* Recursos */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .feature { padding: 26px; border-radius: var(--radius); background: var(--card); border: 1px solid var(--border); transition: border-color .2s, transform .2s; }
+  .feature:hover { border-color: color-mix(in oklab, var(--primary) 40%, transparent); transform: translateY(-2px); }
+  .feature:hover .badge .icon { animation: wiggle .6s ease; }
+  @keyframes wiggle { 30% { transform: rotate(-10deg) scale(1.1); } 60% { transform: rotate(8deg) scale(1.1); } }
+  .badge { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--primary-soft); color: var(--primary); border: 1px solid color-mix(in oklab, var(--primary) 25%, transparent); margin-bottom: 18px; }
+  .feature h3 { margin: 0 0 6px; font-size: 17px; }
+  .feature p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+  /* Telas */
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 8px; }
+  .tab { padding: 9px 16px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--muted); font: 600 14px "Open Sans", sans-serif; cursor: pointer; transition: all .15s; }
+  .tab:hover { color: var(--text); }
+  .tab[aria-selected="true"] { background: var(--primary); border-color: var(--primary); color: #04140a; }
+  .shot-caption { text-align: center; color: var(--muted); min-height: 52px; max-width: 720px; margin: 18px auto 0; font-size: 15px; }
+  .frame img { width: 100%; height: auto; animation: fade .35s ease; }
+  @keyframes fade { from { opacity: 0; transform: scale(.995); } }
+
+  /* Como funciona */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; counter-reset: step; }
+  .step { position: relative; padding: 28px 26px; border-radius: var(--radius); background: linear-gradient(180deg, var(--card), var(--bg-2)); border: 1px solid var(--border); }
+  .step::before { counter-increment: step; content: counter(step); position: absolute; top: 22px; right: 24px; font: 600 44px/1 var(--mono); color: rgba(255,255,255,.06); }
+  .step h3 { margin: 18px 0 8px; font-size: 18px; }
+  .step p { margin: 0; color: var(--muted); font-size: 14.5px; }
+  code { font-family: var(--mono); font-size: .92em; background: rgba(255,255,255,.07); padding: 2px 6px; border-radius: 6px; }
+  .diagram { margin-top: 28px; padding: 28px; border-radius: var(--radius); border: 1px dashed var(--border); display: flex; align-items: center; justify-content: center; gap: 18px; flex-wrap: wrap; color: var(--muted); font-size: 14px; }
+  .node { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; min-width: 120px; }
+  .node .badge { margin: 0; }
+  .node strong { color: var(--text); font-size: 14px; }
+  .wire { flex: 0 1 90px; height: 2px; background: repeating-linear-gradient(90deg, var(--primary) 0 8px, transparent 8px 14px); background-size: 28px 2px; animation: flow 1s linear infinite; opacity: .7; }
+  @keyframes flow { to { background-position: 28px 0; } }
+
+  /* Configurar o scan */
+  .alert { display: flex; gap: 14px; align-items: flex-start; padding: 18px 20px; border-radius: 14px; border: 1px solid rgba(250, 204, 21, .35); background: rgba(250, 204, 21, .08); color: #fde68a; font-size: 15px; margin-bottom: 28px; }
+  .alert .icon { color: #facc15; margin-top: 2px; }
+  .alert strong { color: #fef3c7; }
+  .config-shot { position: relative; border-radius: 14px; overflow: hidden; border: 1px solid var(--border); box-shadow: 0 30px 80px -30px rgba(0,0,0,.8); }
+  .config-shot img { width: 100%; height: auto; }
+  .marker { position: absolute; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--primary); color: #04140a; font: 700 13px var(--mono); box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 30%, transparent); transform: translate(-50%, -50%); }
+  .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 24px; }
+  .config-card { min-width: 0; padding: 24px; border-radius: var(--radius); background: var(--card); border: 1px solid var(--border); }
+  .config-card h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; font-size: 17px; }
+  .config-card h3 .num { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--primary); color: #04140a; font: 700 13px var(--mono); flex-shrink: 0; }
+  .config-card p, .config-card li { color: var(--muted); font-size: 14.5px; }
+  .config-card p { margin: 0 0 12px; }
+  .config-card ol, .config-card ul { margin: 0 0 12px; padding-left: 20px; display: grid; gap: 6px; }
+  .terminal { margin: 12px 0; padding: 14px 16px; border-radius: 10px; background: #0c0c0e; border: 1px solid var(--border); font: 13px/1.7 var(--mono); color: #d4d4d8; overflow-x: auto; white-space: pre; }
+  .terminal .hl { color: var(--primary); font-weight: 500; }
+  .terminal .dim { color: #71717a; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .04em; }
+  td code { white-space: nowrap; }
+  .table-wrap { overflow-x: auto; }
+
+  /* IA na prática */
+  .ai-row { display: grid; grid-template-columns: 1fr 1.25fr; gap: 48px; align-items: center; margin-top: 72px; }
+  .ai-row > * { min-width: 0; }
+  .ai-row.reverse .ai-text { order: 2; }
+  .ai-text h3 { font-size: 22px; line-height: 1.25; margin: 0 0 12px; }
+  .ai-text p { color: var(--muted); margin: 0 0 12px; }
+  .ai-text strong { color: var(--text); }
+  .ai-shot { width: 100%; height: auto; border-radius: 14px; border: 1px solid var(--border); box-shadow: 0 30px 80px -30px rgba(0,0,0,.85); }
+  .examples { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 8px; }
+  .examples li { padding: 9px 14px; border-radius: 12px 12px 12px 4px; background: var(--primary-soft); border: 1px solid color-mix(in oklab, var(--primary) 25%, transparent); color: var(--text); font-size: 14.5px; width: fit-content; max-width: 100%; }
+  .tool .use { display: block; margin-top: 12px; font-size: 13px; color: var(--primary); font-weight: 600; }
+  .tool.highlight { border-color: color-mix(in oklab, var(--primary) 40%, transparent); background: linear-gradient(160deg, color-mix(in oklab, var(--primary) 10%, var(--card)), var(--card)); }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--primary); color: #04140a; vertical-align: middle; margin-left: 4px; }
+  .events { list-style: none; padding: 0; margin: 20px 0; display: grid; gap: 10px; }
+  .events li { display: flex; gap: 12px; align-items: center; color: var(--muted); font-size: 15px; }
+  .events strong { color: var(--text); }
+  .ev { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: rgba(255,255,255,.05); border: 1px solid var(--border); font-weight: 700; flex-shrink: 0; }
+
+  /* IA */
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+  .split > * { min-width: 0; }
+  .checks { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 12px; }
+  .checks li { display: flex; gap: 12px; color: var(--muted); }
+  .checks li .icon { color: var(--primary); margin-top: 3px; }
+  .checks strong { color: var(--text); font-weight: 600; }
+
+  /* Download */
+  .download { position: relative; border-radius: 28px; padding: 56px; background: radial-gradient(120% 120% at 0% 0%, color-mix(in oklab, var(--primary) 20%, var(--card)), var(--card) 60%); border: 1px solid color-mix(in oklab, var(--primary) 25%, var(--border)); display: grid; grid-template-columns: 1.3fr 1fr; gap: 40px; align-items: center; }
+  .download h2 { margin-top: 0; }
+  .download p { color: var(--muted); }
+  .file { margin-top: 18px; font-size: 13px; color: var(--muted); display: grid; gap: 4px; }
+  .hash { font: 11.5px var(--mono); word-break: break-all; color: #71717a; }
+  .req { padding: 24px; border-radius: var(--radius); background: rgba(0,0,0,.25); border: 1px solid var(--border); }
+  .req h3 { margin: 0 0 12px; font-size: 15px; }
+  .req ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 14px; display: grid; gap: 6px; }
+
+  [hidden] { display: none !important; }
+
+  /* Gratuito + autor */
+  .about { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+  .about > * { min-width: 0; }
+  .free, .author { padding: 36px; border-radius: 24px; border: 1px solid var(--border); background: var(--card); }
+  .free { background: radial-gradient(120% 140% at 100% 0%, color-mix(in oklab, var(--primary) 16%, var(--card)), var(--card) 60%); border-color: color-mix(in oklab, var(--primary) 30%, var(--border)); }
+  .free h2 { margin: 16px 0 10px; }
+  .free p, .author p { color: var(--muted); margin: 0; }
+  .free-badge { display: inline-block; padding: 6px 14px; border-radius: 999px; background: var(--primary); color: #04140a; font-weight: 700; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
+  .author { display: flex; flex-direction: column; gap: 18px; }
+  .author-head { display: flex; align-items: center; gap: 14px; }
+  .author-head strong { display: block; font-size: 20px; }
+  .author-head span:not(.avatar) { color: var(--muted); font-size: 14px; }
+  .avatar { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, var(--primary), color-mix(in oklab, var(--primary) 50%, #0e7490)); color: #04140a; font-weight: 700; font-size: 19px; flex-shrink: 0; }
+  .author .btn { width: fit-content; }
+  footer a { color: var(--text); text-decoration: none; }
+  footer a:hover { color: var(--primary); }
+
+  /* Usuários e acessos */
+  .roles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .role { padding: 24px; border-radius: var(--radius); background: var(--card); border: 1px solid var(--border); }
+  .role p { margin: 14px 0 0; color: var(--muted); font-size: 14.5px; }
+  .role-tag { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; border: 1px solid; }
+  .role-tag.admin { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 45%, transparent); background: var(--primary-soft); }
+  .role-tag.operator { color: #38bdf8; border-color: rgba(56, 189, 248, .45); background: rgba(56, 189, 248, .1); }
+  .role-tag.viewer { color: var(--muted); border-color: var(--border); }
+  .perm td:not(:first-child), .perm th:not(:first-child) { text-align: center; }
+  .perm td:first-child { color: var(--muted); }
+  .perm .yes { color: var(--primary); font-weight: 700; }
+  .perm .no { color: #52525b; }
+
+  /* FAQ */
+  .faq { max-width: 780px; margin-inline: auto; display: grid; gap: 10px; }
+  details { border-radius: 14px; background: var(--card); border: 1px solid var(--border); padding: 4px 22px; }
+  summary { cursor: pointer; padding: 16px 0; font-weight: 600; list-style: none; display: flex; justify-content: space-between; gap: 16px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; color: var(--primary); font: 500 22px/1 var(--mono); transition: transform .2s; }
+  details[open] summary::after { transform: rotate(45deg); }
+  details p { margin: 0 0 18px; color: var(--muted); font-size: 15px; }
+
+  footer { border-top: 1px solid var(--border); padding: 32px 0; color: var(--muted); font-size: 13px; }
+  footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: center; }
+
+  .reveal { opacity: 0; transform: translateY(16px); transition: opacity .6s ease, transform .6s ease; }
+  .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } .reveal { opacity: 1; transform: none; } }
+
+  @media (max-width: 900px) {
+    .grid, .steps { grid-template-columns: 1fr 1fr; }
+    .roles { grid-template-columns: 1fr; }
+    .split, .download, .config-grid, .ai-row, .about { grid-template-columns: 1fr; }
+    .free, .author { padding: 26px 22px; }
+    .ai-row { gap: 28px; margin-top: 56px; }
+    .ai-row.reverse .ai-text { order: 0; }
+    .download { padding: 32px 24px; }
+    .links { display: none; }
+  }
+  @media (max-width: 600px) {
+    .grid, .steps { grid-template-columns: 1fr; }
+    section { padding: 64px 0; }
+    .hero { padding-top: 56px; }
+    .wire { flex-basis: 100%; height: 30px; width: 2px; background: repeating-linear-gradient(180deg, var(--primary) 0 8px, transparent 8px 14px); background-size: 2px 28px; }
+    .diagram { flex-direction: column; }
+    .marker { display: none; }
+    .hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></symbol>
+  <symbol id="i-radar" viewBox="0 0 24 24"><path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9"/><path d="M7.8 4.7a6.14 6.14 0 0 0-.8 7.5"/><circle cx="12" cy="9" r="2"/><path d="M16.2 4.8c2 2 2.26 5.11.8 7.47"/><path d="M19.1 1.9a9.96 9.96 0 0 1 0 14.1"/><path d="M9.5 18h5"/><path d="m8 22 4-11 4 11"/></symbol>
+  <symbol id="i-topology" viewBox="0 0 24 24"><circle cx="12" cy="4.5" r="2.5"/><path d="m10.2 6.3-3.9 3.9"/><circle cx="4.5" cy="12" r="2.5"/><path d="M7 12h10"/><circle cx="19.5" cy="12" r="2.5"/><path d="m13.8 17.7 3.9-3.9"/><circle cx="12" cy="19.5" r="2.5"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></symbol>
+  <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></symbol>
+  <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect width="14" height="20" x="5" y="2" rx="2"/><path d="M12 18h.01"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 6V2H8"/><path d="m8 18-4 4V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2Z"/><path d="M2 12h2"/><path d="M9 11v2"/><path d="M15 11v2"/><path d="M20 12h2"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></symbol>
+  <symbol id="i-port" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h.01"/><path d="M11 15h.01"/><path d="M15 15h.01"/><path d="M7 9h10"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></symbol>
+  <symbol id="i-table" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/></symbol>
+  <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></symbol>
+  <symbol id="i-linkedin" viewBox="0 0 24 24"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect width="4" height="12" x="2" y="9"/><circle cx="4" cy="4" r="2"/></symbol>
+  <symbol id="i-github" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-windows" viewBox="0 0 24 24"><path d="M3 5.5 10.5 4.4v7.1H3z"/><path d="M12 4.2 21 3v8.5h-9z"/><path d="M3 12.9h7.5v7.1L3 18.9z"/><path d="M12 12.9h9V21l-9-1.3z"/></symbol>
+</svg>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#"><img src="logo.png" alt="">NetInventory</a>
+    <div class="links">
+      <a href="#recursos">Recursos</a>
+      <a href="#ia">IA</a>
+      <a href="#ferramentas">Ferramentas</a>
+      <a href="#historico">Histórico</a>
+      <a href="#usuarios">Equipe</a>
+      <a href="#como-funciona">Instalar</a>
+      <a href="#faq">Dúvidas</a>
+    </div>
+    <div style="display: flex; gap: 8px; align-items: center;">
+    <a class="btn btn-ghost btn-sm" href="https://github.com/douglaspiero/net-inventory-ia" target="_blank" rel="noopener" aria-label="Código no GitHub"><svg class="icon"><use href="#i-github"/></svg><span class="hide-sm">GitHub</span></a>
+    <a class="btn btn-primary btn-sm" href="#download"><svg class="icon icon-dl"><use href="#i-download"/></svg>Baixar</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="pill"><span class="dot"></span>Gratuito e open source · Versão 0.1.0</span>
+    <h1>Sua rede, <em>sob controle.</em></h1>
+    <p class="lead">Descubra, mapeie e monitore todos os dispositivos da rede local em um só lugar — com topologia, alertas em tempo real e inteligência artificial.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="https://github.com/douglaspiero/net-inventory-ia/releases/download/v0.1.0/NetInventory-Setup-0.1.0.exe"><svg class="icon icon-dl"><use href="#i-download"/></svg>Baixar grátis para Windows</a>
+      <a class="btn btn-ghost" href="https://github.com/douglaspiero/net-inventory-ia" target="_blank" rel="noopener"><svg class="icon"><use href="#i-github"/></svg>Ver o código no GitHub</a>
+    </div>
+    <p class="hint">100% gratuito · código aberto (MIT) · Windows 10/11 64 bits · desenvolvido por <a href="#sobre" style="color: var(--text);">Douglas Piero</a></p>
+
+    <div class="frame reveal">
+      <div class="frame-bar"><i></i><i></i><i></i><span>http://192.168.15.10:3000</span></div>
+      <img src="screens/inventario.webp" width="1800" height="1125" alt="Tela de inventário do NetInventory com a lista de dispositivos da rede">
+    </div>
+  </div>
+</header>
+
+<section id="recursos">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Recursos</span>
+      <h2>Tudo o que acontece na sua rede, num painel só</h2>
+      <p>Instale em um computador da rede e acesse de qualquer navegador. Sem nuvem: o inventário fica com você.</p>
+    </div>
+    <div class="grid">
+      <article class="feature reveal"><div class="badge"><svg class="icon"><use href="#i-radar"/></svg></div><h3>Descoberta automática</h3><p>Scans agendados encontram cada dispositivo com IPv4, IPv6, MAC, fabricante, hostname e portas abertas.</p></article>
+      <article class="feature reveal"><div class="badge"><svg class="icon"><use href="#i-topology"/></svg></div><h3>Mapa da topologia</h3><p>Visualize a rede a partir do gateway, arraste os equipamentos e descubra ligações reais via SNMP.</p></article>
+      <article class="feature reveal"><div class="badge"><svg class="icon"><use href="#i-activity"/></svg></div><h3>Ligações monitoradas</h3><p>Cada link é testado a cada 30 segundos. Caiu? Fica vermelho no mapa e vai para o histórico.</p></article>
+      <article class="feature reveal"><div class="badge"><svg class="icon"><use href="#i-bell"/></svg></div><h3>Alertas em tempo real</h3><p>Notificações no navegador quando uma ligação cai, volta ou um dispositivo desconhecido aparece.</p></article>
+      <article class="feature reveal"><div class="badge"><svg class="icon"><use href="#i-wrench"/></svg></div><h3>Ferramentas de rede</h3><p>ARP e port scan, SNMP, Wake-on-LAN, DHCP, DNS, tabela ARP, rotas e checagem de segurança.</p></article>
+      <article class="feature reveal"><div class="badge"><svg class="icon"><use href="#i-sparkles"/></svg></div><h3>Assistente com IA</h3><p>Identifica dispositivos sem nome, explica riscos de segurança, resume eventos e responde perguntas.</p></article>
+    </div>
+  </div>
+</section>
+
+<section id="telas" style="background: var(--bg-2); border-block: 1px solid var(--border);">
+  <div class="wrap">
+    <div class="section-head center reveal">
+      <span class="eyebrow">Telas</span>
+      <h2>Conheça o NetInventory por dentro</h2>
+      <p>Imagens reais do aplicativo, com uma rede de demonstração.</p>
+    </div>
+    <div class="tabs" role="tablist" id="tabs"></div>
+    <div class="frame" style="margin-top: 24px;">
+      <div class="frame-bar"><i></i><i></i><i></i><span id="shot-url">http://192.168.15.10:3000</span></div>
+      <img id="shot" src="screens/login.webp" width="1800" height="1125" alt="">
+    </div>
+    <p class="shot-caption" id="shot-caption"></p>
+  </div>
+</section>
+
+<section id="ia">
+  <div class="wrap">
+    <div class="section-head center reveal">
+      <span class="eyebrow">Inteligência artificial</span>
+      <h2>Um analista de rede que trabalha com você</h2>
+      <p>A IA lê o seu inventário, o histórico e as portas abertas e responde como um especialista: identifica o que é cada aparelho, aponta riscos, explica o que aconteceu e diz o que fazer. Tudo em português e só quando você pede.</p>
+    </div>
+
+    <div class="ai-row reveal">
+      <div class="ai-text">
+        <div class="badge"><svg class="icon"><use href="#i-bot"/></svg></div>
+        <h3>Assistente: pergunte sobre a sua rede</h3>
+        <p>Converse em português e receba respostas com base nos dados reais do inventário, do histórico e das ligações monitoradas. O assistente consulta as informações sozinho antes de responder.</p>
+        <ul class="examples">
+          <li>“O que entrou na rede nas últimas 24 horas?”</li>
+          <li>“Alguma ligação monitorada caiu esta semana? Por quê?”</li>
+          <li>“Quais dispositivos têm portas arriscadas e o que devo fazer?”</li>
+          <li>“Quais dispositivos estão offline agora?”</li>
+        </ul>
+      </div>
+      <img class="ai-shot" src="screens/ai-assistant.webp" width="1308" height="1077" alt="Assistente IA respondendo quais dispositivos entraram na rede e quais têm portas arriscadas, com recomendações">
+    </div>
+
+    <div class="ai-row reverse reveal">
+      <div class="ai-text">
+        <div class="badge"><svg class="icon"><use href="#i-radar"/></svg></div>
+        <h3>Identificação: dá nome aos dispositivos desconhecidos</h3>
+        <p>O scan encontra aparelhos que não dizem o que são. A IA analisa fabricante, portas abertas e tipo de MAC e sugere nome e tipo para cada um, com o nível de confiança e o motivo.</p>
+        <p>Você marca as sugestões que quer aplicar e pronto: o inventário fica organizado em segundos, em vez de investigar aparelho por aparelho.</p>
+      </div>
+      <img class="ai-shot" src="screens/ai-identify.webp" width="1008" height="1121" alt="Identificação com IA sugerindo Lâmpada inteligente Tuya, Celular Xiaomi e Impressora Epson para dispositivos sem nome">
+    </div>
+
+    <div class="ai-row reveal">
+      <div class="ai-text">
+        <div class="badge"><svg class="icon"><use href="#i-shield"/></svg></div>
+        <h3>Diagnóstico de segurança da rede inteira</h3>
+        <p>O NetInventory já marca as portas de risco de cada dispositivo (Telnet, SMB, RDP, VNC, bancos sem senha…). A IA transforma essa lista num <strong>relatório priorizado</strong>: o mais grave primeiro, os problemas agrupados e as <strong>ações prioritárias</strong> para resolver.</p>
+        <p>Fica em <em>Ferramentas → Segurança</em>.</p>
+      </div>
+      <img class="ai-shot" src="screens/ai-security.webp" width="1692" height="1092" alt="Diagnóstico de segurança da rede gerado pela IA, com itens mais graves, riscos médios e três ações prioritárias">
+    </div>
+
+    <div class="ai-row reverse reveal">
+      <div class="ai-text">
+        <div class="badge"><svg class="icon"><use href="#i-check"/></svg></div>
+        <h3>Explicação de riscos de cada dispositivo</h3>
+        <p>Na página de um equipamento, a IA explica em linguagem simples por que cada porta aberta é um risco <strong>para aquele tipo de aparelho</strong> e o que fazer, como desativar SMBv1, ativar NLA no RDP ou restringir o acesso à rede interna.</p>
+      </div>
+      <img class="ai-shot" src="screens/ai-device-security.webp" width="1692" height="576" alt="Card de segurança do servidor srv-backup com explicação da IA sobre as portas SMB e RDP e recomendações">
+    </div>
+
+    <div class="ai-row reveal">
+      <div class="ai-text">
+        <div class="badge"><svg class="icon"><use href="#i-history"/></svg></div>
+        <h3>Resumo do que aconteceu na rede</h3>
+        <p>Em vez de ler dezenas de eventos, peça um resumo das <strong>últimas 24 horas</strong> ou dos <strong>últimos 7 dias</strong>: dispositivos novos, quedas e retornos, mudanças de IP e o que merece atenção.</p>
+      </div>
+      <img class="ai-shot" src="screens/ai-summary.webp" width="1692" height="446" alt="Resumo com IA das últimas 24 horas listando novos dispositivos, quedas e mudanças de IP">
+    </div>
+
+    <p class="center reveal" style="color: var(--muted); max-width: 720px; margin-top: 40px;">Antes de qualquer envio, IPs, MACs, hostnames e apelidos são <strong style="color: var(--text);">mascarados</strong>. A IA usa a sua chave da OpenAI: <a href="#chave-ia" style="color: var(--primary);">veja como ativar</a>.</p>
+  </div>
+</section>
+
+<section id="ferramentas" style="background: var(--bg-2); border-block: 1px solid var(--border);">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Ferramentas</span>
+      <h2>A caixa de ferramentas do administrador de rede</h2>
+      <p>Nove ferramentas de diagnóstico e descoberta numa só tela, executadas a partir do servidor do NetInventory, ou seja, de dentro da sua rede, sem instalar mais nada.</p>
+    </div>
+    <div class="grid">
+      <article class="feature tool reveal"><div class="badge"><svg class="icon"><use href="#i-radar"/></svg></div><h3>ARP Scan</h3><p>Força a resolução ARP de cada IP da faixa. Encontra até dispositivos que <strong>bloqueiam ping</strong>, como celulares e câmeras.</p><span class="use">Use para: achar tudo o que está conectado.</span></article>
+      <article class="feature tool reveal"><div class="badge"><svg class="icon"><use href="#i-port"/></svg></div><h3>Port Scan</h3><p>Scan TCP (como <code>nmap -sT</code>) mostrando portas abertas, fechadas e filtradas por firewall.</p><span class="use">Use para: ver quais serviços um aparelho expõe.</span></article>
+      <article class="feature tool reveal"><div class="badge"><svg class="icon"><use href="#i-server"/></svg></div><h3>SNMP</h3><p>Lê dados de switches, roteadores e impressoras gerenciáveis (SNMP v1/v2c): modelo, uptime, interfaces.</p><span class="use">Use para: inspecionar equipamentos de rede.</span></article>
+      <article class="feature tool reveal"><div class="badge"><svg class="icon"><use href="#i-power"/></svg></div><h3>Wake-on-LAN</h3><p>Liga um computador remotamente enviando o <em>magic packet</em>. O PC precisa ter o WoL ativo e estar no cabo.</p><span class="use">Use para: ligar PCs à distância para manutenção.</span></article>
+      <article class="feature tool reveal"><div class="badge"><svg class="icon"><use href="#i-topology"/></svg></div><h3>DHCP</h3><p>Mostra qual servidor entregou o IP, o gateway, os DNS e a validade da concessão.</p><span class="use">Use para: achar o servidor DHCP e conflitos.</span></article>
+      <article class="feature tool reveal"><div class="badge"><svg class="icon"><use href="#i-globe"/></svg></div><h3>DNS</h3><p>Resolve registros A, MX, TXT e PTR, no DNS do sistema, num servidor à escolha ou no próprio roteador.</p><span class="use">Use para: testar resolução de nomes.</span></article>
+      <article class="feature tool reveal"><div class="badge"><svg class="icon"><use href="#i-table"/></svg></div><h3>Tabela ARP</h3><p>As associações IP → MAC que o servidor conhece, por interface, com fabricante e o dispositivo do inventário.</p><span class="use">Use para: descobrir de quem é um IP ou MAC.</span></article>
+      <article class="feature tool reveal"><div class="badge"><svg class="icon"><use href="#i-route"/></svg></div><h3>Roteamento</h3><p>As rotas IPv4 do servidor e para onde cada destino é encaminhado, incluindo o gateway padrão.</p><span class="use">Use para: entender a saída para a internet.</span></article>
+      <article class="feature tool reveal highlight"><div class="badge"><svg class="icon"><use href="#i-shield"/></svg></div><h3>Segurança <span class="tag">com IA</span></h3><p>Todas as portas de risco da rede numa lista, por severidade, e o <a href="#ia" style="color: var(--primary);">diagnóstico da IA</a> com as ações prioritárias.</p><span class="use">Use para: auditar a rede inteira de uma vez.</span></article>
+    </div>
+  </div>
+</section>
+
+<section id="historico">
+  <div class="wrap split" style="align-items: start;">
+    <div class="reveal">
+      <span class="eyebrow">Histórico</span>
+      <h2>Tudo o que mudou na rede, com data e hora</h2>
+      <p style="color: var(--muted);">Cada scan e cada teste das ligações monitoradas alimentam uma linha do tempo. Quando algo dá errado, você sabe <strong style="color: var(--text);">o que mudou e quando</strong>.</p>
+      <ul class="events">
+        <li><span class="ev" style="color: #60a5fa;">+</span><span><strong>Dispositivo novo</strong> entrou na rede</span></li>
+        <li><span class="ev" style="color: #fbbf24;">⇄</span><span><strong>Mudança de IP</strong> de um dispositivo conhecido</span></li>
+        <li><span class="ev" style="color: #fbbf24; font-size: 12px;">Aa</span><span><strong>Mudança de hostname</strong> (nome do aparelho)</span></li>
+        <li><span class="ev" style="color: #a1a1aa;">◐</span><span><strong>Ficou offline</strong> ou <strong>voltou a ficar online</strong></span></li>
+        <li><span class="ev" style="color: #f87171;">✕</span><span><strong>Ligação monitorada caiu</strong>, com a ponta que parou de responder</span></li>
+        <li><span class="ev" style="color: var(--primary);">✓</span><span><strong>Ligação voltou</strong>, com quanto tempo ficou fora</span></li>
+      </ul>
+      <p style="color: var(--muted);">Os mesmos eventos podem virar <strong style="color: var(--text);">notificações no navegador</strong>, e a IA <a href="#ia" style="color: var(--primary);">resume o período</a> para você.</p>
+    </div>
+    <div class="frame reveal" style="margin: 0;">
+      <div class="frame-bar"><i></i><i></i><i></i><span>/history</span></div>
+      <img src="screens/historico.webp" width="1800" height="1125" alt="Página Histórico com resumo de IA e lista de eventos da rede">
+    </div>
+  </div>
+</section>
+
+<section id="usuarios" style="background: var(--bg-2); border-block: 1px solid var(--border);">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Usuários e acessos</span>
+      <h2>Cada pessoa da equipe com o acesso certo</h2>
+      <p>Crie um usuário para cada pessoa e escolha o perfil dela. O técnico opera a rede, a recepção só acompanha, e configurações e chave da IA ficam com o administrador.</p>
+    </div>
+
+    <div class="roles">
+      <article class="role reveal">
+        <span class="role-tag admin">Administrador</span>
+        <p>Acesso total: cria e gerencia usuários, define a faixa do scan, cadastra a chave da IA e faz a limpeza do inventário.</p>
+      </article>
+      <article class="role reveal">
+        <span class="role-tag operator">Operador</span>
+        <p>Opera a rede no dia a dia: roda scans e ferramentas, edita dispositivos e ligações e usa a IA. Não mexe em configurações nem em usuários.</p>
+      </article>
+      <article class="role reveal">
+        <span class="role-tag viewer">Visualizador</span>
+        <p>Somente consulta: inventário, mapa, ligações e histórico. Ideal para gestores ou para acompanhar a rede numa tela.</p>
+      </article>
+    </div>
+
+    <div class="frame reveal" style="margin-top: 32px;">
+      <div class="frame-bar"><i></i><i></i><i></i><span>/users</span></div>
+      <img src="screens/users.webp" width="1776" height="1060" alt="Página Usuários e acessos com o formulário Novo usuário e a lista de usuários com perfil, status e último acesso">
+    </div>
+
+    <div class="split" style="align-items: start; margin-top: 40px;">
+      <div class="reveal">
+        <h3 style="font-size: 20px; margin: 0 0 14px;">O que cada perfil pode fazer</h3>
+        <div class="table-wrap">
+          <table class="perm">
+            <thead><tr><th></th><th>Admin.</th><th>Operador</th><th>Visualiz.</th></tr></thead>
+            <tbody>
+              <tr><td>Ver inventário, mapa, ligações e histórico</td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td></tr>
+              <tr><td>Rodar scan, ferramentas e testar ligações</td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="no">—</span></td></tr>
+              <tr><td>Editar dispositivos, ligações e o mapa</td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="no">—</span></td></tr>
+              <tr><td>Usar os recursos de IA</td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="no">—</span></td></tr>
+              <tr><td>Configurações (scan, chave da IA, limpeza)</td><td><span class="yes">✓</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td></tr>
+              <tr><td>Gerenciar usuários</td><td><span class="yes">✓</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="reveal">
+        <h3 style="font-size: 20px; margin: 0 0 14px;">Seguro por padrão</h3>
+        <ul class="checks" style="margin-top: 0;">
+          <li><svg class="icon"><use href="#i-check"/></svg><span><strong>Vale na hora:</strong> mudou o perfil ou desativou alguém, o efeito é imediato, sem esperar a pessoa sair.</span></li>
+          <li><svg class="icon"><use href="#i-check"/></svg><span><strong>Desativar sem apagar:</strong> quem sai da equipe perde o acesso, e você pode reativar depois.</span></li>
+          <li><svg class="icon"><use href="#i-check"/></svg><span><strong>Senha redefinida encerra as sessões</strong> abertas daquele usuário.</span></li>
+          <li><svg class="icon"><use href="#i-check"/></svg><span><strong>Sempre há um administrador:</strong> o sistema não deixa remover ou rebaixar o último.</span></li>
+          <li><svg class="icon"><use href="#i-check"/></svg><span><strong>Minha conta:</strong> cada pessoa troca a própria senha e vê o seu perfil.</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="como-funciona">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Como funciona</span>
+      <h2>Um servidor na sua rede. Acesso de qualquer lugar dela.</h2>
+      <p>O NetInventory precisa enxergar a rede para descobri-la, por isso roda em um computador dentro dela — e todo mundo da equipe acessa pelo navegador.</p>
+    </div>
+    <div class="steps">
+      <div class="step reveal"><div class="badge"><svg class="icon"><use href="#i-download"/></svg></div><h3>Instale em um PC da rede</h3><p>Escolha um computador que fique ligado (pode ser um servidor ou um desktop) e execute o instalador como administrador.</p></div>
+      <div class="step reveal"><div class="badge"><svg class="icon"><use href="#i-server"/></svg></div><h3>Ele vira um serviço</h3><p>O NetInventory roda em segundo plano, inicia junto com o Windows e libera a porta <code>3000</code> no firewall da rede privada.</p></div>
+      <div class="step reveal"><div class="badge"><svg class="icon"><use href="#i-monitor"/></svg></div><h3>Acesse pelo navegador</h3><p>No próprio PC, abra <code>http://localhost:3000</code>. Dos outros, use o IP dele: <code>http://192.168.x.x:3000</code>. Crie o administrador e <a href="#configurar" style="color: var(--primary);">configure a faixa da sua rede</a>.</p></div>
+    </div>
+    <div class="diagram reveal" aria-label="Diagrama: o servidor NetInventory escaneia a rede e os outros computadores acessam o painel pelo navegador">
+      <div class="node"><div class="badge"><svg class="icon"><use href="#i-radar"/></svg></div><strong>Dispositivos</strong>câmeras, PCs, impressoras…</div>
+      <div class="wire"></div>
+      <div class="node"><div class="badge"><svg class="icon"><use href="#i-server"/></svg></div><strong>PC com NetInventory</strong>escaneia e monitora</div>
+      <div class="wire"></div>
+      <div class="node"><div class="badge"><svg class="icon"><use href="#i-phone"/></svg></div><strong>Sua equipe</strong>acessa pelo navegador</div>
+    </div>
+  </div>
+</section>
+
+<section id="configurar" style="background: var(--bg-2); border-block: 1px solid var(--border);">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Primeiro passo depois de instalar</span>
+      <h2>Diga ao NetInventory qual é a sua rede</h2>
+      <p>Em <strong style="color: var(--text);">Configurações → Scan da rede</strong> você informa a faixa de IPs que será escaneada e de quanto em quanto tempo. É a única configuração obrigatória.</p>
+    </div>
+
+    <div class="alert reveal" role="note">
+      <svg class="icon"><use href="#i-alert"/></svg>
+      <span>O app vem com a faixa <code>192.168.1.0/24</code>. <strong>Se a sua rede usa outros endereços</strong> (como <code>192.168.0.x</code>, <code>10.0.0.x</code> ou <code>172.16.x.x</code>), <strong>o scan não vai encontrar nenhum dispositivo</strong> até você ajustar a faixa.</span>
+    </div>
+
+    <div class="config-shot reveal">
+      <img src="screens/scan-config.webp" width="1440" height="250" alt="Card Scan da rede: campo Faixa de IP (CIDR) com 192.168.15.0/24, seletor Scan automático e botão Salvar">
+      <span class="marker" style="left: 13%; top: 50%;">1</span>
+      <span class="marker" style="left: 33%; top: 50%;">2</span>
+      <span class="marker" style="left: 44.7%; top: 50%;">3</span>
+    </div>
+
+    <div class="config-grid">
+      <div class="config-card reveal">
+        <h3><span class="num">1</span>Faixa de IP (CIDR)</h3>
+        <p>É o “endereço” da sua rede. Para descobrir, abra o <strong style="color: var(--text);">Prompt de Comando</strong> no computador onde instalou o NetInventory e digite <code>ipconfig</code>:</p>
+        <div class="terminal"><span class="dim">C:\&gt;</span> ipconfig
+<span class="dim">Adaptador Ethernet:</span>
+   Endereço IPv4. . . . : <span class="hl">192.168.0</span>.25
+   Máscara de Sub-rede  : <span class="hl">255.255.255.0</span>
+   Gateway Padrão . . . : 192.168.0.1</div>
+        <p>Troque o último número do IPv4 por <code>0</code> e acrescente o tamanho pela máscara. Neste exemplo: <code style="color: var(--primary);">192.168.0.0/24</code>.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Máscara</th><th>Use</th><th>Endereços</th></tr></thead>
+            <tbody>
+              <tr><td><code>255.255.255.0</code></td><td><code>/24</code></td><td>254 · o mais comum</td></tr>
+              <tr><td><code>255.255.254.0</code></td><td><code>/23</code></td><td>510</td></tr>
+              <tr><td><code>255.255.252.0</code></td><td><code>/22</code></td><td>1.022</td></tr>
+              <tr><td><code>255.255.240.0</code></td><td><code>/20</code></td><td>4.094 · o maior aceito</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="config-card reveal">
+        <h3><span class="num">2</span>Scan automático</h3>
+        <p>De quanto em quanto tempo o NetInventory varre a rede sozinho, encontrando dispositivos novos e marcando os que saíram:</p>
+        <ul>
+          <li><strong style="color: var(--text);">A cada 5 ou 15 minutos</strong>: para acompanhar de perto quem entra e sai da rede.</li>
+          <li><strong style="color: var(--text);">A cada 30 minutos ou 1 hora</strong>: bom equilíbrio para a maioria das empresas.</li>
+          <li><strong style="color: var(--text);">Desligado</strong>: o scan só acontece quando você clica em <em>Escanear agora</em> no Inventário.</li>
+        </ul>
+        <p>O scan roda <strong style="color: var(--text);">no servidor</strong>, então continua funcionando com o navegador fechado. Já as ligações monitoradas são testadas a cada 30 segundos, independentemente dessa opção.</p>
+
+        <h3 style="margin-top: 22px;"><span class="num">3</span>Salvar e escanear</h3>
+        <p>Clique em <strong style="color: var(--text);">Salvar</strong> e depois vá ao <strong style="color: var(--text);">Inventário → Escanear agora</strong> para o primeiro scan. Os dispositivos encontrados aparecem na lista assim que o scan termina.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="chave-ia">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Inteligência artificial · opcional</span>
+      <h2>Ative a IA com a sua chave da OpenAI</h2>
+      <p>Os recursos de IA (identificar dispositivos, analisar a segurança, resumir eventos e o Assistente) usam <strong style="color: var(--text);">a sua própria chave da API da OpenAI</strong>. Sem chave, todo o resto do NetInventory funciona normalmente; só as opções de IA ficam desabilitadas.</p>
+    </div>
+
+    <div class="alert reveal" role="note" style="border-color: color-mix(in oklab, var(--primary) 35%, transparent); background: var(--primary-soft); color: var(--muted);">
+      <svg class="icon" style="color: var(--primary);"><use href="#i-sparkles"/></svg>
+      <span>No primeiro acesso, o NetInventory mostra este passo a passo automaticamente. Se você clicar em <strong style="color: var(--text);">Agora não</strong>, dá para cadastrar a chave depois em <strong style="color: var(--text);">Configurações → Inteligência artificial (OpenAI)</strong>.</span>
+    </div>
+
+    <div class="split" style="align-items: start;">
+      <div class="config-grid" style="grid-template-columns: 1fr; margin-top: 0;">
+        <div class="config-card reveal">
+          <h3><span class="num">1</span>Entre na plataforma da OpenAI</h3>
+          <p>Acesse <a href="https://platform.openai.com" target="_blank" rel="noopener" style="color: var(--primary);">platform.openai.com</a> e faça login, ou crie uma conta.</p>
+          <p style="margin: 0;"><strong style="color: var(--text);">Importante:</strong> a API é cobrada à parte da assinatura do ChatGPT Plus. Adicione créditos em <a href="https://platform.openai.com/settings/organization/billing" target="_blank" rel="noopener" style="color: var(--primary);">Settings → Billing</a>; sem saldo, a chave não funciona.</p>
+        </div>
+        <div class="config-card reveal">
+          <h3><span class="num">2</span>Crie uma chave secreta</h3>
+          <p>Em <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" style="color: var(--primary);">API keys</a>, clique em <strong style="color: var(--text);">Create new secret key</strong>, dê um nome (ex.: NetInventory) e crie.</p>
+          <p style="margin: 0;">Copie a chave, que começa com <code>sk-</code>. <strong style="color: var(--text);">Ela só aparece uma vez</strong>: se perder, crie outra.</p>
+        </div>
+        <div class="config-card reveal">
+          <h3><span class="num">3</span>Cole no NetInventory</h3>
+          <p>Cole a chave no aviso que aparece no primeiro acesso, ou em <strong style="color: var(--text);">Configurações</strong>, e clique em <strong style="color: var(--text);">Salvar</strong>.</p>
+          <p style="margin: 0;">O NetInventory testa a chave na OpenAI antes de salvar. Se estiver errada ou sem créditos, ele avisa na hora.</p>
+        </div>
+      </div>
+      <figure class="reveal" style="margin: 0;">
+        <img src="screens/ai-modal.webp" width="768" height="858" alt="Aviso Ative os recursos de IA, com os três passos para obter a chave da OpenAI e o campo para colá-la" style="border-radius: 14px; border: 1px solid var(--border); box-shadow: 0 40px 100px -30px rgba(0,0,0,.85); width: 100%; max-width: 520px; height: auto; margin-inline: auto;">
+        <figcaption style="text-align: center; color: var(--muted); font-size: 13.5px; margin-top: 12px;">O aviso que aparece no primeiro acesso</figcaption>
+      </figure>
+    </div>
+
+    <div class="reveal" style="margin-top: 48px;">
+      <h3 style="font-size: 20px; margin: 0 0 8px;">Para trocar ou remover a chave depois</h3>
+      <p style="color: var(--muted); margin: 0 0 18px;">Em <strong style="color: var(--text);">Configurações → Inteligência artificial (OpenAI)</strong> você vê se a IA está ativa (com os 4 últimos caracteres da chave), cola uma chave nova, escolhe o modelo ou remove a chave.</p>
+      <img src="screens/ai-card.webp" width="1692" height="357" alt="Card Inteligência artificial em Configurações, com os campos Chave da API e Modelo" style="width: 100%; height: auto; border-radius: 14px; border: 1px solid var(--border);">
+    </div>
+
+    <ul class="checks reveal" style="grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 32px;">
+      <li><svg class="icon"><use href="#i-check"/></svg><span><strong>Dados mascarados:</strong> IPs, MACs, hostnames e apelidos são substituídos antes de qualquer envio.</span></li>
+      <li><svg class="icon"><use href="#i-check"/></svg><span><strong>Só quando você pede:</strong> nenhuma chamada automática, e respostas em cache por 24 h para não pagar duas vezes.</span></li>
+      <li><svg class="icon"><use href="#i-check"/></svg><span><strong>Chave protegida:</strong> fica criptografada no servidor e nunca volta ao navegador.</span></li>
+      <li><svg class="icon"><use href="#i-check"/></svg><span><strong>Custo na sua conta:</strong> o uso é cobrado pela OpenAI direto na sua conta; o NetInventory não cobra nada pela IA.</span></li>
+    </ul>
+  </div>
+</section>
+
+<section id="download">
+  <div class="wrap">
+    <div class="download reveal">
+      <div>
+        <span class="eyebrow">Download</span>
+        <h2>Comece a mapear sua rede agora</h2>
+        <p><strong style="color: var(--text);">Grátis, sem cadastro e open source.</strong> Um instalador só, com tudo incluído — não precisa instalar Node, banco de dados nem Docker.</p>
+        <a class="btn btn-primary" href="https://github.com/douglaspiero/net-inventory-ia/releases/download/v0.1.0/NetInventory-Setup-0.1.0.exe"><svg class="icon"><use href="#i-windows"/></svg>Baixar grátis para Windows</a>
+        <div class="file">
+          <span>NetInventory-Setup-0.1.0.exe · 47 MB · <a href="https://github.com/douglaspiero/net-inventory-ia/releases" target="_blank" rel="noopener" style="color: var(--text);">todas as versões</a></span>
+          <span class="hash">SHA-256: a264e05676dc8ff98ae199d047de0272a646c94b4a2efb39e45a2f52adeeda7f</span>
+        </div>
+      </div>
+      <div class="req">
+        <h3>Requisitos</h3>
+        <ul>
+          <li>Windows 10 ou 11, 64 bits</li>
+          <li>Permissão de administrador para instalar</li>
+          <li>Computador conectado à rede que será monitorada</li>
+          <li>~250 MB livres em disco</li>
+          <li>Opcional: <a href="#chave-ia" style="color: var(--primary);">chave da API da OpenAI</a> para os recursos de IA</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="sobre" style="padding-top: 0;">
+  <div class="wrap">
+    <div class="about">
+      <div class="free reveal">
+        <span class="free-badge">Gratuito e open source</span>
+        <h2>Sem plano pago. Sem cadastro. Código aberto.</h2>
+        <p>O NetInventory é gratuito para usar em casa ou na empresa. Você baixa, instala e usa todos os recursos: inventário, topologia, ligações monitoradas, alertas, ferramentas e histórico.</p>
+        <ul class="checks">
+          <li><svg class="icon"><use href="#i-check"/></svg><span><strong>Sem limite de dispositivos nem de usuários:</strong> cada pessoa da equipe com o seu acesso.</span></li>
+          <li><svg class="icon"><use href="#i-check"/></svg><span><strong>Sem conta online:</strong> tudo roda no seu computador.</span></li>
+          <li><svg class="icon"><use href="#i-check"/></svg><span><strong>Código aberto (licença MIT):</strong> leia, audite e compile você mesmo no <a href="https://github.com/douglaspiero/net-inventory-ia" target="_blank" rel="noopener" style="color: var(--primary);">GitHub</a>.</span></li>
+          <li><svg class="icon"><use href="#i-check"/></svg><span><strong>IA opcional:</strong> o único custo possível é o uso da OpenAI, cobrado direto na sua conta, se você ativar.</span></li>
+        </ul>
+      </div>
+      <div class="author reveal">
+        <span class="eyebrow">Quem desenvolveu</span>
+        <div class="author-head">
+          <span class="avatar" aria-hidden="true">DP</span>
+          <div>
+            <strong>Douglas Piero</strong>
+            <span>Criador e desenvolvedor do NetInventory</span>
+          </div>
+        </div>
+        <p>O NetInventory é um projeto independente e de código aberto, desenvolvido e mantido por Douglas Piero. Sugestões, issues e contribuições são bem-vindas.</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        <a class="btn btn-ghost btn-sm" href="https://github.com/douglaspiero/net-inventory-ia" target="_blank" rel="noopener"><svg class="icon"><use href="#i-github"/></svg>Código no GitHub</a>
+        <a class="btn btn-ghost btn-sm" data-linkedin target="_blank" rel="noopener" hidden><svg class="icon"><use href="#i-linkedin"/></svg>Falar comigo no LinkedIn</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="faq" style="padding-top: 0;">
+  <div class="wrap">
+    <div class="section-head center reveal">
+      <span class="eyebrow">Dúvidas</span>
+      <h2>Perguntas frequentes</h2>
+    </div>
+    <div class="faq">
+      <details><summary>O NetInventory é pago?</summary><p>Não. É gratuito, sem plano pago, sem limite de dispositivos ou de usuários e sem cadastro. O único custo possível é o da OpenAI, se você quiser ativar os recursos de IA com a sua própria chave; ele é cobrado direto na sua conta da OpenAI.</p></details>
+      <details><summary>O Windows mostrou “O Windows protegeu o computador”. É seguro?</summary><p>O aviso do SmartScreen aparece para programas ainda sem certificado de assinatura digital. Clique em <strong>Mais informações → Executar assim mesmo</strong>. Se quiser conferir o arquivo, compare o SHA-256 acima com o resultado de <code>Get-FileHash NetInventory-Setup-0.1.0.exe</code> no PowerShell.</p></details>
+      <details><summary>O scan não encontrou nenhum dispositivo.</summary><p>Quase sempre é a faixa de IP: o padrão é <code>192.168.1.0/24</code>, e a sua rede pode usar outra. Veja o seu IPv4 com <code>ipconfig</code> e ajuste em <a href="#configurar" style="color: var(--primary);">Configurações → Scan da rede</a>. Confira também se o computador do NetInventory está na mesma rede (e não só no Wi-Fi de visitantes).</p></details>
+      <details><summary>O código é aberto?</summary><p>Sim, sob a licença MIT. O código completo está no <a href="https://github.com/douglaspiero/net-inventory-ia" target="_blank" rel="noopener" style="color: var(--primary);">GitHub</a>: você pode auditar o que o instalador faz, compilar a sua própria versão e contribuir. Falhas de segurança podem ser reportadas em privado pela aba Security do repositório.</p></details>
+      <details><summary>Mais de uma pessoa pode usar?</summary><p>Sim. O administrador cria um usuário para cada pessoa em <a href="#usuarios" style="color: var(--primary);">Usuários e acessos</a> e escolhe o perfil: Administrador, Operador ou Visualizador. Todos acessam pelo navegador, de qualquer computador da rede.</p></details>
+      <details><summary>Preciso deixar o computador ligado?</summary><p>Sim. O NetInventory roda como serviço nesse computador: enquanto ele estiver ligado, os scans automáticos e o monitoramento das ligações continuam funcionando, mesmo sem ninguém logado.</p></details>
+      <details><summary>Os outros computadores não conseguem abrir o painel.</summary><p>Confira se a rede está marcada como <strong>Privada</strong> no Windows (a regra de firewall vale para redes privadas e de domínio) e use o IP do computador onde o NetInventory foi instalado, por exemplo <code>http://192.168.1.20:3000</code>.</p></details>
+      <details><summary>Meus dados vão para a nuvem?</summary><p>Não. O inventário, o histórico e os usuários ficam em um banco local, em <code>C:\ProgramData\NetInventory</code>. Só os recursos de IA, quando você usa, enviam dados — já mascarados — para a OpenAI.</p></details>
+      <details><summary>Como atualizo ou desinstalo?</summary><p>Para atualizar, basta executar o instalador da nova versão: os dados são mantidos. Para remover, use “Adicionar ou remover programas”. A pasta de dados é preservada; apague-a manualmente se quiser começar do zero.</p></details>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span class="brand" style="font-size: 15px;"><img src="logo.png" alt="" style="width: 22px; height: 22px;">NetInventory</span>
+    <span>© <span id="year">2026</span> NetInventory · Gratuito · Desenvolvido por <a href="#sobre">Douglas Piero</a> · <a href="https://github.com/douglaspiero/net-inventory-ia" target="_blank" rel="noopener">GitHub</a><span data-linkedin-footer hidden> · <a data-linkedin target="_blank" rel="noopener">LinkedIn</a></span></span>
+  </div>
+</footer>
+
+<script>
+  const SHOTS = [
+    { id: "login", label: "Login", url: "/login", caption: "Acesso protegido por usuário e senha. No primeiro acesso você cria o administrador." },
+    { id: "inventario", label: "Inventário", url: "/", caption: "Todos os dispositivos da rede com tipo, fabricante, status, IPv4, IPv6 e MAC. Busca, filtros e scan sob demanda." },
+    { id: "topologia", label: "Topologia", url: "/topology", caption: "Mapa interativo a partir do gateway. Ligações monitoradas ficam verdes ou vermelhas em tempo real." },
+    { id: "ligacoes", label: "Ligações", url: "/topology/links", caption: "Cadastre os links importantes da rede: cada um é testado a cada 30 segundos, com latência e tempo fora do ar." },
+    { id: "historico", label: "Histórico", url: "/history", caption: "Linha do tempo de tudo o que mudou: dispositivos novos, mudanças de IP e hostname, quedas e retornos — com resumo por IA." },
+    { id: "users", label: "Usuários", url: "/users", caption: "Um acesso para cada pessoa da equipe, com perfil de Administrador, Operador ou Visualizador. Desativar bloqueia na hora, sem apagar." },
+    { id: "dispositivo", label: "Dispositivo", url: "/devices/…", caption: "Detalhes de cada equipamento: apelido, tipo, notas, portas abertas e análise de segurança." },
+  ];
+  const tabs = document.getElementById("tabs");
+  const img = document.getElementById("shot");
+  function show(i) {
+    const s = SHOTS[i];
+    img.src = `screens/${s.id}.webp`;
+    img.alt = `Tela ${s.label} do NetInventory`;
+    img.style.animation = "none"; img.offsetHeight; img.style.animation = "";
+    document.getElementById("shot-url").textContent = `http://192.168.15.10:3000${s.url}`;
+    document.getElementById("shot-caption").textContent = s.caption;
+    [...tabs.children].forEach((t, j) => t.setAttribute("aria-selected", String(i === j)));
+  }
+  SHOTS.forEach((s, i) => {
+    const b = document.createElement("button");
+    b.className = "tab"; b.type = "button"; b.role = "tab"; b.textContent = s.label;
+    b.onclick = () => show(i);
+    tabs.append(b);
+    new Image().src = `screens/${s.id}.webp`;
+  });
+  show(0);
+
+  document.getElementById("year").textContent = new Date().getFullYear();
+
+  // Link do LinkedIn do desenvolvedor: preencha aqui e os botões aparecem.
+  const LINKEDIN_URL = "";
+  if (LINKEDIN_URL) {
+    document.querySelectorAll("[data-linkedin]").forEach((a) => { a.href = LINKEDIN_URL; a.hidden = false; });
+    document.querySelectorAll("[data-linkedin-footer]").forEach((el) => (el.hidden = false));
+  }
+
+  const io = new IntersectionObserver((entries) => entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } }), { threshold: 0.12 });
+  document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+</script>
+</body>
+</html>
