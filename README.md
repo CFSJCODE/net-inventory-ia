@@ -125,4 +125,4 @@ Sugestões e contribuições são bem-vindas — abra uma [issue](https://github
 
 ## Licença e autor
 
-[MIT](LICENSE) © 2026 **Douglas Piero** — criador e desenvolvedor do NetInventory.
+[MIT](LICENSE) © 2026 **[Douglas Piero](https://www.linkedin.com/in/douglaspiero/)** — criador e desenvolvedor do NetInventory.
