@@ -15,6 +15,7 @@
 
 # next.js
 /.next/
+/.next-installer/
 /out/
 
 # production
@@ -32,6 +33,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# database
+/prisma/dev.db
+/prisma/dev.db-journal
 
 # vercel
 .vercel
@@ -39,3 +45,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# instalador Windows (gerados por npm run build:installer)
+/installer/.cache/
+/installer/dist/
+/installer/output/
+/site/downloads/

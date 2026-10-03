@@ -1,0 +1,171 @@
+import { prisma } from "@/lib/prisma";
+import { scanNetwork } from "@/lib/network/scanner";
+import { classifyDevice } from "@/lib/network/classify";
+import type { Prisma } from "@prisma/client";
+
+export interface ScanResult {
+  devicesFound: number;
+  newDevices: number;
+}
+
+/** Um scan por vez: dois em paralelo (agendado + manual) disputariam a tabela ARP e duplicariam eventos. */
+const state = globalThis as typeof globalThis & { __scanRunning?: boolean };
+
+export class ScanInProgressError extends Error {
+  constructor() {
+    super("Já existe um scan em andamento. Aguarde ele terminar.");
+  }
+}
+
+export function isScanRunning(): boolean {
+  return !!state.__scanRunning;
+}
+
+export async function runScanAndPersist(cidr: string): Promise<ScanResult> {
+  if (state.__scanRunning) throw new ScanInProgressError();
+  state.__scanRunning = true;
+  try {
+    return await scanAndPersist(cidr);
+  } finally {
+    state.__scanRunning = false;
+  }
+}
+
+async function scanAndPersist(cidr: string): Promise<ScanResult> {
+  const scanRun = await prisma.scanRun.create({ data: { cidr } });
+
+  try {
+    const discovered = await scanNetwork(cidr);
+    const now = new Date();
+    const seenDeviceIds = new Set<string>();
+    let newDevices = 0;
+
+    for (const host of discovered) {
+      const existing = host.mac
+        ? await prisma.device.findUnique({ where: { mac: host.mac } })
+        : await prisma.device.findFirst({ where: { ip: host.ip, mac: null } });
+
+      if (!existing) {
+        const device = await prisma.device.create({
+          data: {
+            ip: host.ip,
+            mac: host.mac,
+            ipv6: host.ipv6.join(",") || null,
+            hostname: host.hostname,
+            vendor: host.vendor,
+            type: host.type,
+            openPorts: host.openPorts.join(","),
+            status: "ONLINE",
+            firstSeenAt: now,
+            lastSeenAt: now,
+          },
+        });
+        await prisma.deviceEvent.create({
+          data: {
+            deviceId: device.id,
+            type: "DEVICE_DISCOVERED",
+            message: `Novo dispositivo encontrado na rede (${host.ip})`,
+          },
+        });
+        newDevices++;
+        seenDeviceIds.add(device.id);
+        continue;
+      }
+
+      seenDeviceIds.add(existing.id);
+      const updates: Prisma.DeviceUpdateInput = { lastSeenAt: now };
+      const events: Array<{ type: "IP_CHANGED" | "HOSTNAME_CHANGED" | "WENT_ONLINE"; message: string; previousValue?: string | null; newValue?: string | null }> = [];
+
+      if (existing.ip !== host.ip) {
+        events.push({
+          type: "IP_CHANGED",
+          message: `IP mudou de ${existing.ip} para ${host.ip}`,
+          previousValue: existing.ip,
+          newValue: host.ip,
+        });
+        updates.ip = host.ip;
+      }
+
+      if (host.hostname && existing.hostname !== host.hostname) {
+        events.push({
+          type: "HOSTNAME_CHANGED",
+          message: `Hostname mudou de "${existing.hostname ?? "desconhecido"}" para "${host.hostname}"`,
+          previousValue: existing.hostname,
+          newValue: host.hostname,
+        });
+        updates.hostname = host.hostname;
+      }
+
+      if (existing.status !== "ONLINE") {
+        events.push({ type: "WENT_ONLINE", message: "Dispositivo voltou a ficar online" });
+        updates.status = "ONLINE";
+      }
+
+      if (host.vendor && existing.vendor !== host.vendor) updates.vendor = host.vendor;
+      if (host.openPorts.length) updates.openPorts = host.openPorts.join(",");
+      // Só substitui quando o dispositivo respondeu via IPv6 neste scan: aparelhos em repouso
+      // (ex: celular com tela apagada) nem sempre respondem, e não queremos apagar o que já sabíamos.
+      if (host.ipv6.length && host.ipv6.join(",") !== existing.ipv6) updates.ipv6 = host.ipv6.join(",");
+      // Fabricante (API online com rate limit) e hostname podem falhar em um scan isolado; reclassifica
+      // completando com o que já sabemos do dispositivo, para não trocar o tipo com base em dados parciais.
+      const type = classifyDevice({
+        ip: host.ip,
+        hostname: host.hostname ?? existing.hostname,
+        vendor: host.vendor ?? existing.vendor,
+        openPorts: host.openPorts,
+      });
+      // Tipo travado pelo usuário (identificação manual) nunca é alterado pelo scan.
+      if (!existing.typeLocked && type !== "UNKNOWN" && existing.type !== type) updates.type = type;
+
+      await prisma.device.update({ where: { id: existing.id }, data: updates });
+
+      for (const event of events) {
+        await prisma.deviceEvent.create({ data: { deviceId: existing.id, ...event } });
+      }
+    }
+
+    const offlineCandidates = await prisma.device.findMany({
+      where: { status: "ONLINE", id: { notIn: Array.from(seenDeviceIds) } },
+    });
+
+    for (const device of offlineCandidates) {
+      await prisma.device.update({ where: { id: device.id }, data: { status: "OFFLINE" } });
+      await prisma.deviceEvent.create({
+        data: { deviceId: device.id, type: "WENT_OFFLINE", message: "Dispositivo não respondeu ao scan" },
+      });
+    }
+
+    await prisma.scanRun.update({
+      where: { id: scanRun.id },
+      data: {
+        status: "COMPLETED",
+        devicesFound: discovered.length,
+        newDevices,
+        finishedAt: new Date(),
+      },
+    });
+
+    return { devicesFound: discovered.length, newDevices };
+  } catch (error) {
+    await prisma.scanRun.update({
+      where: { id: scanRun.id },
+      data: { status: "FAILED", error: String(error), finishedAt: new Date() },
+    });
+    throw error;
+  }
+}
+
+export const DEFAULT_CIDR = "192.168.1.0/24";
+
+/** Escaneia a faixa configurada e registra quando rodou (usado pelo botão e pelo agendador). */
+export async function runConfiguredScan(): Promise<ScanResult> {
+  const config = await prisma.scanConfig.findFirst();
+  const cidr = config?.cidr ?? DEFAULT_CIDR;
+  const result = await runScanAndPersist(cidr);
+  if (config) {
+    await prisma.scanConfig.update({ where: { id: config.id }, data: { lastRunAt: new Date() } });
+  } else {
+    await prisma.scanConfig.create({ data: { cidr, lastRunAt: new Date() } });
+  }
+  return result;
+}

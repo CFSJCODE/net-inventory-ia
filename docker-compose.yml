@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: netinventory-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: netinventory
+      POSTGRES_PASSWORD: netinventory
+      POSTGRES_DB: netinventory
+    ports:
+      - "5432:5432"
+    volumes:
+      - netinventory-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netinventory -d netinventory"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  netinventory-db-data:
