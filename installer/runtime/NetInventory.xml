@@ -1,0 +1,19 @@
+<!-- Serviço do Windows (WinSW): mantém o NetInventory rodando em segundo plano, inicia com o sistema
+     e reinicia sozinho se o processo cair. NetInventory.exe é o WinSW renomeado. -->
+<service>
+  <id>NetInventory</id>
+  <name>NetInventory</name>
+  <description>Inventário e monitoramento da rede local (painel web na porta configurada, padrão 3000).</description>
+  <executable>%BASE%\node\node.exe</executable>
+  <arguments>"%BASE%\launcher.cjs"</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+  <onfailure action="restart" delay="10 sec" />
+  <resetfailure>1 hour</resetfailure>
+  <logpath>%ProgramData%\NetInventory\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+</service>
