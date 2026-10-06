@@ -13,21 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-
-const DEVICE_TYPES: DeviceType[] = [
-  "COMPUTER",
-  "NOTEBOOK",
-  "MOBILE",
-  "PRINTER",
-  "CAMERA",
-  "NVR",
-  "SWITCH",
-  "ROUTER",
-  "SERVER",
-  "SMART_TV",
-  "IOT",
-  "UNKNOWN",
-];
+import { SimpleSelect } from "@/components/tools/tool-shell";
 
 export function IpRulesCard() {
   const canManage = useCan("settings.manage");
@@ -147,18 +133,7 @@ export function IpRulesCard() {
 
               <div>
                 <label htmlFor="rule-type" className="text-xs text-muted-foreground">Tipo de Dispositivo</label>
-                <select
-                  id="rule-type"
-                  value={type}
-                  onChange={(e) => setType(e.target.value as DeviceType)}
-                  className="mt-1 flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                >
-                  {DEVICE_TYPES.map((dt) => (
-                    <option key={dt} value={dt}>
-                      {DEVICE_TYPE_LABELS[dt]}
-                    </option>
-                  ))}
-                </select>
+                <SimpleSelect id="rule-type" value={type} onChange={setType} options={DEVICE_TYPE_LABELS} className="mt-1 sm:w-full" />
               </div>
 
               <div className="flex flex-col justify-end">
