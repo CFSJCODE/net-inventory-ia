@@ -1,7 +1,7 @@
 import net from "node:net";
 
 /** Portas relevantes para heurística de classificação de dispositivos. */
-export const CLASSIFICATION_PORTS = [22, 80, 443, 445, 554, 3389, 631, 8000, 9100] as const;
+export const CLASSIFICATION_PORTS = [22, 80, 443, 445, 554, 631, 1883, 3389, 8000, 8008, 8009, 9100] as const;
 
 function checkPort(ip: string, port: number, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
