@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { scanNetwork } from "@/lib/network/scanner";
 import { classifyDevice } from "@/lib/network/classify";
+import { findMatchingRule, getIpRules } from "@/lib/network/ip-rules";
 import type { Prisma } from "@prisma/client";
 
 export interface ScanResult {
@@ -35,7 +36,11 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
   const scanRun = await prisma.scanRun.create({ data: { cidr } });
 
   try {
-    const discovered = await scanNetwork(cidr);
+    const [discovered, allRules] = await Promise.all([
+      scanNetwork(cidr),
+      getIpRules().catch(() => []),
+    ]);
+    const ipRules = allRules.filter((r) => r.enabled);
     const now = new Date();
     const seenDeviceIds = new Set<string>();
     let newDevices = 0;
@@ -45,7 +50,12 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
         ? await prisma.device.findUnique({ where: { mac: host.mac } })
         : await prisma.device.findFirst({ where: { ip: host.ip, mac: null } });
 
+      const matchedRule = findMatchingRule(host.ip, ipRules);
+
       if (!existing) {
+        const initialType = matchedRule ? matchedRule.type : host.type;
+        const initialLocked = matchedRule ? matchedRule.lock : false;
+
         const device = await prisma.device.create({
           data: {
             ip: host.ip,
@@ -53,7 +63,8 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
             ipv6: host.ipv6.join(",") || null,
             hostname: host.hostname,
             vendor: host.vendor,
-            type: host.type,
+            type: initialType,
+            typeLocked: initialLocked,
             openPorts: host.openPorts.join(","),
             status: "ONLINE",
             firstSeenAt: now,
@@ -106,16 +117,26 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
       // Só substitui quando o dispositivo respondeu via IPv6 neste scan: aparelhos em repouso
       // (ex: celular com tela apagada) nem sempre respondem, e não queremos apagar o que já sabíamos.
       if (host.ipv6.length && host.ipv6.join(",") !== existing.ipv6) updates.ipv6 = host.ipv6.join(",");
-      // Fabricante (API online com rate limit) e hostname podem falhar em um scan isolado; reclassifica
-      // completando com o que já sabemos do dispositivo, para não trocar o tipo com base em dados parciais.
-      const type = classifyDevice({
-        ip: host.ip,
-        hostname: host.hostname ?? existing.hostname,
-        vendor: host.vendor ?? existing.vendor,
-        openPorts: host.openPorts,
-      });
-      // Tipo travado pelo usuário (identificação manual) nunca é alterado pelo scan.
-      if (!existing.typeLocked && type !== "UNKNOWN" && existing.type !== type) updates.type = type;
+      if (matchedRule) {
+        if (!existing.typeLocked || existing.type === "UNKNOWN") {
+          updates.type = matchedRule.type;
+        }
+        if (matchedRule.lock && !existing.typeLocked) {
+          updates.typeLocked = true;
+        }
+      } else {
+        let type = classifyDevice({
+          ip: host.ip,
+          hostname: host.hostname ?? existing.hostname,
+          vendor: host.vendor ?? existing.vendor,
+          openPorts: host.openPorts,
+        });
+        if (type === "UNKNOWN" && host.type !== "UNKNOWN") {
+          type = host.type;
+        }
+        // Tipo travado pelo usuário (identificação manual) nunca é alterado pelo scan.
+        if (!existing.typeLocked && type !== "UNKNOWN" && existing.type !== type) updates.type = type;
+      }
 
       await prisma.device.update({ where: { id: existing.id }, data: updates });
 

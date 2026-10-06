@@ -34,6 +34,97 @@ export async function updateDevice(id: string, input: DeviceIdentityInput): Prom
   }
 }
 
+export async function quickSetDeviceType(
+  id: string,
+  type: DeviceType,
+  lock?: boolean,
+): Promise<ToolResult<null>> {
+  try {
+    await requirePermission("inventory.edit");
+    if (!DEVICE_TYPES.includes(type)) throw new Error("Tipo inválido.");
+    await prisma.device.update({
+      where: { id },
+      data: {
+        type,
+        ...(lock !== undefined ? { typeLocked: lock } : {}),
+      },
+    });
+    revalidatePath("/");
+    revalidatePath(`/devices/${id}`);
+    return { ok: true, data: null };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function quickToggleDeviceLock(id: string, typeLocked: boolean): Promise<ToolResult<null>> {
+  try {
+    await requirePermission("inventory.edit");
+    await prisma.device.update({
+      where: { id },
+      data: { typeLocked },
+    });
+    revalidatePath("/");
+    revalidatePath(`/devices/${id}`);
+    return { ok: true, data: null };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function bulkSetDeviceType(
+  ids: string[],
+  type: DeviceType,
+  lock: boolean = true,
+): Promise<ToolResult<number>> {
+  try {
+    await requirePermission("inventory.edit");
+    if (!DEVICE_TYPES.includes(type)) throw new Error("Tipo inválido.");
+    if (!ids.length) return { ok: true, data: 0 };
+    const res = await prisma.device.updateMany({
+      where: { id: { in: ids } },
+      data: { type, typeLocked: lock },
+    });
+    revalidatePath("/");
+    return { ok: true, data: res.count };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function bulkToggleDeviceLock(
+  ids: string[],
+  typeLocked: boolean,
+): Promise<ToolResult<number>> {
+  try {
+    await requirePermission("inventory.edit");
+    if (!ids.length) return { ok: true, data: 0 };
+    const res = await prisma.device.updateMany({
+      where: { id: { in: ids } },
+      data: { typeLocked },
+    });
+    revalidatePath("/");
+    return { ok: true, data: res.count };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function bulkDeleteDevices(ids: string[]): Promise<ToolResult<number>> {
+  try {
+    await requirePermission("inventory.edit");
+    if (!ids.length) return { ok: true, data: 0 };
+    await prisma.$transaction([
+      prisma.mapPosition.deleteMany({ where: { nodeId: { in: ids } } }),
+      prisma.device.deleteMany({ where: { id: { in: ids } } }),
+    ]);
+    revalidatePath("/");
+    return { ok: true, data: ids.length };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** Remove o dispositivo; eventos e ligações saem em cascata, a posição no mapa é limpa aqui (não tem FK). */
 export async function deleteDevice(id: string): Promise<void> {
   await requirePermission("inventory.edit");
