@@ -1,0 +1,3 @@
+@echo off
+echo Solicitando privilegios de administrador para atualizar o NetInventory...
+powershell -Command "Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"%~dp0update-service.ps1\"'"
