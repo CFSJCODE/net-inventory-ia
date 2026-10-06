@@ -8,7 +8,6 @@ import { cleanupEphemeralDevices, countEphemeralDevices } from "@/app/actions/de
 import { Field, SimpleSelect } from "@/components/tools/tool-shell";
 import { NotificationSettings } from "@/components/notification-settings";
 import { AiSettingsCard } from "@/components/ai/ai-settings-card";
-import { IpRulesCard } from "@/components/ip-rules-card";
 import { useCan } from "@/components/auth/user-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -112,8 +111,6 @@ export function SettingsForm() {
           </form>
         </CardContent>
       </Card>
-
-      <IpRulesCard />
 
       <NotificationSettings />
 
