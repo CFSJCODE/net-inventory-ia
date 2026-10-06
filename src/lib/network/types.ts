@@ -8,6 +8,8 @@ export type DeviceTypeGuess =
   | "SWITCH"
   | "ROUTER"
   | "SERVER"
+  | "SMART_TV"
+  | "IOT"
   | "UNKNOWN";
 
 export interface DiscoveredHost {

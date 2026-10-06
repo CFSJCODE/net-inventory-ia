@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { isRandomizedMac } from "@/lib/mac";
 import type { ToolResult } from "./tool-actions";
 
-const DEVICE_TYPES: DeviceType[] = ["COMPUTER", "NOTEBOOK", "MOBILE", "PRINTER", "CAMERA", "NVR", "SWITCH", "ROUTER", "SERVER", "UNKNOWN"];
+const DEVICE_TYPES: DeviceType[] = ["COMPUTER", "NOTEBOOK", "MOBILE", "PRINTER", "CAMERA", "NVR", "SWITCH", "ROUTER", "SERVER", "SMART_TV", "IOT", "UNKNOWN"];
 
 export interface DeviceIdentityInput {
   alias: string;

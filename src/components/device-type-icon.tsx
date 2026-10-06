@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { Monitor, Laptop, Printer, Network, Smartphone, Video } from "lucide-react";
+import { Monitor, Laptop, Printer, Network, Smartphone, Video, Tv, Cpu } from "lucide-react";
 import { RouterIcon } from "@/components/ui/router";
 import { ServerIcon } from "@/components/ui/server";
 import { CircleHelpIcon } from "@/components/ui/circle-help";
@@ -22,6 +22,8 @@ const ICONS: Record<DeviceType, IconComponent> = {
   SWITCH: Network,
   ROUTER: RouterIcon,
   SERVER: ServerIcon,
+  SMART_TV: Tv,
+  IOT: Cpu,
   UNKNOWN: CircleHelpIcon,
 };
 
@@ -35,6 +37,8 @@ export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
   SWITCH: "Switch",
   ROUTER: "Roteador",
   SERVER: "Servidor",
+  SMART_TV: "Smart TV",
+  IOT: "Dispositivo IoT",
   UNKNOWN: "Desconhecido",
 };
 

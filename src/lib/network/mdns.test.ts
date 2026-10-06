@@ -23,9 +23,24 @@ describe("inferTypeFromServices", () => {
     expect(inferTypeFromServices([], "TP-Link Archer AX50 Wireless Router")).toBe("ROUTER");
   });
 
-  it("identifica dispositivos móveis e streaming (Chromecast, Apple TV)", () => {
-    expect(inferTypeFromServices(["_googlecast"], "Chromecast Sala")).toBe("COMPUTER");
-    expect(inferTypeFromServices(["_airplay"], "Apple TV")).toBe("COMPUTER");
+  it("identifica Smart TVs e aparelhos de streaming", () => {
+    expect(inferTypeFromServices(["_googlecast"], "Chromecast Sala")).toBe("SMART_TV");
+    expect(inferTypeFromServices(["_media-remotetv"], "LG WebOS TV")).toBe("SMART_TV");
+    expect(inferTypeFromServices([], "Samsung Tizen Smart TV")).toBe("SMART_TV");
+    expect(inferTypeFromServices([], "Roku Express 4K")).toBe("SMART_TV");
+    expect(inferTypeFromServices([], "Apple TV 4K")).toBe("SMART_TV");
+  });
+
+  it("identifica dispositivos IoT e automação residencial", () => {
+    expect(inferTypeFromServices(["_hap"], "Lâmpada Inteligente")).toBe("IOT");
+    expect(inferTypeFromServices(["_esphomelib"], "ESP32 Sensor")).toBe("IOT");
+    expect(inferTypeFromServices([], "Sonoff Mini R2")).toBe("IOT");
+    expect(inferTypeFromServices([], "Shelly Plus 1PM")).toBe("IOT");
+    expect(inferTypeFromServices([], "Tuya Smart Plug")).toBe("IOT");
+    expect(inferTypeFromServices([], "Amazon Echo Dot 5th Gen")).toBe("IOT");
+  });
+
+  it("identifica celulares", () => {
     expect(inferTypeFromServices(["_spotify-connect"], "iPhone 15")).toBe("MOBILE");
   });
 

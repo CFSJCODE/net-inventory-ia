@@ -4,7 +4,7 @@ import { findingsForPorts, parsePorts, type SecurityFinding, type Severity } fro
 import { Redactor } from "./redact";
 import { chatWithTools, structuredResponse, type ToolHandler } from "./client";
 
-const DEVICE_TYPES: DeviceType[] = ["COMPUTER", "NOTEBOOK", "MOBILE", "PRINTER", "CAMERA", "NVR", "SWITCH", "ROUTER", "SERVER", "UNKNOWN"];
+const DEVICE_TYPES: DeviceType[] = ["COMPUTER", "NOTEBOOK", "MOBILE", "PRINTER", "CAMERA", "NVR", "SWITCH", "ROUTER", "SERVER", "SMART_TV", "IOT", "UNKNOWN"];
 
 const BASE_CONTEXT =
   "Você é um assistente de redes de um app de inventário de rede doméstica/pequena empresa. Responda sempre em português do Brasil, " +

@@ -24,6 +24,8 @@ const DEVICE_TYPES: DeviceType[] = [
   "SWITCH",
   "ROUTER",
   "SERVER",
+  "SMART_TV",
+  "IOT",
   "UNKNOWN",
 ];
 

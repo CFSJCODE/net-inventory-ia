@@ -17,6 +17,8 @@ enum DeviceType {
   SWITCH
   ROUTER
   SERVER
+  SMART_TV
+  IOT
   UNKNOWN
 }
 

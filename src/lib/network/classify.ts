@@ -6,6 +6,8 @@ const SERVER_VENDORS = ["synology", "qnap", "dell", "vmware", "microsoft (hyper-
 const PRINTER_VENDORS = ["brother", "ricoh", "xerox", "epson", "canon"];
 const MOBILE_VENDORS = ["xiaomi", "samsung", "motorola", "apple", "oppo", "vivo mobile", "realme", "oneplus", "huawei device", "honor device", "google"];
 const CAMERA_VENDORS = ["hikvision", "dahua", "intelbras", "reolink", "foscam", "axis communications", "vivotek", "amcrest"];
+const SMART_TV_VENDORS = ["lg electronics", "roku", "tcl", "hisense", "vestel", "vizio"];
+const IOT_VENDORS = ["espressif", "tuya", "sonoff", "shelly", "broadlink", "itead", "raspberry pi", "arduino", "wemos", "belkin", "lutron", "wyze"];
 
 interface ClassifyInput {
   ip: string;
@@ -46,6 +48,26 @@ export function classifyDevice({ ip, hostname, vendor, openPorts }: ClassifyInpu
 
   if (host.includes("switch") || vend.includes("cisco") || host.match(/procurve|catalyst|aruba/)) {
     return "SWITCH";
+  }
+
+  // Smart TVs e Streaming (Chromecast, Roku, Fire TV, Apple TV, WebOS, Tizen)
+  const looksLikeSmartTv =
+    host.match(/smarttv|smart-tv|webos|tizen|bravia|roku|firetv|firestick|chromecast|appletv|apple-tv|mibox|mi-box|androidtv|android-tv|tv-box|tvbox/) ||
+    SMART_TV_VENDORS.some((v) => vend.includes(v)) ||
+    (host.includes("tv") && !host.includes("tvr")) ||
+    hasPort(8008) ||
+    hasPort(8009);
+  if (looksLikeSmartTv) {
+    return "SMART_TV";
+  }
+
+  // IoT / Automação / Sensores / Lâmpadas / Tomadas inteligentes / Espressif ESP32 / Alexa / Google Home
+  const looksLikeIot =
+    IOT_VENDORS.some((v) => vend.includes(v)) ||
+    host.match(/esp_|espressif|tasmota|wled|sonoff|shelly|tuya|smartlife|smart-plug|smart-bulb|homeassistant|home-assistant|echo-dot|echodot|nest-mini|alexa\b/) ||
+    hasPort(1883);
+  if (looksLikeIot) {
+    return "IOT";
   }
 
   if (

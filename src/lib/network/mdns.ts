@@ -109,11 +109,49 @@ export function inferTypeFromServices(services: string[], textInfo: string): Dev
     return "ROUTER";
   }
 
-  // Celulares e streaming residencial
-  if (services.includes("_googlecast") || services.includes("_airplay") || services.includes("_spotify-connect")) {
-    if (lower.includes("tv") || lower.includes("chromecast") || lower.includes("bravia") || lower.includes("roku")) {
-      return "COMPUTER"; // ou Smart TV / Mídia
-    }
+  // Smart TVs e Aparelhos de Streaming
+  if (
+    services.includes("_googlecast") ||
+    services.includes("_media-remotetv") ||
+    lower.includes("smart tv") ||
+    lower.includes("smart-tv") ||
+    lower.includes("chromecast") ||
+    lower.includes("bravia") ||
+    lower.includes("roku") ||
+    lower.includes("firetv") ||
+    lower.includes("webos") ||
+    lower.includes("tizen") ||
+    lower.includes("apple tv") ||
+    lower.includes("mibox") ||
+    (lower.includes("tv") && !lower.includes("tvr"))
+  ) {
+    return "SMART_TV";
+  }
+
+  // Dispositivos IoT / Automação / Sensores / Lâmpadas / Tomadas / Assistentes de voz
+  if (
+    services.includes("_hap") ||
+    services.includes("_matter") ||
+    services.includes("_esphomelib") ||
+    services.includes("_alexa") ||
+    lower.includes("esp32") ||
+    lower.includes("esp8266") ||
+    lower.includes("tasmota") ||
+    lower.includes("shelly") ||
+    lower.includes("sonoff") ||
+    lower.includes("tuya") ||
+    lower.includes("smart-plug") ||
+    lower.includes("smart-bulb") ||
+    lower.includes("echo dot") ||
+    lower.includes("nest mini") ||
+    lower.includes("homepod") ||
+    lower.includes("home assistant")
+  ) {
+    return "IOT";
+  }
+
+  // Celulares e streaming de áudio
+  if (services.includes("_airplay") || services.includes("_spotify-connect")) {
     return "MOBILE";
   }
 
