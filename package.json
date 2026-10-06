@@ -1,13 +1,13 @@
 {
   "name": "netinventory",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Inventário, mapa e monitoramento da rede local com assistente de IA.",
   "license": "MIT",
   "author": "Douglas Piero",
   "repository": {
     "type": "git",
-    "url": "https://github.com/douglaspiero/net-inventory-ia.git"
+    "url": "https://github.com/CFSJCODE/net-inventory-ia.git"
   },
   "scripts": {
     "dev": "next dev",

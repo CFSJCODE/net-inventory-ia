@@ -1,0 +1,48 @@
+name: Release Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-installer:
+    name: Build & Publish Windows Installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Run Tests
+        run: npm test
+
+      - name: Build Installer (.exe)
+        run: npm run build:installer
+
+      - name: Upload Installer to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/output/NetInventory-Setup-*.exe
+          generate_release_notes: true
+          draft: false
+          prerelease: false
