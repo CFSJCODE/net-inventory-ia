@@ -76,6 +76,10 @@ begin
     Exec(Service, 'stop', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec(Service, 'uninstall', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
+  // Força o encerramento de qualquer processo node/NetInventory residual para destravar os arquivos em {app}
+  Exec('taskkill.exe', '/F /T /IM NetInventory.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill.exe', '/F /T /IM node.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(1500);
   Result := '';
 end;
 
