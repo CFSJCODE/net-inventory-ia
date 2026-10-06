@@ -15,10 +15,10 @@ describe("AI Providers Configuration", () => {
     const gemini = PROVIDERS.gemini;
     expect(gemini.name).toBe("Google Gemini");
     expect(gemini.defaultBaseUrl).toContain("generativelanguage.googleapis.com");
-    expect(gemini.defaultModel).toBe("gemini-2.5-flash");
+    expect(gemini.defaultModel).toBe("gemini-3.8-flash");
     expect(gemini.requiresApiKey).toBe(true);
     expect(gemini.apiKeyHelpUrl).toBe("https://aistudio.google.com/apikey");
-    expect(gemini.models.some((m) => m.id === "gemini-2.5-flash" && m.free)).toBe(true);
+    expect(gemini.models.some((m) => m.id === "gemini-3.8-flash" && m.free)).toBe(true);
   });
 
   it("OpenRouter inclui modelos com sufixo :free para uso gratuito", () => {

@@ -43,7 +43,12 @@ export interface AiStatus {
 }
 
 export async function getAiStatus(): Promise<AiStatus> {
-  const user = await requireSession();
+  let user = null;
+  try {
+    user = await requireSession();
+  } catch {
+    // Sessão ausente ou expirada: retorna status público/seguro sem quebrar renderização
+  }
   const config = await getAiConfig();
   const providerDef = PROVIDERS[config.provider] ?? PROVIDERS.gemini;
   const isConfigured = config.provider === "ollama" ? true : !!config.apiKey;
@@ -56,14 +61,18 @@ export async function getAiStatus(): Promise<AiStatus> {
     baseUrl: config.baseUrl,
     keyHint: config.apiKey ? config.apiKey.slice(-4) : null,
     requiresApiKey: providerDef.requiresApiKey,
-    onboardingPending: !isConfigured && can(user.role, "settings.manage") && !(await isAiOnboardingDismissed(user.id)),
+    onboardingPending: user ? !isConfigured && can(user.role, "settings.manage") && !(await isAiOnboardingDismissed(user.id)) : false,
   };
 }
 
 /** "Agora não" no aviso da chave: não mostra mais para este usuário nesta instalação. */
 export async function dismissAiKeyOnboarding(): Promise<AiStatus> {
-  const user = await requireSession();
-  await dismissAiOnboarding(user.id);
+  try {
+    const user = await requireSession();
+    await dismissAiOnboarding(user.id);
+  } catch {
+    // Silencia se não autenticado
+  }
   return getAiStatus();
 }
 
@@ -77,8 +86,8 @@ export async function saveAiSettings(input: {
   model: string;
   baseUrl?: string;
 }): Promise<ToolResult<AiStatus>> {
-  await requirePermission("settings.manage");
   return run(async () => {
+    await requirePermission("settings.manage");
     const provider = input.provider in PROVIDERS ? input.provider : "gemini";
     const providerDef = PROVIDERS[provider];
     const apiKey = input.apiKey?.trim() || undefined;
@@ -107,15 +116,17 @@ export async function saveAiSettings(input: {
   });
 }
 
-export async function deleteAiKey(): Promise<AiStatus> {
-  await requirePermission("settings.manage");
-  await removeAiKey();
-  return getAiStatus();
+export async function deleteAiKey(): Promise<ToolResult<AiStatus>> {
+  return run(async () => {
+    await requirePermission("settings.manage");
+    await removeAiKey();
+    return getAiStatus();
+  });
 }
 
 export async function aiSuggestIdentities(deviceIds: string[]): Promise<ToolResult<IdentitySuggestion[]>> {
-  await requirePermission("ai.use");
-  return run(() => {
+  return run(async () => {
+    await requirePermission("ai.use");
     if (!deviceIds.length || deviceIds.length > 40) throw new Error("Selecione de 1 a 40 dispositivos.");
     return suggestIdentities(deviceIds);
   });
@@ -136,8 +147,10 @@ export async function getDeviceFindings(deviceId: string): Promise<SecurityFindi
 }
 
 export async function aiExplainDeviceSecurity(deviceId: string): Promise<ToolResult<SecurityReport>> {
-  await requirePermission("ai.use");
-  return run(() => explainDeviceSecurity(deviceId));
+  return run(async () => {
+    await requirePermission("ai.use");
+    return explainDeviceSecurity(deviceId);
+  });
 }
 
 export async function getNetworkFindings() {
@@ -148,13 +161,15 @@ export async function getNetworkFindings() {
 }
 
 export async function aiExplainNetworkSecurity(): Promise<ToolResult<string>> {
-  await requirePermission("ai.use");
-  return run(explainNetworkSecurity);
+  return run(async () => {
+    await requirePermission("ai.use");
+    return explainNetworkSecurity();
+  });
 }
 
 export async function aiSummarizeEvents(period: SummaryPeriod): Promise<ToolResult<string>> {
-  await requirePermission("ai.use");
-  return run(() => {
+  return run(async () => {
+    await requirePermission("ai.use");
     if (period !== "24h" && period !== "7d") throw new Error("Período inválido.");
     return summarizeEvents(period);
   });
@@ -167,8 +182,8 @@ export async function getLatestSummary(): Promise<{ period: string; text: string
 }
 
 export async function aiAsk(messages: ChatMessage[]): Promise<ToolResult<string>> {
-  await requirePermission("ai.use");
-  return run(() => {
+  return run(async () => {
+    await requirePermission("ai.use");
     const clean = messages
       .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
       .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }));

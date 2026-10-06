@@ -103,7 +103,12 @@ export function friendlyError(
   const providerInfo = PROVIDERS[provider] ?? PROVIDERS.gemini;
 
   if (err instanceof OpenAI.APIError) {
-    if (err.status === 401 || err.status === 403) {
+    const isApiKeyError =
+      err.status === 401 ||
+      err.status === 403 ||
+      (err.status === 400 && /api[ _-]?key/i.test(err.message));
+
+    if (isApiKeyError) {
       if (provider === "gemini") {
         return new Error(
           "Chave do Google AI Studio inválida. Obtenha sua chave gratuita em https://aistudio.google.com/apikey e atualize em Configurações.",
@@ -412,8 +417,13 @@ export async function testAiConnection(opts: {
       }
     }
 
-    // Se o erro não for de autenticação (ex.: 401/403), tenta listar os modelos como fallback
-    if (errObj?.status !== 401 && errObj?.status !== 403) {
+    // Se o erro não for de autenticação (ex.: 401/403 ou 400 com API key inválida), tenta listar os modelos como fallback
+    const isAuthErr =
+      errObj?.status === 401 ||
+      errObj?.status === 403 ||
+      (errObj?.status === 400 && /api[ _-]?key/i.test(errObj?.message || ""));
+
+    if (!isAuthErr) {
       try {
         await testClient.models.list();
         return;

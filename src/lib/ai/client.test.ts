@@ -36,6 +36,13 @@ describe("AI Client Helpers", () => {
       expect(err.message).toContain("aistudio.google.com/apikey");
     });
 
+    it("formata erro 400 com API key inválida do Gemini apontando para o AI Studio", () => {
+      const apiErr = new OpenAI.APIError(400, { error: { message: "API key not valid. Please pass a valid API key." } }, "API key not valid", new Headers());
+      const err = friendlyError(apiErr, "gemini-1.5-flash", "gemini");
+      expect(err.message).toContain("Google AI Studio");
+      expect(err.message).toContain("aistudio.google.com/apikey");
+    });
+
     it("formata erro 429 do Gemini apontando para cota", () => {
       const apiErr = new OpenAI.APIError(429, { error: { message: "Quota exceeded" } }, "Quota exceeded", new Headers());
       const err = friendlyError(apiErr, "gemini-2.5-flash", "gemini");

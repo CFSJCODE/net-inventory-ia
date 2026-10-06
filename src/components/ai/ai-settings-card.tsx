@@ -75,8 +75,11 @@ export function AiSettingsCard() {
 
   const remove = useMutation({
     mutationFn: () => deleteAiKey(),
-    onSuccess: (status) => {
-      onStatus(status);
+    onSuccess: (result) => {
+      if (!result.ok) {
+        return toast.error(result.error);
+      }
+      onStatus(result.data);
       toast.success("Chave removida e IA desativada");
     },
     onError: (err) => toast.error(err.message),
