@@ -29,20 +29,20 @@ export function AiUnavailable({ reason, compact = false }: { reason: AiBlockedRe
   return <p className="text-xs text-muted-foreground">Seu perfil de acesso não inclui os recursos de IA.</p>;
 }
 
-/** Aviso exibido no lugar dos recursos de IA quando não há chave da OpenAI configurada. */
+/** Aviso exibido no lugar dos recursos de IA quando não há IA configurada. */
 export function AiNotConfigured({ compact = false }: { compact?: boolean }) {
-  // Só o administrador cadastra a chave; para os outros, o caminho é pedir a ele.
+  // Só o administrador cadastra a chave/provedor; para os outros, o caminho é pedir a ele.
   const canConfigure = useCan("settings.manage");
   if (!canConfigure) {
     return (
       <p className="text-xs text-muted-foreground">
-        {compact ? "IA desativada." : "Recursos de IA desativados."} Peça a um administrador para cadastrar a chave da OpenAI.
+        {compact ? "IA desativada." : "Recursos de IA desativados."} Peça a um administrador para configurar um provedor de IA.
       </p>
     );
   }
   return (
     <p className="text-xs text-muted-foreground">
-      {compact ? "IA desativada." : "Recursos de IA desativados."} Cadastre a chave da OpenAI em{" "}
+      {compact ? "IA desativada." : "Recursos de IA desativados."} Configure um provedor de IA (Google Gemini, OpenRouter, etc.) em{" "}
       <Link href="/settings" className="underline underline-offset-2">
         Configurações
       </Link>

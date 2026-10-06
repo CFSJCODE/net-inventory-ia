@@ -15,7 +15,7 @@ export type Permission =
   | "network.operate"
   /** Alterar o inventário: dispositivos, ligações monitoradas e posições no mapa. */
   | "inventory.edit"
-  /** Recursos de IA (cada uso gasta a chave da OpenAI). */
+  /** Recursos de IA (consulta o provedor de IA configurado). */
   | "ai.use";
 
 export const ROLES: UserRole[] = ["ADMIN", "OPERATOR", "VIEWER"];

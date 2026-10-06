@@ -30,7 +30,7 @@ export const metadata: Metadata = {
   description: "Descoberta automática e inventário da rede local",
 };
 
-export default async function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
   // O middleware só deixa passar sem sessão a tela de login, que é exibida sem sidebar/header.
   const user = await getCurrentUser();
   // Cookie válido, mas usuário desativado/removido ou senha trocada: volta ao login. Na própria tela de

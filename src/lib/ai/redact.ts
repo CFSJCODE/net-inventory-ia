@@ -4,7 +4,7 @@ import { isRandomizedMac } from "@/lib/mac";
 import { displayName } from "@/lib/device-name";
 
 /**
- * Mascaramento do que vai para a OpenAI. IPs, MACs, hostnames e apelidos são trocados por tokens
+ * Mascaramento do que vai para os modelos de IA. IPs, MACs, hostnames e apelidos são trocados por tokens
  * ("dispositivo-3", "ip-7", "mac-2") com um mapa que vive só durante a requisição; a resposta da IA
  * é "desmascarada" localmente antes de ser exibida. Fabricante, tipo e portas vão como estão.
  */

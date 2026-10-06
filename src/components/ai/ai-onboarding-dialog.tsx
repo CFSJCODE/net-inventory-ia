@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -13,6 +13,8 @@ import { EarthIcon } from "@/components/ui/earth";
 import { LockKeyholeIcon } from "@/components/ui/lock-keyhole";
 import { ShieldCheckIcon } from "@/components/ui/shield-check";
 import { SparklesIcon } from "@/components/ui/sparkles";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PROVIDERS, PROVIDER_LIST, type AiProvider } from "@/lib/ai/providers";
 import { useAiStatus } from "./ai-common";
 
 const STEP_DELAY_MS = 450;
@@ -23,43 +25,131 @@ const link = (href: string, text: string) => (
   </a>
 );
 
-const STEPS: { icon: AnimatedIcon; title: string; body: ReactNode }[] = [
-  {
-    icon: EarthIcon,
-    title: "Entre na plataforma da OpenAI",
-    body: (
-      <>
-        Acesse {link("https://platform.openai.com", "platform.openai.com")} e faça login (ou crie uma conta). A API é cobrada à parte do
-        ChatGPT Plus: adicione créditos em {link("https://platform.openai.com/settings/organization/billing", "Settings → Billing")}.
-      </>
-    ),
-  },
-  {
-    icon: LockKeyholeIcon,
-    title: "Crie uma chave secreta",
-    body: (
-      <>
-        Em {link("https://platform.openai.com/api-keys", "API keys")}, clique em <strong>Create new secret key</strong>, dê um nome (ex.:
-        NetInventory) e copie a chave, que começa com <code className="font-mono">sk-</code>. Ela só é exibida uma vez.
-      </>
-    ),
-  },
-  {
-    icon: ShieldCheckIcon,
-    title: "Cole a chave aqui",
-    body: "Ela é testada antes de salvar e fica criptografada no servidor. Dá para trocar ou remover depois em Configurações.",
-  },
-];
+function getProviderSteps(provider: AiProvider): { icon: AnimatedIcon; title: string; body: ReactNode }[] {
+  if (provider === "gemini") {
+    return [
+      {
+        icon: EarthIcon,
+        title: "Acesse o Google AI Studio (100% gratuito)",
+        body: (
+          <>
+            Acesse {link("https://aistudio.google.com/apikey", "aistudio.google.com/apikey")} com sua conta Google. Não é necessário
+            cartão de crédito para a camada gratuita do Gemini.
+          </>
+        ),
+      },
+      {
+        icon: LockKeyholeIcon,
+        title: "Gere sua chave de API",
+        body: (
+          <>
+            Clique em <strong>Create API key</strong>, copie a chave (começa com <code className="font-mono">AIzaSy...</code>) e cole abaixo.
+          </>
+        ),
+      },
+      {
+        icon: ShieldCheckIcon,
+        title: "Cole a chave aqui",
+        body: "A chave é validada e criptografada no seu servidor. O NetInventory usará o modelo rápido e gratuito Gemini 2.5 Flash.",
+      },
+    ];
+  }
+
+  if (provider === "openrouter") {
+    return [
+      {
+        icon: EarthIcon,
+        title: "Acesse o OpenRouter",
+        body: (
+          <>
+            Crie uma conta gratuita em {link("https://openrouter.ai/keys", "openrouter.ai/keys")} para ter acesso a modelos de ponta e modelos
+            gratuitos com sufixo <code className="font-mono">:free</code>.
+          </>
+        ),
+      },
+      {
+        icon: LockKeyholeIcon,
+        title: "Crie uma chave",
+        body: (
+          <>
+            Clique em <strong>Create Key</strong> e copie a chave gerada (começa com <code className="font-mono">sk-or-...</code>).
+          </>
+        ),
+      },
+      {
+        icon: ShieldCheckIcon,
+        title: "Pronto para usar",
+        body: "Cole a chave para ativar a integração com modelos livres.",
+      },
+    ];
+  }
+
+  if (provider === "ollama") {
+    return [
+      {
+        icon: EarthIcon,
+        title: "Instale o Ollama no computador",
+        body: (
+          <>
+            Baixe e execute o Ollama em {link("https://ollama.ai", "ollama.ai")}. Ele roda localmente e não envia dados para a internet.
+          </>
+        ),
+      },
+      {
+        icon: LockKeyholeIcon,
+        title: "Baixe um modelo",
+        body: (
+          <>
+            No terminal, rode <code className="font-mono text-xs">ollama run llama3.2</code> ou <code className="font-mono text-xs">ollama run qwen2.5</code>.
+          </>
+        ),
+      },
+      {
+        icon: ShieldCheckIcon,
+        title: "Conectar localmente",
+        body: "Não requer chave de API! Basta clicar em Salvar para usar o Ollama local em http://localhost:11434.",
+      },
+    ];
+  }
+
+  // Padrão OpenAI
+  return [
+    {
+      icon: EarthIcon,
+      title: "Entre na plataforma da OpenAI",
+      body: (
+        <>
+          Acesse {link("https://platform.openai.com", "platform.openai.com")} e faça login (ou crie uma conta). A API é cobrada à parte do
+          ChatGPT Plus.
+        </>
+      ),
+    },
+    {
+      icon: LockKeyholeIcon,
+      title: "Crie uma chave secreta",
+      body: (
+        <>
+          Em {link("https://platform.openai.com/api-keys", "API keys")}, clique em <strong>Create new secret key</strong> e copie a chave (<code className="font-mono">sk-...</code>).
+        </>
+      ),
+    },
+    {
+      icon: ShieldCheckIcon,
+      title: "Cole a chave aqui",
+      body: "Ela é testada antes de salvar e fica criptografada no servidor.",
+    },
+  ];
+}
 
 /**
- * Aviso de boas-vindas sobre a chave da OpenAI: aparece enquanto não houver chave cadastrada e o
- * usuário não o dispensar — logo após o login ou para quem já estava logado. A dispensa fica no banco
- * (por usuário), então vale em qualquer navegador e volta a aparecer numa instalação nova.
+ * Aviso de boas-vindas para configurar IA: aparece enquanto não houver IA configurada
+ * e o usuário não o dispensar. Permite escolher o provedor (Google Gemini grátis, OpenRouter, etc.).
  */
 export function AiOnboardingDialog() {
   const queryClient = useQueryClient();
   const { data: ai } = useAiStatus();
   const [open, setOpen] = useState(false);
+  const [provider, setProvider] = useState<AiProvider>("gemini");
   const [apiKey, setApiKey] = useState("");
   const sparklesRef = useRef<AnimatedIconHandle>(null);
   const stepRefs = useRef<(AnimatedIconHandle | null)[]>([]);
@@ -68,26 +158,34 @@ export function AiOnboardingDialog() {
     if (ai?.onboardingPending) setOpen(true);
   }, [ai?.onboardingPending]);
 
-  // Ao abrir, anima o título e depois cada passo em sequência, guiando a leitura.
+  const steps = useMemo(() => getProviderSteps(provider), [provider]);
+  const providerDef = PROVIDERS[provider] ?? PROVIDERS.gemini;
+
+  // Ao abrir ou trocar de provedor, anima o título e depois cada passo em sequência
   useEffect(() => {
     if (!open) return;
     const timers = [setTimeout(() => sparklesRef.current?.startAnimation(), 150)];
-    STEPS.forEach((_, i) => timers.push(setTimeout(() => stepRefs.current[i]?.startAnimation(), 600 + i * STEP_DELAY_MS)));
+    steps.forEach((_, i) => timers.push(setTimeout(() => stepRefs.current[i]?.startAnimation(), 600 + i * STEP_DELAY_MS)));
     return () => timers.forEach(clearTimeout);
-  }, [open]);
+  }, [open, steps]);
 
-  // Fecha na hora; a dispensa é gravada no servidor em segundo plano.
   function close() {
     setOpen(false);
     if (ai?.onboardingPending) dismissAiKeyOnboarding().then((status) => queryClient.setQueryData(["ai-status"], status));
   }
 
   const save = useMutation({
-    mutationFn: () => saveAiSettings({ apiKey, model: ai!.model }),
+    mutationFn: () =>
+      saveAiSettings({
+        provider,
+        apiKey: apiKey.trim() || undefined,
+        model: providerDef.defaultModel,
+        baseUrl: providerDef.defaultBaseUrl,
+      }),
     onSuccess: (result) => {
       if (!result.ok) return toast.error(result.error);
       queryClient.setQueryData(["ai-status"], result.data);
-      toast.success("Chave da OpenAI cadastrada — recursos de IA ativados");
+      toast.success("IA configurada e ativada com sucesso!");
       setOpen(false);
     },
     onError: (err) => toast.error(err.message),
@@ -110,16 +208,47 @@ export function AiOnboardingDialog() {
               onMouseEnter={() => sparklesRef.current?.startAnimation()}
               onMouseLeave={() => sparklesRef.current?.stopAnimation()}
             />
-            Ative os recursos de IA
+            Ative os recursos de Inteligência Artificial
           </DialogTitle>
           <DialogDescription>
-            O NetInventory usa a OpenAI para identificar dispositivos, analisar a segurança da rede, resumir eventos e responder no
-            Assistente. Para isso, cadastre a sua chave da API — leva cerca de 2 minutos.
+            O NetInventory pode usar modelos gratuitos como o <strong>Google Gemini</strong> (do Google AI Studio, como no MistakeMap),{" "}
+            <strong>OpenRouter</strong>, ou conectar à <strong>OpenAI (ChatGPT)</strong> e <strong>Ollama Local</strong>.
           </DialogDescription>
         </DialogHeader>
 
-        <ol className="flex flex-col gap-3">
-          {STEPS.map((step, i) => {
+        {/* Escolha do provedor */}
+        <div className="flex flex-col gap-1.5 pt-1">
+          <label className="text-xs font-medium text-muted-foreground">Escolha o provedor de IA:</label>
+          <Select
+            value={provider}
+            onValueChange={(v) => {
+              setProvider(v as AiProvider);
+              setApiKey("");
+            }}
+            items={Object.fromEntries(PROVIDER_LIST.map((p) => [p.id, p.name]))}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PROVIDER_LIST.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  <div className="flex items-center justify-between gap-3 w-full">
+                    <span>{p.name}</span>
+                    {p.badge && (
+                      <span className="text-[10px] text-muted-foreground rounded bg-muted px-1.5 py-0.5">
+                        {p.badge}
+                      </span>
+                    )}
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <ol className="flex flex-col gap-2.5">
+          {steps.map((step, i) => {
             const Icon = step.icon;
             return (
               <li
@@ -137,7 +266,7 @@ export function AiOnboardingDialog() {
                   />
                 </span>
                 <div className="flex flex-col gap-0.5">
-                  <p className="font-medium">
+                  <p className="font-medium text-sm">
                     {i + 1}. {step.title}
                   </p>
                   <p className="text-xs leading-relaxed text-muted-foreground">{step.body}</p>
@@ -147,25 +276,33 @@ export function AiOnboardingDialog() {
           })}
         </ol>
 
-        <form id="ai-onboarding-form" onSubmit={handleSubmit}>
-          <Input
-            type="password"
-            autoComplete="off"
-            placeholder="sk-..."
-            aria-label="Chave da API da OpenAI"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            className="font-mono"
-          />
-        </form>
+        {providerDef.requiresApiKey && (
+          <form id="ai-onboarding-form" onSubmit={handleSubmit}>
+            <Input
+              type="password"
+              autoComplete="off"
+              placeholder={providerDef.apiKeyPlaceholder}
+              aria-label={`Chave da API do ${providerDef.name}`}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              className="font-mono text-sm"
+              required
+            />
+          </form>
+        )}
 
         <DialogFooter>
           <Button variant="outline" onClick={close}>
             Agora não
           </Button>
-          <Button type="submit" form="ai-onboarding-form" disabled={!apiKey.trim() || save.isPending}>
+          <Button
+            type="submit"
+            form="ai-onboarding-form"
+            onClick={!providerDef.requiresApiKey ? handleSubmit : undefined}
+            disabled={(providerDef.requiresApiKey && !apiKey.trim()) || save.isPending}
+          >
             {save.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {save.isPending ? "Testando…" : "Salvar chave"}
+            {save.isPending ? "Testando…" : "Salvar e ativar"}
           </Button>
         </DialogFooter>
       </DialogContent>

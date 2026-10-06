@@ -2,10 +2,10 @@
 
 import { requirePermission, requireSession } from "@/lib/auth/server";
 import { prisma } from "@/lib/prisma";
-import OpenAI from "openai";
-import { friendlyError } from "@/lib/ai/client";
+import { testAiConnection } from "@/lib/ai/client";
 import { can } from "@/lib/auth/permissions";
 import { dismissAiOnboarding, getAiConfig, isAiOnboardingDismissed, removeAiKey, saveAiConfig } from "@/lib/ai/settings";
+import { PROVIDERS, type AiProvider } from "@/lib/ai/providers";
 import {
   askAssistant,
   explainDeviceSecurity,
@@ -31,21 +31,32 @@ async function run<T>(fn: () => Promise<T>): Promise<ToolResult<T>> {
 
 export interface AiStatus {
   configured: boolean;
+  provider: AiProvider;
+  providerName: string;
   model: string;
+  baseUrl: string;
   /** Últimos 4 caracteres da chave, para o usuário reconhecer qual está em uso. A chave em si nunca vai ao navegador. */
   keyHint: string | null;
+  requiresApiKey: boolean;
   /** Mostrar o aviso de boas-vindas da chave: sem chave, usuário que pode cadastrá-la e ainda não o dispensou. */
   onboardingPending: boolean;
 }
 
 export async function getAiStatus(): Promise<AiStatus> {
   const user = await requireSession();
-  const { apiKey, model } = await getAiConfig();
+  const config = await getAiConfig();
+  const providerDef = PROVIDERS[config.provider] ?? PROVIDERS.gemini;
+  const isConfigured = config.provider === "ollama" ? true : !!config.apiKey;
+
   return {
-    configured: !!apiKey,
-    model,
-    keyHint: apiKey ? apiKey.slice(-4) : null,
-    onboardingPending: !apiKey && can(user.role, "settings.manage") && !(await isAiOnboardingDismissed(user.id)),
+    configured: isConfigured,
+    provider: config.provider,
+    providerName: providerDef.name,
+    model: config.model,
+    baseUrl: config.baseUrl,
+    keyHint: config.apiKey ? config.apiKey.slice(-4) : null,
+    requiresApiKey: providerDef.requiresApiKey,
+    onboardingPending: !isConfigured && can(user.role, "settings.manage") && !(await isAiOnboardingDismissed(user.id)),
   };
 }
 
@@ -57,23 +68,41 @@ export async function dismissAiKeyOnboarding(): Promise<AiStatus> {
 }
 
 /**
- * Salva a chave e o modelo depois de testá-los na OpenAI (consulta o modelo — não gera custo).
- * Sem chave nova, testa a atual com o modelo informado.
+ * Salva o provedor, a chave e o modelo depois de testá-los no provedor escolhido.
+ * Sem chave nova, testa a atual com o provedor/modelo informado.
  */
-export async function saveAiSettings(input: { apiKey?: string; model: string }): Promise<ToolResult<AiStatus>> {
+export async function saveAiSettings(input: {
+  provider: AiProvider;
+  apiKey?: string;
+  model: string;
+  baseUrl?: string;
+}): Promise<ToolResult<AiStatus>> {
   await requirePermission("settings.manage");
   return run(async () => {
+    const provider = input.provider in PROVIDERS ? input.provider : "gemini";
+    const providerDef = PROVIDERS[provider];
     const apiKey = input.apiKey?.trim() || undefined;
-    const model = input.model.trim();
+    const model = input.model?.trim() || providerDef.defaultModel;
+    const baseUrl = input.baseUrl?.trim() || providerDef.defaultBaseUrl;
+
     if (!model) throw new Error("Informe o modelo.");
-    const keyToTest = apiKey ?? (await getAiConfig()).apiKey;
-    if (!keyToTest) throw new Error("Informe a chave da OpenAI.");
-    try {
-      await new OpenAI({ apiKey: keyToTest }).models.retrieve(model);
-    } catch (err) {
-      throw friendlyError(err, model);
+
+    const currentConfig = await getAiConfig();
+    const keyToTest = apiKey ?? (provider === currentConfig.provider ? currentConfig.apiKey : undefined);
+
+    if (providerDef.requiresApiKey && !keyToTest) {
+      throw new Error(`Informe a chave da API para o provedor ${providerDef.name}.`);
     }
-    await saveAiConfig({ apiKey, model });
+
+    // Testa a conexão antes de gravar
+    await testAiConnection({
+      provider,
+      apiKey: keyToTest,
+      model,
+      baseUrl,
+    });
+
+    await saveAiConfig({ provider, apiKey, model, baseUrl });
     return getAiStatus();
   });
 }

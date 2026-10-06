@@ -113,7 +113,7 @@ export function AppSidebar({ username }: { username: string }) {
   function disabledReason(item: NavItem): string | null {
     if (!item.requiresAi) return null;
     if (!can(role, "ai.use")) return "seu perfil de acesso não inclui IA";
-    if (ai?.configured === false) return "cadastre a chave da OpenAI em Configurações";
+    if (ai?.configured === false) return "configure a IA em Configurações";
     return null;
   }
 

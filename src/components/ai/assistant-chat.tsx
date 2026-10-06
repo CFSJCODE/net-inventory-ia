@@ -62,7 +62,7 @@ export function AssistantChat() {
             <div className="flex flex-col gap-3 py-6">
               <p className="text-sm text-muted-foreground">
                 Pergunte sobre a sua rede. O assistente consulta o inventário, o histórico, as ligações e os achados de segurança — só
-                leitura. IPs, MACs e nomes são mascarados antes de ir para a OpenAI.
+                leitura. IPs, MACs e nomes são mascarados antes de serem enviados à IA.
               </p>
               <div className="flex flex-wrap gap-2">
                 {SUGGESTIONS.map((s) => (
