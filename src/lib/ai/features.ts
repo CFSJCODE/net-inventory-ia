@@ -31,7 +31,9 @@ export async function suggestIdentities(deviceIds: string[]): Promise<IdentitySu
     feature: "identify",
     instructions:
       `${BASE_CONTEXT} Para cada dispositivo, deduza o tipo e um nome amigável curto (ex: "Smart TV Samsung", "Celular Xiaomi", ` +
-      `"Lâmpada inteligente Tuya") a partir do fabricante, portas abertas, MAC aleatório (indica celular/notebook moderno), IPv6 e dicas do nome. ` +
+      `"Lâmpada inteligente Tuya", "Echo Dot Alexa") a partir do fabricante, portas abertas, MAC aleatório (indica celular/notebook moderno), IPv6 e dicas do nome. ` +
+      `Tipos suportados: COMPUTER, NOTEBOOK, MOBILE, PRINTER, CAMERA, NVR, SWITCH, ROUTER, SERVER, SMART_TV (Smart TVs, TV Box, Chromecast, Apple TV, Roku), ` +
+      `IOT (lâmpadas, tomadas, sensores, assistentes de voz Alexa/Google Nest, ESP32, automação) e UNKNOWN. ` +
       `Não invente cômodos ou donos. Se não houver evidência suficiente, use confiança baixa e um nome genérico pelo fabricante.`,
     input: { dispositivos: masked },
     schemaName: "sugestoes_identificacao",
