@@ -15,12 +15,34 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { useScanConfig, useScanRuns, useUpdateScanConfig } from "@/hooks/use-devices";
 import { formatDateTime } from "@/lib/format-time";
+import { MAX_SCAN_HOSTS, MIN_SCAN_PREFIX, parseScanCidr } from "@/lib/network/subnet";
 
 const INTERVALS = { off: "Desligado", "5": "A cada 5 minutos", "15": "A cada 15 minutos", "30": "A cada 30 minutos", "60": "A cada 1 hora" };
 type IntervalKey = keyof typeof INTERVALS;
 
 const CLEANUP_DAYS = { "1": "1 dia", "7": "7 dias", "30": "30 dias" };
 type CleanupKey = keyof typeof CLEANUP_DAYS;
+
+const count = (n: number) => n.toLocaleString("pt-BR");
+
+/** Resumo, recalculado a cada tecla, do que o CIDR digitado vai escanear. */
+function describeScanRange(cidr: string): { text: string; error: boolean } {
+  if (!cidr.trim()) {
+    return { text: `Ex: 192.168.1.0/24 escaneia 254 endereços, de 192.168.1.1 a 192.168.1.254. Aceita de /${MIN_SCAN_PREFIX} (${count(MAX_SCAN_HOSTS)} endereços) a /32 (1 endereço).`, error: false };
+  }
+  try {
+    const info = parseScanCidr(cidr);
+    const network = info.baseAdjusted ? ` Endereço de rede: ${info.network}/${info.prefix}.` : "";
+    if (info.hostCount === 1) return { text: `Escaneia 1 endereço: ${info.firstHost}.${network}`, error: false };
+    const details = info.broadcast === null ? "enlace ponto a ponto, RFC 3021" : `máscara ${info.mask}, broadcast ${info.broadcast}`;
+    return {
+      text: `Escaneia ${count(info.hostCount)} endereços, de ${info.firstHost} a ${info.lastHost} (${details}).${network}`,
+      error: false,
+    };
+  } catch (err) {
+    return { text: (err as Error).message, error: true };
+  }
+}
 
 function EphemeralCleanup() {
   const queryClient = useQueryClient();
@@ -65,6 +87,7 @@ export function SettingsForm() {
   const { mutate, isPending } = useUpdateScanConfig();
   const [cidr, setCidr] = useState("");
   const [scanInterval, setScanInterval] = useState<IntervalKey>("off");
+  const range = describeScanRange(cidr);
 
   useEffect(() => {
     if (config?.cidr) setCidr(config.cidr);
@@ -93,19 +116,28 @@ export function SettingsForm() {
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
             <fieldset disabled={!canManage} className="flex flex-col gap-3 sm:flex-row sm:items-end">
               <Field label="Faixa de IP (CIDR)" htmlFor="cidr">
-                <Input id="cidr" placeholder="192.168.1.0/24" value={cidr} onChange={(e) => setCidr(e.target.value)} disabled={isLoading} className="sm:w-56" />
+                <Input
+                  id="cidr"
+                  placeholder="192.168.1.0/24"
+                  value={cidr}
+                  onChange={(e) => setCidr(e.target.value)}
+                  disabled={isLoading}
+                  aria-invalid={range.error || undefined}
+                  aria-describedby="cidr-range"
+                  className="sm:w-56"
+                />
               </Field>
               <Field label="Scan automático" htmlFor="interval">
                 <SimpleSelect id="interval" value={scanInterval} onChange={setScanInterval} options={INTERVALS} className="sm:w-52" />
               </Field>
               {canManage && (
-                <Button type="submit" disabled={isPending || !cidr} className="w-fit">
+                <Button type="submit" disabled={isPending || !cidr || range.error} className="w-fit">
                   Salvar
                 </Button>
               )}
             </fieldset>
-            <p className="text-xs text-muted-foreground">
-              Ex: 192.168.1.0/24 escaneia de 192.168.1.1 a 192.168.1.254. Suporta prefixos de /20 a /30 (até 4.094 endereços).
+            <p id="cidr-range" aria-live="polite" className="text-xs text-muted-foreground">
+              <span className={range.error ? "text-destructive" : undefined}>{range.text}</span>
               {config?.lastRunAt && ` Último scan: ${formatDateTime(config.lastRunAt)}.`}
               {!canManage && " Somente administradores alteram esta configuração."}
             </p>

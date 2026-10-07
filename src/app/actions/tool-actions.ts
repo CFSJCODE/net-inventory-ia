@@ -12,6 +12,7 @@ import { DNS_RECORD_TYPES, dnsQuery, type DnsQueryResult, type DnsRecordType } f
 import { isUnicastMac, readArpTable, type ArpEntry } from "@/lib/network/tools/arp-table";
 import { readRouteTable, type RouteEntry } from "@/lib/network/tools/route-table";
 import { resolveVendors } from "@/lib/network/vendor-lookup";
+import { parseCidr } from "@/lib/network/subnet";
 import { displayName } from "@/lib/device-name";
 
 /**
@@ -41,13 +42,13 @@ async function currentCidr(): Promise<string> {
   return config?.cidr ?? "192.168.1.0/24";
 }
 
-/** Endereço de broadcast de um CIDR (ex: 192.168.15.0/24 -> 192.168.15.255). */
+/** Endereço de broadcast de um CIDR (ex: 192.168.15.0/24 -> 192.168.15.255); vazio em /31 e /32. */
 function broadcastOf(cidr: string): string {
-  const [base, prefixStr] = cidr.split("/");
-  const baseInt = base.split(".").reduce((acc, octet) => (acc << 8) + Number(octet), 0) >>> 0;
-  const hostMask = (2 ** (32 - Number(prefixStr)) - 1) >>> 0;
-  const bcast = (baseInt | hostMask) >>> 0;
-  return [24, 16, 8, 0].map((shift) => (bcast >>> shift) & 255).join(".");
+  try {
+    return parseCidr(cidr).broadcast ?? "";
+  } catch {
+    return "";
+  }
 }
 
 export async function getToolDefaults(): Promise<{ cidr: string; broadcast: string; gateway: string }> {
