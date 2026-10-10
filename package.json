@@ -1,6 +1,6 @@
 {
   "name": "netinventory",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "description": "Inventário, mapa e monitoramento da rede local com assistente de IA.",
   "license": "MIT",

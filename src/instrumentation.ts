@@ -4,7 +4,10 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const { startLinkMonitor } = await import("@/lib/network/link-monitor");
     const { startScanScheduler } = await import("@/lib/scan-scheduler");
+    const { mergeDuplicateDevices } = await import("@/lib/device-merge");
     startLinkMonitor();
     startScanScheduler();
+    // Funde duplicados gravados por versões anteriores logo ao subir, sem esperar o próximo scan.
+    void mergeDuplicateDevices().catch((err) => console.error("[device-merge] falha ao fundir duplicados:", err));
   }
 }
