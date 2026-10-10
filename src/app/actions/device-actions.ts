@@ -14,6 +14,23 @@ export interface DeviceIdentityInput {
   type: DeviceType;
   typeLocked: boolean;
   notes: string;
+  /** "Conectado a": id do equipamento onde o dispositivo está ligado; "" = automático (SNMP ou gateway). */
+  uplinkId?: string;
+}
+
+/** Valida o "conectado a": precisa existir e não pode fechar um ciclo (A ligado em B ligado em A). */
+async function resolveUplink(id: string, uplinkId: string): Promise<string | null> {
+  if (!uplinkId) return null;
+  if (uplinkId === id) throw new Error("Um dispositivo não pode estar conectado a si mesmo.");
+  const seen = new Set([id]);
+  for (let cur: string | null = uplinkId; cur; ) {
+    if (seen.has(cur)) throw new Error("Essa ligação formaria um ciclo no mapa.");
+    seen.add(cur);
+    const row: { uplinkId: string | null } | null = await prisma.device.findUnique({ where: { id: cur }, select: { uplinkId: true } });
+    if (!row) throw new Error("Equipamento de destino não encontrado.");
+    cur = row.uplinkId;
+  }
+  return uplinkId;
 }
 
 /** Identificação manual: apelido, tipo (opcionalmente travado contra o scan) e notas. */
@@ -23,9 +40,10 @@ export async function updateDevice(id: string, input: DeviceIdentityInput): Prom
     if (!DEVICE_TYPES.includes(input.type)) throw new Error("Tipo inválido.");
     const alias = input.alias.trim().slice(0, 80);
     const notes = input.notes.trim().slice(0, 2000);
+    const uplink = input.uplinkId === undefined ? {} : { uplinkId: await resolveUplink(id, input.uplinkId) };
     await prisma.device.update({
       where: { id },
-      data: { alias: alias || null, type: input.type, typeLocked: input.typeLocked, notes: notes || null },
+      data: { alias: alias || null, type: input.type, typeLocked: input.typeLocked, notes: notes || null, ...uplink },
     });
     revalidatePath(`/devices/${id}`);
     return { ok: true, data: null };

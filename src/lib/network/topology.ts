@@ -3,8 +3,8 @@ import type { DeviceStatus, DeviceType, LinkStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { displayName } from "@/lib/device-name";
 import { readRouteTable } from "./tools/route-table";
-import { snmpQuery } from "./tools/snmp";
 import { mapWithConcurrency } from "./concurrency";
+import { placeByFdb, readSwitchFdb, type FdbEntry, type Placement } from "./switch-fdb";
 
 export type TopologyRole = "internet" | "gateway" | "infra" | "device";
 
@@ -28,9 +28,10 @@ export interface TopologyEdge {
   /**
    * confirmed: ligação lida da tabela de MACs de um switch via SNMP (BRIDGE-MIB).
    * inferred: sem essa informação, assumimos ligação direta ao gateway.
+   * uplink: "conectado a" informado pelo usuário na página do dispositivo (sem monitoramento).
    * manual: ligação cadastrada pelo usuário, monitorada periodicamente (tem status).
    */
-  kind: "wan" | "confirmed" | "inferred" | "manual";
+  kind: "wan" | "confirmed" | "inferred" | "uplink" | "manual";
   label?: string;
   /** false = ligação extra (ex: segundo caminho); desenhada, mas não define a posição na árvore. */
   tree: boolean;
@@ -53,6 +54,10 @@ export interface Topology {
   edges: TopologyEdge[];
   gatewayIp: string | null;
   snmp: SnmpProbeResult[] | null;
+  /** true enquanto a primeira leitura SNMP roda em segundo plano: o cliente deve recarregar em seguida. */
+  snmpPending: boolean;
+  /** Community usada na descoberta automática (só enviada a quem pode operar a rede). */
+  snmpCommunity?: string;
 }
 
 // A tabela de rotas (PowerShell, ~1-3s) muda raramente; o mapa é recarregado com frequência.
@@ -67,16 +72,79 @@ async function readRoutesCached() {
 const INFRA_TYPES: DeviceType[] = ["ROUTER", "SWITCH"];
 const INTERNET_ID = "internet";
 
-// BRIDGE-MIB dot1dTpFdbPort e Q-BRIDGE-MIB dot1qTpFdbPort: MAC aprendido -> porta da bridge.
-// O MAC vem codificado nos 6 últimos componentes do OID (em decimal), o valor é o número da porta.
-const FDB_OIDS = ["1.3.6.1.2.1.17.4.3.1.2", "1.3.6.1.2.1.17.7.1.2.2.1.2"];
+const SETTING_COMMUNITY = "topology.snmpCommunity";
+const SETTING_MEMORY = "topology.fdbMemory";
+const DEFAULT_COMMUNITY = "public";
+const FDB_TTL_MS = 5 * 60_000;
+const MEMORY_MAX_AGE_MS = 30 * 86_400_000;
 
-function macFromOidSuffix(oid: string): string {
-  return oid
-    .split(".")
-    .slice(-6)
-    .map((n) => Number(n).toString(16).padStart(2, "0").toUpperCase())
-    .join(":");
+/** Community usada na descoberta automática: a última informada no mapa, ou "public". */
+export async function storedCommunity(): Promise<string> {
+  const row = await prisma.appSetting.findUnique({ where: { key: SETTING_COMMUNITY } }).catch(() => null);
+  return row?.value || DEFAULT_COMMUNITY;
+}
+
+async function saveCommunity(value: string) {
+  await prisma.appSetting.upsert({ where: { key: SETTING_COMMUNITY }, create: { key: SETTING_COMMUNITY, value }, update: { value } });
+}
+
+interface FdbSnapshot {
+  community: string;
+  at: number;
+  results: { swId: string; ip: string; label: string; entries: FdbEntry[]; error?: string }[];
+}
+
+let fdbSnapshot: FdbSnapshot | null = null;
+let fdbRefresh: { community: string; promise: Promise<FdbSnapshot> } | null = null;
+
+function refreshFdb(infra: TopologyNode[], community: string): Promise<FdbSnapshot> {
+  if (fdbRefresh?.community === community) return fdbRefresh.promise;
+  const promise = mapWithConcurrency(infra, 4, async (sw) => {
+    try {
+      return { swId: sw.id, ip: sw.ip!, label: sw.label, entries: await readSwitchFdb(sw.ip!, community) };
+    } catch (err) {
+      return { swId: sw.id, ip: sw.ip!, label: sw.label, entries: [], error: err instanceof Error ? err.message : String(err) };
+    }
+  }).then((results) => {
+    const snap = { community, at: Date.now(), results };
+    fdbSnapshot = snap;
+    return snap;
+  });
+  const current = { community, promise };
+  fdbRefresh = current;
+  promise.finally(() => {
+    if (fdbRefresh === current) fdbRefresh = null;
+  }).catch(() => {});
+  return promise;
+}
+
+type Memory = Map<string, Placement & { at: number }>;
+let memoryCache: Memory | null = null;
+let memorizedAt = 0;
+
+/** Junta as posições lidas agora com as guardadas (MAC -> equipamento/porta) e grava quando há leitura nova. */
+async function rememberPlacements(current: Map<string, Placement>, readAt: number): Promise<Memory> {
+  if (!memoryCache) {
+    memoryCache = new Map();
+    const row = await prisma.appSetting.findUnique({ where: { key: SETTING_MEMORY } }).catch(() => null);
+    try {
+      for (const [mac, v] of Object.entries(JSON.parse(row?.value ?? "{}") as Record<string, Placement & { at: number }>)) {
+        memoryCache.set(mac, v);
+      }
+    } catch {
+      // valor corrompido: recomeça do zero
+    }
+  }
+  if (readAt > memorizedAt && current.size) {
+    memorizedAt = readAt;
+    for (const [mac, p] of current) memoryCache.set(mac, { ...p, at: readAt });
+    for (const [mac, v] of memoryCache) if (readAt - v.at > MEMORY_MAX_AGE_MS) memoryCache.delete(mac);
+    const value = JSON.stringify(Object.fromEntries(memoryCache));
+    await prisma.appSetting
+      .upsert({ where: { key: SETTING_MEMORY }, create: { key: SETTING_MEMORY, value }, update: { value } })
+      .catch(() => {});
+  }
+  return memoryCache;
 }
 
 function localIps(): Set<string> {
@@ -85,15 +153,6 @@ function localIps(): Set<string> {
     for (const a of addrs ?? []) if (a.family === "IPv4" && !a.internal) ips.add(a.address);
   }
   return ips;
-}
-
-async function readSwitchFdb(ip: string, community: string): Promise<{ mac: string; port: string }[]> {
-  const target = { host: ip, community, version: "2c" as const };
-  for (const oid of FDB_OIDS) {
-    const table = await snmpQuery(target, "walk", oid);
-    if (table.rows.length) return table.rows.map(([rowOid, port]) => ({ mac: macFromOidSuffix(rowOid), port }));
-  }
-  return [];
 }
 
 /**
@@ -149,37 +208,49 @@ export async function buildTopology(options: { snmpCommunity?: string } = {}): P
     parent.set(n.id, { to: gatewayId, kind: "inferred" });
   }
 
-  let snmp: SnmpProbeResult[] | null = null;
+  // SNMP automático: a tabela de MACs dos switches é lida em segundo plano e guardada por alguns minutos,
+  // para o mapa não esperar equipamentos que não respondem. O botão "Descobrir" força uma leitura na hora.
+  const community = options.snmpCommunity ?? (await storedCommunity());
+  if (options.snmpCommunity) await saveCommunity(options.snmpCommunity);
+  const infra = nodes.filter((n) => (n.role === "infra" || n.role === "gateway") && n.ip);
+  let snapshot = fdbSnapshot?.community === community ? fdbSnapshot : null;
+  let snmpPending = false;
   if (options.snmpCommunity) {
-    const infra = nodes.filter((n) => (n.role === "infra" || n.role === "gateway") && n.ip);
-    const fdbs = await mapWithConcurrency(infra, 4, async (sw) => {
-      try {
-        const entries = await readSwitchFdb(sw.ip!, options.snmpCommunity!);
-        return { sw, entries, error: undefined };
-      } catch (err) {
-        return { sw, entries: [], error: err instanceof Error ? err.message : String(err) };
-      }
-    });
-    snmp = fdbs.map(({ sw, entries, error }) => ({ ip: sw.ip!, label: sw.label, ok: !error, macsLearned: entries.length, error }));
+    snapshot = await refreshFdb(infra, community);
+  } else if (!snapshot) {
+    refreshFdb(infra, community).catch(() => {});
+    snmpPending = true;
+  } else if (Date.now() - snapshot.at > FDB_TTL_MS) {
+    refreshFdb(infra, community).catch(() => {});
+  }
+  const snmp: SnmpProbeResult[] | null =
+    snapshot?.results.map((r) => ({ ip: r.ip, label: r.label, ok: !r.error, macsLearned: r.entries.length, error: r.error })) ?? null;
 
-    // Um MAC aparece em várias portas ao longo do caminho (as portas de uplink aprendem tudo).
-    // A porta "de borda" onde o dispositivo realmente está é a que aprendeu menos MACs.
-    const portSize = new Map<string, number>();
-    for (const { sw, entries } of fdbs) {
-      for (const e of entries) portSize.set(`${sw.id}|${e.port}`, (portSize.get(`${sw.id}|${e.port}`) ?? 0) + 1);
-    }
-    const best = new Map<string, { swId: string; port: string; size: number }>();
-    for (const { sw, entries } of fdbs) {
-      for (const e of entries) {
-        const size = portSize.get(`${sw.id}|${e.port}`)!;
-        const current = best.get(e.mac);
-        if (!current || size < current.size) best.set(e.mac, { swId: sw.id, port: e.port, size });
-      }
-    }
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const infraByMac = new Map(infra.filter((n) => n.mac).map((n) => [n.mac!, n.id]));
+  const placements = snapshot
+    ? placeByFdb(
+        snapshot.results.filter((r) => !r.error).map((r) => ({ swId: r.swId, entries: r.entries })),
+        infraByMac,
+        gateway?.mac ?? null,
+      )
+    : new Map<string, Placement>();
+  // Dispositivos parados (impressora em repouso, offline) somem da tabela do switch em poucos minutos;
+  // a última porta onde foram vistos fica guardada para o mapa não devolvê-los ao gateway.
+  const memory = await rememberPlacements(placements, snapshot?.at ?? 0);
 
-    for (const n of nodes) {
-      const hit = n.mac ? best.get(n.mac) : undefined;
-      if (hit && hit.swId !== n.id) parent.set(n.id, { to: hit.swId, kind: "confirmed", label: `porta ${hit.port}` });
+  for (const n of nodes) {
+    if (!n.mac || !parent.has(n.id)) continue;
+    const hit = placements.get(n.mac) ?? memory.get(n.mac);
+    if (hit && hit.parentId !== n.id && nodeById.has(hit.parentId)) {
+      parent.set(n.id, { to: hit.parentId, kind: "confirmed", label: hit.label });
+    }
+  }
+
+  // "Conectado a" definido pelo usuário na página do dispositivo: vale mais que o SNMP.
+  for (const d of devices) {
+    if (d.uplinkId && d.uplinkId !== d.id && parent.has(d.id) && nodeById.has(d.uplinkId)) {
+      parent.set(d.id, { to: d.uplinkId, kind: "uplink" });
     }
   }
 
@@ -228,5 +299,5 @@ export async function buildTopology(options: { snmpCommunity?: string } = {}): P
   }
   for (const l of oriented) if (!inTree.has(l.id)) edges.push(manualEdge(l.id, l.fromDeviceId, l.toDeviceId, false));
 
-  return { nodes, edges, gatewayIp, snmp };
+  return { nodes, edges, gatewayIp, snmp, snmpPending, snmpCommunity: community };
 }

@@ -26,6 +26,7 @@ describe("layoutTopology", () => {
       ],
       gatewayIp: null,
       snmp: null,
+      snmpPending: false,
     };
     const { nodes } = layoutTopology(topology, new Set(topology.nodes.map((n) => n.id)));
     expect(nodes).toHaveLength(32);

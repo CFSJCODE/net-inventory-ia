@@ -156,6 +156,7 @@ function EdgeView({ edge, from, to }: { edge: TopologyEdge; from: PositionedNode
   const isManual = edge.kind === "manual";
   const down = isManual && edge.status === "DOWN";
   const dashed = edge.kind === "inferred" || (isManual && edge.status === "UNKNOWN");
+  const thin = edge.kind === "inferred" || edge.kind === "uplink";
 
   return (
     <g>
@@ -168,11 +169,12 @@ function EdgeView({ edge, from, to }: { edge: TopologyEdge; from: PositionedNode
           edge.kind === "confirmed" && "stroke-violet-400",
           edge.kind === "wan" && "stroke-sky-500",
           edge.kind === "inferred" && "stroke-muted-foreground/40",
+          edge.kind === "uplink" && "stroke-muted-foreground/80",
           isManual && edge.status === "UP" && "stroke-emerald-500",
           isManual && edge.status === "UNKNOWN" && "stroke-amber-500",
           down && "animate-pulse stroke-red-500",
         )}
-        strokeWidth={edge.kind === "inferred" ? 1.25 : isManual ? 3 : 2}
+        strokeWidth={thin ? 1.5 : isManual ? 3 : 2}
         strokeDasharray={dashed ? "5 5" : undefined}
       >
         {down && edge.downReason && <title>{edge.downReason}</title>}
@@ -210,6 +212,7 @@ function Legend() {
       {item(line("stroke-emerald-500"), "Ligação monitorada: no ar")}
       {item(line("stroke-red-500"), "Ligação monitorada: caiu")}
       {item(line("stroke-violet-400"), "Ligação confirmada (SNMP)")}
+      {item(line("stroke-muted-foreground/80"), "Conectado a (definido no dispositivo)")}
       {item(line("stroke-muted-foreground/60", true), "Ligação presumida")}
       {item(<span className="h-3 w-3 rounded-full border-2 border-amber-500" />, "Equipamento de rede")}
       {item(<span className="h-3 w-3 rounded-full border-2 border-emerald-500" />, "Online")}
@@ -268,7 +271,19 @@ export function TopologyView() {
     queryKey: ["topology", snmpCommunity],
     queryFn: () => fetchTopology(snmpCommunity),
     placeholderData: (previous) => previous,
+    // A primeira leitura SNMP automática roda em segundo plano no servidor; recarrega até ela terminar.
+    refetchInterval: (query) => (query.state.data?.snmpPending ? 3000 : false),
   });
+
+  // Mostra a community que a descoberta automática está usando (salva da última vez que foi informada).
+  const serverCommunity = data?.snmpCommunity;
+  const syncedCommunity = useRef(false);
+  useEffect(() => {
+    if (serverCommunity && !syncedCommunity.current) {
+      syncedCommunity.current = true;
+      setCommunity(serverCommunity);
+    }
+  }, [serverCommunity]);
   const { data: savedPositions, isLoading: positionsLoading } = useQuery({ queryKey: ["map-positions"], queryFn: () => getMapPositions() });
 
   useEffect(() => {
@@ -432,7 +447,7 @@ export function TopologyView() {
             </div>
           </div>
 
-          {data?.snmp && (
+          {snmpCommunity && data?.snmp && (
             <ul className="flex flex-col gap-1 text-xs">
               {data.snmp.length === 0 && <li className="text-muted-foreground">Nenhum roteador ou switch no inventário para consultar.</li>}
               {data.snmp.map((s) => (
@@ -450,7 +465,8 @@ export function TopologyView() {
           <p className="text-xs text-muted-foreground">
             {confirmed > 0
               ? `${confirmed} ligação(ões) confirmada(s) pela tabela de MACs dos switches.`
-              : `Sem dados de switches gerenciáveis, os dispositivos aparecem ligados direto ao gateway — a porta/switch real de cada um só pode ser lida via SNMP${infraCount ? ` (${infraCount} equipamento(s) de rede no inventário)` : ""}.`}
+              : `Sem dados de switches gerenciáveis, os dispositivos aparecem ligados direto ao gateway — a porta/switch real de cada um só pode ser lida via SNMP${infraCount ? ` (${infraCount} equipamento(s) de rede no inventário)` : ""}.`}{" "}
+            Quando o switch não responde SNMP, abra o dispositivo e escolha em &quot;Conectado a&quot; onde ele está ligado.
           </p>
           <p className="text-xs text-muted-foreground">
             Para acompanhar se uma ligação cai (ex: roteador principal → secundário), cadastre-a em{" "}
