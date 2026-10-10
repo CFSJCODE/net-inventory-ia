@@ -94,6 +94,7 @@ describe("mergedDeviceData", () => {
     alias: null,
     typeLocked: false,
     notes: null,
+    uplinkId: null,
     vendor: null,
     type: "UNKNOWN",
     os: null,
@@ -136,5 +137,12 @@ describe("mergedDeviceData", () => {
     const dup = { ...base, id: "novo", alias: "Impressora RH", notes: "2º andar", type: "PRINTER" as const, typeLocked: true };
     const data = mergedDeviceData({ ...base, id: "antigo" }, [dup], null);
     expect(data).toMatchObject({ alias: "Impressora RH", notes: "2º andar", type: "PRINTER", typeLocked: true });
+  });
+
+  it("herda o \"conectado a\" do duplicado sem apontar para o próprio aparelho", () => {
+    const keep = { ...base, id: "k", uplinkId: "dup" };
+    const dup = { ...base, id: "dup", uplinkId: "switch" };
+    expect(mergedDeviceData(keep, [dup], null).uplink).toEqual({ connect: { id: "switch" } });
+    expect(mergedDeviceData({ ...base, id: "k" }, [{ ...base, id: "d" }], null).uplink).toBeUndefined();
   });
 });

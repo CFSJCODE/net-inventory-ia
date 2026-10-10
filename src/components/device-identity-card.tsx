@@ -26,7 +26,11 @@ interface Props {
   type: DeviceType;
   typeLocked: boolean;
   notes: string | null;
+  uplinkId: string | null;
+  uplinkOptions: { id: string; label: string }[];
 }
+
+const AUTO_UPLINK = "";
 
 export function DeviceIdentityCard(props: Props) {
   const router = useRouter();
@@ -35,6 +39,11 @@ export function DeviceIdentityCard(props: Props) {
   const [type, setType] = useState<DeviceType>(props.type);
   const [typeLocked, setTypeLocked] = useState(props.typeLocked);
   const [notes, setNotes] = useState(props.notes ?? "");
+  const [uplinkId, setUplinkId] = useState(props.uplinkId ?? AUTO_UPLINK);
+  const uplinkChoices: Record<string, string> = {
+    [AUTO_UPLINK]: "Automático (SNMP ou gateway)",
+    ...Object.fromEntries(props.uplinkOptions.map((o) => [o.id, o.label])),
+  };
   const { ready: aiReady } = useAiAccess();
   const canEdit = useCan("inventory.edit");
   const [suggesting, setSuggesting] = useState(false);
@@ -57,16 +66,17 @@ export function DeviceIdentityCard(props: Props) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const dirty = alias !== (props.alias ?? "") || type !== props.type || typeLocked !== props.typeLocked || notes !== (props.notes ?? "");
+  const dirty = alias !== (props.alias ?? "") || type !== props.type || typeLocked !== props.typeLocked || notes !== (props.notes ?? "") || uplinkId !== (props.uplinkId ?? AUTO_UPLINK);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    const result = await updateDevice(props.id, { alias, type, typeLocked, notes });
+    const result = await updateDevice(props.id, { alias, type, typeLocked, notes, uplinkId });
     setSaving(false);
     if (!result.ok) return toast.error(result.error);
     toast.success("Identificação salva");
     queryClient.invalidateQueries({ queryKey: ["devices"] });
+    queryClient.invalidateQueries({ queryKey: ["topology"] });
     router.refresh();
   }
 
@@ -95,7 +105,8 @@ export function DeviceIdentityCard(props: Props) {
         <CardTitle className="text-base">Identificação</CardTitle>
         <CardDescription>
           Dê um nome e o tipo certo a este dispositivo. O scan nunca altera o apelido nem as notas; com o tipo travado, ele também
-          não muda o tipo.
+          não muda o tipo. Em &quot;Conectado a&quot;, indique o switch ou roteador onde ele está ligado quando o mapa não descobre
+          sozinho.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -122,6 +133,9 @@ export function DeviceIdentityCard(props: Props) {
               Travar tipo
             </Label>
           </div>
+          <Field label="Conectado a" htmlFor="dev-uplink">
+            <SimpleSelect id="dev-uplink" value={uplinkId} onChange={setUplinkId} options={uplinkChoices} className="sm:w-80" />
+          </Field>
           <Field label="Notas" htmlFor="dev-notes">
             <textarea
               id="dev-notes"

@@ -11,6 +11,7 @@ const device = (over: Partial<Device>): Device => ({
   alias: null,
   typeLocked: false,
   notes: null,
+  uplinkId: null,
   vendor: "TP-Link",
   type: "ROUTER",
   os: null,

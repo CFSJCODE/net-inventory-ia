@@ -14,6 +14,37 @@ export interface DeviceIdentityInput {
   type: DeviceType;
   typeLocked: boolean;
   notes: string;
+  /** "Conectado a": id do equipamento onde o dispositivo está ligado; "" = automático (SNMP ou gateway). */
+  uplinkId?: string;
+}
+
+/**
+ * Valida o "conectado a": precisa existir e não pode fechar um ciclo (A ligado em B ligado em A),
+ * considerando tanto os "conectado a" quanto as ligações monitoradas (que têm prioridade no mapa).
+ */
+async function resolveUplink(id: string, uplinkId: string): Promise<string | null> {
+  if (!uplinkId) return null;
+  if (uplinkId === id) throw new Error("Um dispositivo não pode estar conectado a si mesmo.");
+  const [devices, links] = await Promise.all([
+    prisma.device.findMany({ select: { id: true, uplinkId: true } }),
+    prisma.topologyLink.findMany({ select: { fromDeviceId: true, toDeviceId: true } }),
+  ]);
+  if (!devices.some((d) => d.id === uplinkId)) throw new Error("Equipamento de destino não encontrado.");
+  const parents = new Map<string, string[]>();
+  const add = (child: string, parent: string) => parents.set(child, [...(parents.get(child) ?? []), parent]);
+  for (const d of devices) if (d.uplinkId && d.id !== id) add(d.id, d.uplinkId);
+  for (const l of links) add(l.toDeviceId, l.fromDeviceId);
+  // O aparelho não pode aparecer acima do novo "conectado a".
+  const stack = [uplinkId];
+  const seen = new Set<string>();
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (cur === id) throw new Error("Essa ligação formaria um ciclo no mapa.");
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    stack.push(...(parents.get(cur) ?? []));
+  }
+  return uplinkId;
 }
 
 /** Identificação manual: apelido, tipo (opcionalmente travado contra o scan) e notas. */
@@ -23,9 +54,10 @@ export async function updateDevice(id: string, input: DeviceIdentityInput): Prom
     if (!DEVICE_TYPES.includes(input.type)) throw new Error("Tipo inválido.");
     const alias = input.alias.trim().slice(0, 80);
     const notes = input.notes.trim().slice(0, 2000);
+    const uplink = input.uplinkId === undefined ? {} : { uplinkId: await resolveUplink(id, input.uplinkId) };
     await prisma.device.update({
       where: { id },
-      data: { alias: alias || null, type: input.type, typeLocked: input.typeLocked, notes: notes || null },
+      data: { alias: alias || null, type: input.type, typeLocked: input.typeLocked, notes: notes || null, ...uplink },
     });
     revalidatePath(`/devices/${id}`);
     return { ok: true, data: null };

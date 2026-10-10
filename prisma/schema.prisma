@@ -68,6 +68,11 @@ model Device {
   events       DeviceEvent[]
   linksFrom    TopologyLink[] @relation("LinkFrom")
   linksTo      TopologyLink[] @relation("LinkTo")
+  /// "Conectado a" definido pelo usuário (ex: switch ou roteador onde o cabo chega). Tem prioridade sobre
+  /// a ligação descoberta via SNMP e sobre a presumida no mapa.
+  uplinkId     String?
+  uplink       Device?      @relation("Uplink", fields: [uplinkId], references: [id], onDelete: SetNull)
+  downlinks    Device[]     @relation("Uplink")
 
   @@index([ip])
   @@index([status])

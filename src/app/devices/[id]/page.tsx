@@ -21,6 +21,16 @@ export default async function DeviceDetailPage({ params }: { params: Promise<{ i
 
   if (!device) notFound();
 
+  // Candidatos ao "conectado a": equipamentos de rede primeiro, depois o resto por IP.
+  const others = await prisma.device.findMany({
+    where: { id: { not: id } },
+    select: { id: true, ip: true, alias: true, hostname: true, type: true, status: true },
+  });
+  const isInfra = (t: string) => t === "ROUTER" || t === "SWITCH";
+  const uplinkOptions = others
+    .sort((a, b) => Number(isInfra(b.type)) - Number(isInfra(a.type)) || a.ip.localeCompare(b.ip, undefined, { numeric: true }))
+    .map((d) => ({ id: d.id, label: `${displayName(d, "Sem nome")} — ${d.ip}${d.status === "OFFLINE" ? " (offline)" : ""}` }));
+
   const openPorts = device.openPorts?.split(",").filter(Boolean) ?? [];
 
   return (
@@ -48,6 +58,8 @@ export default async function DeviceDetailPage({ params }: { params: Promise<{ i
         type={device.type}
         typeLocked={device.typeLocked}
         notes={device.notes}
+        uplinkId={device.uplinkId}
+        uplinkOptions={uplinkOptions}
       />
 
       <DeviceSecurityCard deviceId={device.id} findings={findingsForPorts(openPorts.map(Number))} />

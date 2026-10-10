@@ -28,6 +28,11 @@ export function mergedDeviceData(keep: Device, others: Device[], mac: string | n
     notes: keep.notes ?? others.find((d) => d.notes)?.notes ?? null,
   };
 
+  // "Conectado a": o do mantido vale; senão herda o do duplicado. Nunca aponta para o próprio aparelho.
+  const ids = new Set(all.map((d) => d.id));
+  const uplinkId = [keep, ...others].map((d) => d.uplinkId).find((u) => u && !ids.has(u)) ?? null;
+  if (uplinkId !== keep.uplinkId) data.uplink = uplinkId ? { connect: { id: uplinkId } } : { disconnect: true };
+
   if (!keep.typeLocked) {
     const locked = others.find((d) => d.typeLocked);
     if (locked) {
@@ -79,6 +84,9 @@ async function applyPlan(tx: Tx, plan: MergePlan): Promise<void> {
     if (inherited) await tx.mapPosition.create({ data: { nodeId: keep.id, x: inherited.x, y: inherited.y } });
   }
   await tx.mapPosition.deleteMany({ where: { nodeId: { in: mergeIds } } });
+
+  // Quem estava "conectado a" um duplicado passa a apontar para o registro mantido.
+  await tx.device.updateMany({ where: { uplinkId: { in: mergeIds }, id: { not: keep.id } }, data: { uplinkId: keep.id } });
 
   // Apaga antes de gravar o MAC no mantido: o MAC é único e pode estar num dos duplicados.
   await tx.device.deleteMany({ where: { id: { in: mergeIds } } });
