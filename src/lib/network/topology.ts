@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { displayName } from "@/lib/device-name";
 import { readRouteTable } from "./tools/route-table";
 import { mapWithConcurrency } from "./concurrency";
+import { decrypt, encrypt } from "@/lib/ai/settings";
 import { placeByFdb, readSwitchFdb, type FdbEntry, type Placement } from "./switch-fdb";
 
 export type TopologyRole = "internet" | "gateway" | "infra" | "device";
@@ -81,10 +82,12 @@ const MEMORY_MAX_AGE_MS = 30 * 86_400_000;
 /** Community usada na descoberta automática: a última informada no mapa, ou "public". */
 export async function storedCommunity(): Promise<string> {
   const row = await prisma.appSetting.findUnique({ where: { key: SETTING_COMMUNITY } }).catch(() => null);
-  return row?.value || DEFAULT_COMMUNITY;
+  // A community é uma credencial: fica criptografada como as demais (null se o AUTH_SECRET mudou).
+  return (row && decrypt(row.value)) || DEFAULT_COMMUNITY;
 }
 
-async function saveCommunity(value: string) {
+async function saveCommunity(plain: string) {
+  const value = encrypt(plain);
   await prisma.appSetting.upsert({ where: { key: SETTING_COMMUNITY }, create: { key: SETTING_COMMUNITY, value }, update: { value } });
 }
 
@@ -135,7 +138,9 @@ async function rememberPlacements(current: Map<string, Placement>, readAt: numbe
       // valor corrompido: recomeça do zero
     }
   }
-  if (readAt > memorizedAt && current.size) {
+  // readAt > 0 só quando a leitura teve ao menos um equipamento respondendo: aí também expira o que é velho,
+  // mesmo que nenhuma posição nova tenha sido encontrada.
+  if (readAt > memorizedAt) {
     memorizedAt = readAt;
     for (const [mac, p] of current) memoryCache.set(mac, { ...p, at: readAt });
     for (const [mac, v] of memoryCache) if (readAt - v.at > MEMORY_MAX_AGE_MS) memoryCache.delete(mac);
@@ -203,7 +208,7 @@ function isSelfDevice(
  * (tabela de rotas) — o resto fica ligado a ele como "inferido". Com SNMP, lê a tabela de MACs
  * de cada roteador/switch e posiciona cada dispositivo na porta onde o MAC foi aprendido.
  */
-export async function buildTopology(options: { snmpCommunity?: string } = {}): Promise<Topology> {
+export async function buildTopology(options: { snmpCommunity?: string; allowProbe?: boolean } = {}): Promise<Topology> {
   const [devices, routes, links] = await Promise.all([
     prisma.device.findMany({ orderBy: { ip: "asc" } }),
     readRoutesCached(),
@@ -259,13 +264,12 @@ export async function buildTopology(options: { snmpCommunity?: string } = {}): P
   const infra = nodes.filter((n) => (n.role === "infra" || n.role === "gateway") && n.ip);
   let snapshot = fdbSnapshot?.community === community ? fdbSnapshot : null;
   let snmpPending = false;
+  // Só quem pode operar a rede dispara leituras; os demais veem a última leitura guardada.
   if (options.snmpCommunity) {
     snapshot = await refreshFdb(infra, community);
-  } else if (!snapshot) {
+  } else if (options.allowProbe && (!snapshot || Date.now() - snapshot.at > FDB_TTL_MS)) {
     refreshFdb(infra, community).catch(() => {});
     snmpPending = true;
-  } else if (Date.now() - snapshot.at > FDB_TTL_MS) {
-    refreshFdb(infra, community).catch(() => {});
   }
   const snmp: SnmpProbeResult[] | null =
     snapshot?.results.map((r) => ({ ip: r.ip, label: r.label, ok: !r.error, macsLearned: r.entries.length, error: r.error })) ?? null;
@@ -281,7 +285,7 @@ export async function buildTopology(options: { snmpCommunity?: string } = {}): P
     : new Map<string, Placement>();
   // Dispositivos parados (impressora em repouso, offline) somem da tabela do switch em poucos minutos;
   // a última porta onde foram vistos fica guardada para o mapa não devolvê-los ao gateway.
-  const memory = await rememberPlacements(placements, snapshot?.at ?? 0);
+  const memory = await rememberPlacements(placements, snapshot?.results.some((r) => !r.error) ? snapshot.at : 0);
 
   for (const n of nodes) {
     if (!n.mac || !parent.has(n.id)) continue;

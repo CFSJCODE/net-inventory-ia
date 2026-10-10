@@ -18,17 +18,31 @@ export interface DeviceIdentityInput {
   uplinkId?: string;
 }
 
-/** Valida o "conectado a": precisa existir e não pode fechar um ciclo (A ligado em B ligado em A). */
+/**
+ * Valida o "conectado a": precisa existir e não pode fechar um ciclo (A ligado em B ligado em A),
+ * considerando tanto os "conectado a" quanto as ligações monitoradas (que têm prioridade no mapa).
+ */
 async function resolveUplink(id: string, uplinkId: string): Promise<string | null> {
   if (!uplinkId) return null;
   if (uplinkId === id) throw new Error("Um dispositivo não pode estar conectado a si mesmo.");
-  const seen = new Set([id]);
-  for (let cur: string | null = uplinkId; cur; ) {
-    if (seen.has(cur)) throw new Error("Essa ligação formaria um ciclo no mapa.");
+  const [devices, links] = await Promise.all([
+    prisma.device.findMany({ select: { id: true, uplinkId: true } }),
+    prisma.topologyLink.findMany({ select: { fromDeviceId: true, toDeviceId: true } }),
+  ]);
+  if (!devices.some((d) => d.id === uplinkId)) throw new Error("Equipamento de destino não encontrado.");
+  const parents = new Map<string, string[]>();
+  const add = (child: string, parent: string) => parents.set(child, [...(parents.get(child) ?? []), parent]);
+  for (const d of devices) if (d.uplinkId && d.id !== id) add(d.id, d.uplinkId);
+  for (const l of links) add(l.toDeviceId, l.fromDeviceId);
+  // O aparelho não pode aparecer acima do novo "conectado a".
+  const stack = [uplinkId];
+  const seen = new Set<string>();
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (cur === id) throw new Error("Essa ligação formaria um ciclo no mapa.");
+    if (seen.has(cur)) continue;
     seen.add(cur);
-    const row: { uplinkId: string | null } | null = await prisma.device.findUnique({ where: { id: cur }, select: { uplinkId: true } });
-    if (!row) throw new Error("Equipamento de destino não encontrado.");
-    cur = row.uplinkId;
+    stack.push(...(parents.get(cur) ?? []));
   }
   return uplinkId;
 }
