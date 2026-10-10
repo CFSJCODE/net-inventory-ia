@@ -2,6 +2,8 @@ import { prisma } from "@/lib/prisma";
 import { scanNetwork } from "@/lib/network/scanner";
 import { classifyDevice } from "@/lib/network/classify";
 import { findMatchingRule, getIpRules } from "@/lib/network/ip-rules";
+import { dedupeHostsByMac, hostnamesCompatible, normalizeMac } from "@/lib/device-identity";
+import { mergeDuplicateDevices } from "@/lib/device-merge";
 import type { Prisma } from "@prisma/client";
 
 export interface ScanResult {
@@ -36,7 +38,7 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
   const scanRun = await prisma.scanRun.create({ data: { cidr } });
 
   try {
-    const [discovered, allRules] = await Promise.all([
+    const [scanned, allRules] = await Promise.all([
       scanNetwork(cidr),
       getIpRules().catch(() => []),
     ]);
@@ -45,10 +47,20 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
     const seenDeviceIds = new Set<string>();
     let newDevices = 0;
 
+    // Limpa duplicados antigos antes de casar o scan com o inventário.
+    await mergeDuplicateDevices().catch((err) => console.error("[device-merge] falha ao fundir duplicados:", err));
+
+    const known = await prisma.device.findMany({ select: { ip: true, mac: true } });
+    const knownIpByMac = new Map(known.flatMap((d) => (d.mac ? [[d.mac, d.ip] as const] : [])));
+    // O MAC identifica o aparelho: um host por MAC, e quem tem MAC é casado antes de quem não tem,
+    // para que a associação por IP (mais fraca) não "roube" um registro que o MAC vai reivindicar.
+    const discovered = dedupeHostsByMac(
+      scanned.map((h) => ({ ...h, mac: normalizeMac(h.mac) })),
+      knownIpByMac,
+    ).sort((a, b) => Number(!a.mac) - Number(!b.mac));
+
     for (const host of discovered) {
-      const existing = host.mac
-        ? await prisma.device.findUnique({ where: { mac: host.mac } })
-        : await prisma.device.findFirst({ where: { ip: host.ip, mac: null } });
+      const existing = await findExistingDevice(host, seenDeviceIds);
 
       const matchedRule = findMatchingRule(host.ip, ipRules);
 
@@ -85,6 +97,8 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
 
       seenDeviceIds.add(existing.id);
       const updates: Prisma.DeviceUpdateInput = { lastSeenAt: now };
+      // Registro visto antes sem MAC: passa a ser identificado por ele.
+      if (host.mac && !existing.mac) updates.mac = host.mac;
       const events: Array<{ type: "IP_CHANGED" | "HOSTNAME_CHANGED" | "WENT_ONLINE"; message: string; previousValue?: string | null; newValue?: string | null }> = [];
 
       if (existing.ip !== host.ip) {
@@ -174,6 +188,35 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
     });
     throw error;
   }
+}
+
+/**
+ * Acha o registro do inventário que corresponde a um host do scan. Com MAC: o registro com esse MAC;
+ * senão, um registro sem MAC no mesmo IP (visto antes do ARP responder), que é adotado. Sem MAC: o
+ * registro que está nesse IP, com ou sem MAC, desde que ainda não tenha sido casado neste scan.
+ */
+async function findExistingDevice(
+  host: { ip: string; mac: string | null; hostname: string | null },
+  seenDeviceIds: Set<string>,
+) {
+  if (host.mac) {
+    const byMac = await prisma.device.findUnique({ where: { mac: host.mac } });
+    if (byMac) return byMac;
+  }
+
+  const sameIp = await prisma.device.findMany({
+    where: { ip: host.ip, id: { notIn: Array.from(seenDeviceIds) }, ...(host.mac ? { mac: null } : {}) },
+    orderBy: { firstSeenAt: "asc" },
+  });
+  // Sem MAC dos dois lados o IP é a única identidade (como sempre foi); entre registro com e sem MAC,
+  // hostnames diferentes indicam aparelhos diferentes.
+  const candidates = sameIp.filter((d) => (!d.mac && !host.mac) || hostnamesCompatible(d.hostname, host.hostname));
+  // Prefere o registro sem MAC (associação antiga por IP); senão o aparelho visto mais recentemente ali.
+  return (
+    candidates.find((d) => !d.mac) ??
+    [...candidates].sort((a, b) => b.lastSeenAt.getTime() - a.lastSeenAt.getTime())[0] ??
+    null
+  );
 }
 
 export const DEFAULT_CIDR = "192.168.1.0/24";

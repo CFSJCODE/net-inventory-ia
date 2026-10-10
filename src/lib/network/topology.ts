@@ -156,6 +156,49 @@ function localIps(): Set<string> {
 }
 
 /**
+ * Retorna todos os MACs (normalizados para XX:XX:XX:XX:XX:XX em maiúsculas) das
+ * interfaces físicas desta máquina, excluindo o endereço nulo 00:00:00:00:00:00.
+ */
+function localMacs(): Set<string> {
+  const macs = new Set<string>();
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.mac && a.mac !== "00:00:00:00:00:00") {
+        macs.add(a.mac.toUpperCase().replace(/-/g, ":"));
+      }
+    }
+  }
+  return macs;
+}
+
+/**
+ * Determina se um dispositivo do inventário é esta máquina (o host que executa o serviço).
+ *
+ * Estratégia em dois estágios, do mais confiável para o menos:
+ *  1. MAC (preferencial): se o dispositivo tem MAC registrado, ele deve coincidir com
+ *     alguma interface local. Endereços IP não são suficientes porque esta máquina pode
+ *     ter múltiplas placas de rede (ex: Ethernet em .92 e Wi-Fi em .250) e o scanner
+ *     armazenaria o IP do outro notebook no mesmo endereço.
+ *  2. IP (fallback): sem MAC no banco, volta para a comparação por IP — mas apenas se
+ *     não existe outro registro com o mesmo IP que já tenha MAC (esse outro registro
+ *     seria o verdadeiro dono do endereço).
+ */
+function isSelfDevice(
+  d: { ip: string; mac: string | null },
+  selfIps: Set<string>,
+  selfMacs: Set<string>,
+  devices: { ip: string; mac: string | null }[],
+): boolean {
+  if (d.mac !== null) {
+    // Comparação por MAC: único por hardware — sem ambiguidade mesmo com múltiplas NICs.
+    return selfMacs.has(d.mac.toUpperCase().replace(/-/g, ":"));
+  }
+  // Fallback por IP: só marca se nenhum outro dispositivo com mesmo IP tem MAC cadastrado
+  // (caso contrário, aquele com MAC seria o dono real do IP).
+  return selfIps.has(d.ip) && !devices.some((o) => o.ip === d.ip && o.mac !== null);
+}
+
+/**
  * Monta a topologia a partir do inventário. Sem SNMP, só dá para afirmar quem é o gateway
  * (tabela de rotas) — o resto fica ligado a ele como "inferido". Com SNMP, lê a tabela de MACs
  * de cada roteador/switch e posiciona cada dispositivo na porta onde o MAC foi aprendido.
@@ -167,6 +210,7 @@ export async function buildTopology(options: { snmpCommunity?: string } = {}): P
     prisma.topologyLink.findMany({ orderBy: { createdAt: "asc" } }),
   ]);
   const selfIps = localIps();
+  const selfMacs = localMacs();
 
   const gatewayIp =
     routes.find((r) => r.destination === "0.0.0.0/0" && r.nextHop !== "0.0.0.0")?.nextHop ??
@@ -196,7 +240,7 @@ export async function buildTopology(options: { snmpCommunity?: string } = {}): P
       vendor: d.vendor,
       type: d.type,
       status: d.status,
-      isSelf: selfIps.has(d.ip) && (d.mac !== null || !devices.some((o) => o.ip === d.ip && o.mac)),
+      isSelf: isSelfDevice(d, selfIps, selfMacs, devices),
       deviceId: d.id,
     });
   }

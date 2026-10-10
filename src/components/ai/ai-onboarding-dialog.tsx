@@ -13,9 +13,11 @@ import { EarthIcon } from "@/components/ui/earth";
 import { LockKeyholeIcon } from "@/components/ui/lock-keyhole";
 import { ShieldCheckIcon } from "@/components/ui/shield-check";
 import { SparklesIcon } from "@/components/ui/sparkles";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Field, SimpleSelect } from "@/components/tools/tool-shell";
 import { PROVIDERS, PROVIDER_LIST, type AiProvider } from "@/lib/ai/providers";
 import { useAiStatus } from "./ai-common";
+
+const PROVIDER_OPTIONS = Object.fromEntries(PROVIDER_LIST.map((p) => [p.id, p.name])) as Record<AiProvider, string>;
 
 const STEP_DELAY_MS = 450;
 
@@ -208,46 +210,28 @@ export function AiOnboardingDialog() {
               onMouseEnter={() => sparklesRef.current?.startAnimation()}
               onMouseLeave={() => sparklesRef.current?.stopAnimation()}
             />
-            Ative os recursos de Inteligência Artificial
+            Ative os recursos de IA
           </DialogTitle>
           <DialogDescription>
-            O NetInventory pode usar modelos gratuitos como o <strong>Google Gemini</strong> (do Google AI Studio, como no MistakeMap),{" "}
-            <strong>OpenRouter</strong>, ou conectar à <strong>OpenAI (ChatGPT)</strong> e <strong>Ollama Local</strong>.
+            O NetInventory usa IA para identificar dispositivos, analisar a segurança da rede, resumir eventos e responder no Assistente.
+            Para isso, escolha um provedor e cadastre a sua chave da API — leva cerca de 2 minutos.
           </DialogDescription>
         </DialogHeader>
 
-        {/* Escolha do provedor */}
-        <div className="flex flex-col gap-1.5 pt-1">
-          <label className="text-xs font-medium text-muted-foreground">Escolha o provedor de IA:</label>
-          <Select
+        <Field label="Provedor" htmlFor="ai-onboarding-provider">
+          <SimpleSelect
+            id="ai-onboarding-provider"
             value={provider}
-            onValueChange={(v) => {
-              setProvider(v as AiProvider);
+            onChange={(v) => {
+              setProvider(v);
               setApiKey("");
             }}
-            items={Object.fromEntries(PROVIDER_LIST.map((p) => [p.id, p.name]))}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PROVIDER_LIST.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  <div className="flex items-center justify-between gap-3 w-full">
-                    <span>{p.name}</span>
-                    {p.badge && (
-                      <span className="text-[10px] text-muted-foreground rounded bg-muted px-1.5 py-0.5">
-                        {p.badge}
-                      </span>
-                    )}
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+            options={PROVIDER_OPTIONS}
+            className="sm:w-full"
+          />
+        </Field>
 
-        <ol className="flex flex-col gap-2.5">
+        <ol className="flex flex-col gap-3">
           {steps.map((step, i) => {
             const Icon = step.icon;
             return (
@@ -266,7 +250,7 @@ export function AiOnboardingDialog() {
                   />
                 </span>
                 <div className="flex flex-col gap-0.5">
-                  <p className="font-medium text-sm">
+                  <p className="font-medium">
                     {i + 1}. {step.title}
                   </p>
                   <p className="text-xs leading-relaxed text-muted-foreground">{step.body}</p>
@@ -285,7 +269,7 @@ export function AiOnboardingDialog() {
               aria-label={`Chave da API do ${providerDef.name}`}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              className="font-mono text-sm"
+              className="font-mono"
               required
             />
           </form>
@@ -302,7 +286,7 @@ export function AiOnboardingDialog() {
             disabled={(providerDef.requiresApiKey && !apiKey.trim()) || save.isPending}
           >
             {save.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {save.isPending ? "Testando…" : "Salvar e ativar"}
+            {save.isPending ? "Testando…" : "Salvar chave"}
           </Button>
         </DialogFooter>
       </DialogContent>

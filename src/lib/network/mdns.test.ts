@@ -12,7 +12,7 @@ describe("inferTypeFromServices", () => {
     expect(inferTypeFromServices([], "Brother MFC-L2740DW")).toBe("PRINTER");
   });
 
-  it("identifica câmeras e NVRs por texto e modelo", () => {
+  it("identifica câmeras e DVR/NVRs por texto e modelo", () => {
     expect(inferTypeFromServices([], "Hikvision IP Camera")).toBe("CAMERA");
     expect(inferTypeFromServices([], "Intelbras NVR 32 Canais")).toBe("NVR");
     expect(inferTypeFromServices([], "Dahua DVR 1080p")).toBe("NVR");

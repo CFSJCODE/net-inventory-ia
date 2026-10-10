@@ -3,6 +3,7 @@ import { pingSweep } from "./ping";
 import { getArpTable } from "./arp";
 import { createGatewayResolver, resolveHostname } from "./dns";
 import { scanCommonPorts } from "./port-scan";
+import { tcpSweep } from "./tcp-probe";
 import { resolveVendors } from "./vendor-lookup";
 import { classifyDevice } from "./classify";
 import { mapWithConcurrency } from "./concurrency";
@@ -28,11 +29,20 @@ export async function scanNetwork(cidr: string): Promise<DiscoveredHost[]> {
     { concurrency: 4, timeoutMs: 1500 },
   );
 
+  // Windows com firewall padrão (e vários outros aparelhos) descarta ICMP. Para quem continua
+  // calado, uma conexão TCP aceita ou recusada em portas comuns prova que o host está ligado.
+  const pinged = new Set([...firstPass, ...retry]);
+  const tcpAlive = await tcpSweep(candidateIps.filter((ip) => !pinged.has(ip)));
+  // A conexão TCP força uma resolução ARP nova; relê a tabela para obter o MAC desses hosts.
+  if (tcpAlive.length > 0) {
+    for (const [ip, mac] of await getArpTable()) arpTable.set(ip, mac);
+  }
+
   const mdnsByIp = await mdnsPromise;
 
-  // Inclui hosts que responderam via Ping, ARP ou diretamente via mDNS/SSDP multicast na mesma sub-rede
+  // Inclui hosts que responderam via Ping, TCP ou diretamente via mDNS/SSDP multicast na mesma sub-rede
   const mdnsAliveIps = Array.from(mdnsByIp.keys()).filter((ip) => candidateSet.has(ip));
-  const aliveIps = Array.from(new Set([...firstPass, ...retry, ...mdnsAliveIps]));
+  const aliveIps = Array.from(new Set([...pinged, ...tcpAlive, ...mdnsAliveIps]));
 
   const macsFound = Array.from(
     new Set(aliveIps.map((ip) => arpTable.get(ip)).filter((mac): mac is string => !!mac)),

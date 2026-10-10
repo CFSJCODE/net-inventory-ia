@@ -33,7 +33,7 @@ export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
   MOBILE: "Celular",
   PRINTER: "Impressora",
   CAMERA: "Câmera IP",
-  NVR: "NVR",
+  NVR: "DVR/NVR",
   SWITCH: "Switch",
   ROUTER: "Roteador",
   SERVER: "Servidor",

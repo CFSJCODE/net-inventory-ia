@@ -99,7 +99,7 @@ export function inferTypeFromServices(services: string[], textInfo: string): Dev
     return "PRINTER";
   }
 
-  // Câmeras / NVR
+  // Câmeras / DVR/NVR
   if (lower.includes("camera") || lower.includes("ipc") || lower.includes("dvr") || lower.includes("nvr") || lower.includes("hikvision") || lower.includes("dahua")) {
     return lower.includes("nvr") || lower.includes("dvr") ? "NVR" : "CAMERA";
   }
