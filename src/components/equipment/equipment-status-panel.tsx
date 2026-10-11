@@ -31,7 +31,12 @@ function entityStyle(ok: boolean, status: string) {
   return ERR_STYLE;
 }
 
+/**
+ * ifInErrors/ifOutErrors acumulam desde que o switch ligou (o `reset counters` da CLI não zera o SNMP),
+ * então uma porta em shutdown só carrega erros antigos: ela não recebe nem envia nada e não precisa de atenção.
+ */
 function portHasErrors(port: PortStatus) {
+  if (port.adminStatus === "down") return false;
   return [port.counters.inErrors, port.counters.outErrors].some((v) => v !== null && v !== "0");
 }
 
@@ -112,7 +117,7 @@ function Faceplate({ ports, devicesByMac }: { ports: PortStatus[]; devicesByMac:
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm border border-emerald-900 bg-emerald-500/30" /> Link ativo</span>
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm border border-border" /> Sem link</span>
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm border border-red-900 bg-red-950" /> Desabilitada</span>
-        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-500" /> Com erros</span>
+        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-500" /> Com erros desde que o switch ligou</span>
         <span className="flex items-center gap-1.5"><span className="h-1 w-3 rounded-full bg-primary" /> Com descrição</span>
         <span>Passe o mouse ou clique numa porta para ver tudo sobre ela.</span>
       </div>
