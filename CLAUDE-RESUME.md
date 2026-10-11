@@ -9,7 +9,7 @@ Repositório oficial de trabalho: `CFSJCODE/net-inventory-ia`. Não direcionar a
 - Instalador: `NetInventory-Setup-0.2.10.exe`, 45.454.394 bytes (43 MiB, exibido como 43 MB), SHA-256 `eac8ec36032ef1105dba1aad3b0ade1f0f725af360e2d011ca78aaa92974f383`.
 - Release: https://github.com/CFSJCODE/net-inventory-ia/releases/tag/v0.2.10
 - PR #16 de IPs ignorados foi mesclado em `main` em `4722d184f6237d7d686266305e8b6fcf653ad5af`.
-- PR #17 está aberto: atualização dos dois links de download, nome/tamanho/hash do instalador e exemplo do SmartScreen no `site/index.html`. Branch `claude/site-v0.2.10`; commit de site `cbb0eaa`. A branch recebeu merge do main atual para incluir PR #16.
+- PR #17 foi mesclado em `main` no commit `bd82ac4d0b6db3e0c8d3c0f5c43b722ea846a946`. O código do site atualiza os dois links de download, nome/tamanho/hash do instalador e exemplo do SmartScreen para v0.2.10.
 
 ## Tarefas anteriores já entregues
 
@@ -21,7 +21,7 @@ Para PR #15: testes de e-mail 16/16, lint e build local passaram. A execução d
 
 Para PR #16: 4 testes do módulo de IP ignorado, lint e build passaram localmente em checkout separado antes do merge.
 
-Para PR #17: dados de nome, tamanho e digest conferidos no asset oficial da release; `git diff --check` passou. Falta revisão/merge do PR #17 e confirmar que o site publicado aponta para o novo instalador.
+Para PR #17: merge concluído e `git diff --check` passou. Verificação HTTP de `https://net-inventory-ia-site.vercel.app` retornou 200, mas a página pública ainda serve link/hash da v0.1.0. O código do site em `main` já aponta para v0.2.10; a publicação no host ainda precisa ser atualizada/confirmada.
 
 ## Worktrees e arquivos locais
 
@@ -32,6 +32,6 @@ Para PR #17: dados de nome, tamanho e digest conferidos no asset oficial da rele
 
 ## Próximos passos
 
-1. Revisar/mesclar PR #17 no repositório CFSJCODE.
-2. Depois do merge, confirmar o conteúdo/URL publicada do site e o link de download v0.2.10.
+1. Investigar/confirmar a atualização do deploy do site Vercel para o conteúdo já mesclado do PR #17.
+2. Confirmar publicamente o link de download v0.2.10 e o SHA-256 depois que o deploy do site atualizar.
 3. Se solicitado, reconciliar com cuidado a cópia local antiga `claude/ignored-ips`; não apagar os arquivos de trabalho sem validar que correspondem ao PR #16.
