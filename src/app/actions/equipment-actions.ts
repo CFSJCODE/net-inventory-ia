@@ -7,7 +7,7 @@ import { decrypt, encrypt } from "@/lib/ai/settings";
 import { displayName } from "@/lib/device-name";
 import { ALLOWED_INTERVAL_MINUTES } from "@/lib/auto-interval";
 import { readEquipmentStatus, type EquipmentStatus } from "@/lib/network/equipment-status";
-import { snmpQuery, type SnmpVersion } from "@/lib/network/tools/snmp";
+import { snmpQuery, type SnmpTarget, type SnmpVersion } from "@/lib/network/tools/snmp";
 import type { ToolResult } from "./tool-actions";
 
 /** O que vai para o navegador: a community fica no servidor, só se informa se há uma cadastrada. */
@@ -15,7 +15,9 @@ export interface EquipmentRow {
   id: string;
   name: string;
   ip: string;
-  snmpVersion: SnmpVersion;
+  snmpVersion: EquipmentSnmpVersion;
+  credentialsConfigured: boolean;
+  snmpAuthProtocol: "md5" | "sha" | null;
   notes: string | null;
   /** Leitura automática na página (minutos); null = desligada. */
   pollIntervalMinutes: number | null;
@@ -29,6 +31,9 @@ export interface EquipmentInput {
   /** Vazio na edição = manter a community atual. */
   community: string;
   snmpVersion: string;
+  snmpUsername: string;
+  snmpAuthPassword: string;
+  snmpAuthProtocol: string;
   notes: string;
 }
 
@@ -48,8 +53,10 @@ export interface ConnectionTest {
   sysDescr: string | null;
 }
 
-const VERSIONS: SnmpVersion[] = ["2c", "1"];
-const ROW_FIELDS = { id: true, name: true, ip: true, snmpVersion: true, notes: true, pollIntervalMinutes: true, createdAt: true, updatedAt: true } as const;
+export type EquipmentSnmpVersion = SnmpVersion | "3";
+
+const VERSIONS: EquipmentSnmpVersion[] = ["2c", "1", "3"];
+const ROW_FIELDS = { id: true, name: true, ip: true, snmpVersion: true, snmpUsername: true, snmpAuthPassword: true, snmpAuthProtocol: true, notes: true, pollIntervalMinutes: true, createdAt: true, updatedAt: true } as const;
 const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.?$/;
 
 async function run<T>(fn: () => Promise<T>): Promise<ToolResult<T>> {
@@ -66,13 +73,20 @@ function assertHost(host: string): string {
   throw new Error("Endereço inválido. Use um IP (ex: 192.168.0.3) ou um nome de host.");
 }
 
-function assertVersion(v: string): SnmpVersion {
-  if (!VERSIONS.includes(v as SnmpVersion)) throw new Error("Versão SNMP não suportada. Use 1 ou 2c.");
-  return v as SnmpVersion;
+function assertVersion(v: string): EquipmentSnmpVersion {
+  if (!VERSIONS.includes(v as EquipmentSnmpVersion)) throw new Error("Versão SNMP não suportada. Use 1, 2c ou 3.");
+  return v as EquipmentSnmpVersion;
 }
 
-function toRow(e: { snmpVersion: string } & Omit<EquipmentRow, "snmpVersion">): EquipmentRow {
-  return { ...e, snmpVersion: e.snmpVersion === "1" ? "1" : "2c" };
+function toRow(e: { snmpVersion: string; snmpUsername: string | null; snmpAuthPassword: string | null; snmpAuthProtocol: string | null } & Omit<EquipmentRow, "snmpVersion" | "credentialsConfigured" | "snmpAuthProtocol">): EquipmentRow {
+  const { snmpUsername, snmpAuthPassword, snmpAuthProtocol, ...safe } = e;
+  const credentialsConfigured = e.snmpVersion === "3" ? Boolean(snmpUsername && snmpAuthPassword) : true;
+  return {
+    ...safe,
+    snmpVersion: VERSIONS.includes(e.snmpVersion as EquipmentSnmpVersion) ? e.snmpVersion as EquipmentSnmpVersion : "2c",
+    credentialsConfigured,
+    snmpAuthProtocol: snmpAuthProtocol === "md5" || snmpAuthProtocol === "sha" ? snmpAuthProtocol : null,
+  };
 }
 
 /** Community guardada (criptografada); erro claro quando o AUTH_SECRET mudou e ela não abre mais. */
@@ -82,15 +96,25 @@ function openCommunity(stored: string): string {
   return plain;
 }
 
-function validate(input: EquipmentInput, requireCommunity: boolean) {
+function validate(input: EquipmentInput, requireCredentials: boolean) {
   const name = input.name.trim();
   if (!name) throw new Error("Informe um nome para o equipamento.");
   if (name.length > 80) throw new Error("Nome longo demais (máximo 80 caracteres).");
+  const snmpVersion = assertVersion(input.snmpVersion);
   const community = input.community.trim();
-  if (requireCommunity && !community) throw new Error("Informe a community SNMP.");
+  const snmpUsername = input.snmpUsername.trim();
+  const snmpAuthPassword = input.snmpAuthPassword.trim();
+  const snmpAuthProtocol = input.snmpAuthProtocol === "sha" ? "sha" : input.snmpAuthProtocol === "md5" ? "md5" : "";
+  if (snmpVersion !== "3" && requireCredentials && !community) throw new Error("Informe a community SNMP.");
+  if (snmpVersion === "3") {
+    if (snmpUsername.length > 64) throw new Error("Nome de usuário SNMPv3 longo demais.");
+    if (requireCredentials && (!snmpUsername || !snmpAuthPassword)) throw new Error("Informe o usuário e a senha de autenticação SNMPv3.");
+    if (snmpAuthPassword && snmpAuthPassword.length < 8) throw new Error("A senha de autenticação SNMPv3 deve ter pelo menos 8 caracteres.");
+    if (!snmpAuthProtocol) throw new Error("Escolha o algoritmo de autenticação SNMPv3.");
+  }
   const notes = input.notes.trim();
   if (notes.length > 1000) throw new Error("Observações longas demais (máximo 1000 caracteres).");
-  return { name, ip: assertHost(input.ip), community, snmpVersion: assertVersion(input.snmpVersion), notes: notes || null };
+  return { name, ip: assertHost(input.ip), community, snmpVersion, snmpUsername, snmpAuthPassword, snmpAuthProtocol, notes: notes || null };
 }
 
 async function assertIpFree(ip: string, exceptId?: string) {
@@ -111,7 +135,17 @@ export async function createEquipment(input: EquipmentInput): Promise<ToolResult
     await requirePermission("inventory.edit");
     const data = validate(input, true);
     await assertIpFree(data.ip);
-    const row = await prisma.equipment.create({ data: { ...data, community: encrypt(data.community) }, select: ROW_FIELDS });
+    const { snmpUsername, snmpAuthPassword, snmpAuthProtocol, ...base } = data;
+    const row = await prisma.equipment.create({
+      data: {
+        ...base,
+        community: encrypt(data.snmpVersion === "3" ? "" : data.community),
+        snmpUsername: data.snmpVersion === "3" ? encrypt(snmpUsername) : null,
+        snmpAuthPassword: data.snmpVersion === "3" ? encrypt(snmpAuthPassword) : null,
+        snmpAuthProtocol: data.snmpVersion === "3" ? snmpAuthProtocol : null,
+      },
+      select: ROW_FIELDS,
+    });
     return toRow(row);
   });
 }
@@ -119,13 +153,50 @@ export async function createEquipment(input: EquipmentInput): Promise<ToolResult
 export async function updateEquipment(id: string, input: EquipmentInput): Promise<ToolResult<EquipmentRow>> {
   return run(async () => {
     await requirePermission("inventory.edit");
-    const { community, ...data } = validate(input, false);
+    const existing = await prisma.equipment.findUnique({ where: { id } });
+    if (!existing) throw new Error("Equipamento não encontrado.");
+    const data = validate(input, false);
     await assertIpFree(data.ip, id);
+    const oldWasV3 = existing.snmpVersion === "3";
+    const { snmpUsername, snmpAuthPassword, snmpAuthProtocol, community, ...base } = data;
+    let encryptedCommunity: string | undefined;
+    let encryptedUsername: string | null = null;
+    let encryptedAuthPassword: string | null = null;
+    let authProtocol: string | null = null;
+    if (data.snmpVersion === "3") {
+      const username = snmpUsername || (oldWasV3 && existing.snmpUsername ? decrypt(existing.snmpUsername) ?? "" : "");
+      const password = snmpAuthPassword || (oldWasV3 && existing.snmpAuthPassword ? decrypt(existing.snmpAuthPassword) ?? "" : "");
+      if (!username || !password) throw new Error("Informe o usuário e a senha de autenticação SNMPv3.");
+      if (password.length < 8) throw new Error("A senha de autenticação SNMPv3 deve ter pelo menos 8 caracteres.");
+      const protocol = snmpAuthProtocol || (oldWasV3 ? existing.snmpAuthProtocol ?? "" : "");
+      if (protocol !== "md5" && protocol !== "sha") throw new Error("Escolha o algoritmo de autenticação SNMPv3.");
+      encryptedUsername = encrypt(username);
+      encryptedAuthPassword = snmpAuthPassword ? encrypt(snmpAuthPassword) : existing.snmpAuthPassword;
+      authProtocol = protocol;
+    } else {
+      if (community) encryptedCommunity = encrypt(community);
+      else if (oldWasV3) throw new Error("Informe a community SNMP para mudar para v1/v2c.");
+    }
     const row = await prisma.equipment.update({
       where: { id },
-      data: { ...data, ...(community ? { community: encrypt(community) } : {}) },
+      data: {
+        ...base,
+        ...(encryptedCommunity ? { community: encryptedCommunity } : {}),
+        snmpUsername: encryptedUsername,
+        snmpAuthPassword: encryptedAuthPassword,
+        snmpAuthProtocol: authProtocol,
+      },
       select: ROW_FIELDS,
     });
+    return toRow(row);
+  });
+}
+
+export async function getEquipment(id: string): Promise<ToolResult<EquipmentRow>> {
+  return run(async () => {
+    await requireSession();
+    const row = await prisma.equipment.findUnique({ where: { id }, select: ROW_FIELDS });
+    if (!row) throw new Error("Equipamento não encontrado.");
     return toRow(row);
   });
 }
@@ -152,18 +223,36 @@ export async function updateEquipmentPollInterval(id: string, minutes: number | 
  * Testa o acesso SNMP antes de salvar. Na edição, community em branco usa a já cadastrada (id).
  * Devolve sysName/sysDescr para o formulário sugerir o nome.
  */
-export async function testEquipmentConnection(input: { ip: string; community: string; snmpVersion: string; id?: string }): Promise<ToolResult<ConnectionTest>> {
+export async function testEquipmentConnection(input: { ip: string; community: string; snmpVersion: string; snmpUsername?: string; snmpAuthPassword?: string; snmpAuthProtocol?: string; id?: string }): Promise<ToolResult<ConnectionTest>> {
   return run(async () => {
     await requirePermission("network.operate");
     const host = assertHost(input.ip);
     const version = assertVersion(input.snmpVersion);
-    let community = input.community.trim();
-    if (!community && input.id) {
-      const stored = await prisma.equipment.findUnique({ where: { id: input.id }, select: { community: true } });
-      if (stored) community = openCommunity(stored.community);
+    let target: SnmpTarget;
+    if (version === "3") {
+      let username = input.snmpUsername?.trim() ?? "";
+      let authPassword = input.snmpAuthPassword?.trim() ?? "";
+      let authProtocol = input.snmpAuthProtocol === "sha" ? "sha" : input.snmpAuthProtocol === "md5" ? "md5" : "";
+      if ((!username || !authPassword || !authProtocol) && input.id) {
+        const stored = await prisma.equipment.findUnique({ where: { id: input.id }, select: { snmpVersion: true, snmpUsername: true, snmpAuthPassword: true, snmpAuthProtocol: true } });
+        if (stored?.snmpVersion === "3") {
+          username ||= stored.snmpUsername ? decrypt(stored.snmpUsername) ?? "" : "";
+          authPassword ||= stored.snmpAuthPassword ? decrypt(stored.snmpAuthPassword) ?? "" : "";
+          authProtocol ||= stored.snmpAuthProtocol ?? "";
+        }
+      }
+      if (!username || !authPassword || (authProtocol !== "md5" && authProtocol !== "sha")) throw new Error("Informe o usuário, a senha de autenticação e o algoritmo SNMPv3.");
+      target = { host, version: "3", username, authPassword, authProtocol };
+    } else {
+      let community = input.community.trim();
+      if (!community && input.id) {
+        const stored = await prisma.equipment.findUnique({ where: { id: input.id }, select: { community: true } });
+        if (stored) community = openCommunity(stored.community);
+      }
+      if (!community) throw new Error("Informe a community SNMP.");
+      target = { host, community, version };
     }
-    if (!community) throw new Error("Informe a community SNMP.");
-    const sys = await snmpQuery({ host, community, version }, "system");
+    const sys = await snmpQuery(target, "system");
     const value = (label: string) => {
       const v = sys.rows.find(([l]) => l.startsWith(label))?.[1];
       return v && v !== "—" ? v : null;
@@ -181,7 +270,17 @@ export async function readEquipmentDetail(id: string): Promise<ToolResult<Equipm
     await requirePermission("network.operate");
     const eq = await prisma.equipment.findUnique({ where: { id } });
     if (!eq) throw new Error("Equipamento não encontrado. Ele pode ter sido removido.");
-    const status = await readEquipmentStatus(eq.ip, openCommunity(eq.community), eq.snmpVersion === "1" ? "1" : "2c");
+    const target: SnmpTarget = eq.snmpVersion === "3"
+      ? {
+          host: eq.ip,
+          version: "3",
+          username: eq.snmpUsername ? decrypt(eq.snmpUsername) ?? "" : "",
+          authPassword: eq.snmpAuthPassword ? decrypt(eq.snmpAuthPassword) ?? "" : "",
+          authProtocol: eq.snmpAuthProtocol === "sha" ? "sha" : "md5",
+        }
+      : { host: eq.ip, community: openCommunity(eq.community), version: eq.snmpVersion === "1" ? "1" : "2c" };
+    if (target.version === "3" && (!target.username || !target.authPassword)) throw new Error("As credenciais SNMPv3 estão incompletas ou não puderam ser abertas. Edite o equipamento e informe-as novamente.");
+    const status = await readEquipmentStatus(target);
 
     const macs = Array.from(new Set(status.ports.flatMap((p) => p.learnedMacs)));
     const devices = macs.length

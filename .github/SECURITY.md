@@ -6,7 +6,7 @@ O NetInventory roda como serviço do Windows, faz scans na rede local e guarda d
 
 **Não abra uma issue pública.** Use o reporte privado do GitHub:
 
-1. Acesse a aba [**Security**](https://github.com/douglaspiero/net-inventory-ia/security) do repositório.
+1. Acesse a aba [**Security**](https://github.com/CFSJCODE/net-inventory-ia/security) do repositório.
 2. Clique em **Report a vulnerability**.
 3. Descreva o problema, a versão afetada e, se possível, os passos para reproduzir.
 

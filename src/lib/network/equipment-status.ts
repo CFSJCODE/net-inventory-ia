@@ -1,4 +1,4 @@
-import { snmpGetMany, snmpQuery, type SnmpVersion } from "./tools/snmp";
+import { snmpGetMany, snmpQuery, type SnmpTarget, type SnmpVersion } from "./tools/snmp";
 import { mapWithConcurrency } from "./concurrency";
 import { macFromOidSuffix, shortPortName } from "./switch-fdb";
 
@@ -150,6 +150,7 @@ export interface EquipmentStatus {
   fans: FanStatus[];
   psus: PsuStatus[];
   ports: PortStatus[];
+  printerSupplies: string[][];
   readAt: string;
 }
 
@@ -195,24 +196,41 @@ export interface HealthMetrics {
 }
 
 /** Só CPU, memória, temperatura e uptime, num único GET: leve o bastante para os alertas consultarem a cada minuto. */
-export async function readHealthMetrics(ip: string, community: string, version: SnmpVersion = "2c"): Promise<HealthMetrics> {
-  const values = await snmpGetMany({ host: ip, community, version }, [OID_CPU, OID_MEM, OID_TEMP, OID_UPTIME]);
+export async function readHealthMetrics(target: SnmpTarget): Promise<HealthMetrics>;
+export async function readHealthMetrics(ip: string, community: string, version?: SnmpVersion): Promise<HealthMetrics>;
+export async function readHealthMetrics(targetOrIp: SnmpTarget | string, community?: string, version: SnmpVersion = "2c"): Promise<HealthMetrics> {
+  const target: SnmpTarget = typeof targetOrIp === "string" ? { host: targetOrIp, community: community ?? "public", version } : targetOrIp;
+  const values = await snmpGetMany(target, [OID_CPU, OID_MEM, OID_TEMP, OID_UPTIME]);
   const read = (oid: string) => (isMissing(values.get(oid)) ? null : num(values.get(oid)));
   const uptime = values.get(OID_UPTIME);
   return { cpuPct: read(OID_CPU), memPct: read(OID_MEM), tempC: read(OID_TEMP), uptimeMin: isMissing(uptime) ? null : ticksTextToMinutes(uptime) };
 }
 
-export async function readEquipmentStatus(ip: string, community: string, version: SnmpVersion = "2c"): Promise<EquipmentStatus> {
-  const target = { host: ip, community, version };
+export async function readEquipmentStatus(target: SnmpTarget): Promise<EquipmentStatus> {
+  const ip = target.host;
   const empty = { columns: [] as string[], rows: [] as Rows };
   const w = (oid: string) => snmpQuery(target, "walk", oid).catch(() => empty);
 
   // Primeiro uma consulta simples: se o equipamento não responde, falha rápido com a mensagem do cliente SNMP
   // em vez de esperar o timeout de várias consultas.
-  const scalarOids = [OID_SYSNAME, OID_CPU, OID_MEM, OID_TEMP, OID_TEMP_TH, OID_UPTIME, OID_SYSDESCR, OID_SYSLOC];
-  const scalars = await snmpGetMany(target, scalarOids);
-  if (!scalars.size) throw new Error(`O equipamento ${ip} respondeu, mas sem nenhum dos dados básicos (system). Confira a community e a versão SNMP.`);
+  const identityOids = [OID_SYSNAME, OID_UPTIME, OID_SYSDESCR, OID_SYSLOC];
+  const scalars = await snmpGetMany(target, identityOids);
+  if (!scalars.size) throw new Error(`O equipamento ${ip} respondeu, mas não forneceu os dados básicos (system). Confira a versão e as credenciais SNMP.`);
   const scalar = (oid: string) => (isMissing(scalars.get(oid)) ? null : scalars.get(oid)!);
+  const sysDescr = scalar(OID_SYSDESCR);
+
+  // Impressoras expõem principalmente system + Printer-MIB; não consultamos MIBs de chassi/switch nelas.
+  if (/printer|laser|samsung.*m\s?-?4070/i.test(sysDescr ?? "")) {
+    const printerSupplies = (await snmpQuery(target, "printer").catch(() => ({ columns: [], rows: [] }))).rows;
+    return {
+      sysName: scalar(OID_SYSNAME) ?? "—", sysDescr, sysLocation: scalar(OID_SYSLOC), uptime: scalar(OID_UPTIME) ?? "—",
+      cpuPct: null, memPct: null, tempC: null, tempThresholdC: null, fans: [], psus: [], ports: [],
+      printerSupplies, readAt: new Date().toISOString(),
+    };
+  }
+
+  const healthValues = await snmpGetMany(target, [OID_CPU, OID_MEM, OID_TEMP, OID_TEMP_TH]);
+  for (const [oid, value] of healthValues) scalars.set(oid, value);
 
   // Tabelas esparsas ou de tamanho desconhecido vão por walk; o agente atende um pacote por vez, então
   // rodar em paralelo não acelera — só a sequência fica mais curta.
@@ -321,6 +339,8 @@ export async function readEquipmentStatus(ip: string, community: string, version
     };
   });
 
+  const printerSupplies: string[][] = [];
+
   const cpu = scalar(OID_CPU);
   const mem = scalar(OID_MEM);
   const tmp = scalar(OID_TEMP);
@@ -338,6 +358,7 @@ export async function readEquipmentStatus(ip: string, community: string, version
     fans,
     psus,
     ports,
+    printerSupplies,
     readAt: new Date().toISOString(),
   };
 }

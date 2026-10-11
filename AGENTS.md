@@ -1,3 +1,7 @@
+# Instruções para agentes de IA
+
+As regras completas do repositório estão em [`agents_ia/AGENTS.md`](agents_ia/AGENTS.md). Leia e siga esse arquivo antes de alterar o projeto.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

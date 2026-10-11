@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,7 +43,7 @@ function DeleteEquipmentDialog({ equipment, onClose, onDeleted }: { equipment: E
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Remover {equipment?.name}?</DialogTitle>
-          <DialogDescription>Sai só da lista de equipamentos (com a community salva). Nada é alterado no próprio equipamento nem no inventário.</DialogDescription>
+          <DialogDescription>Sai só da lista de equipamentos, junto com as credenciais SNMP guardadas. Nada é alterado no próprio equipamento nem no inventário.</DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
@@ -93,7 +93,7 @@ function AutoReadControl({ equipment }: { equipment: EquipmentRow }) {
   );
 }
 
-function EquipmentDetailSection({ equipment }: { equipment: EquipmentRow }) {
+export function EquipmentDetailSection({ equipment }: { equipment: EquipmentRow }) {
   const canQuery = useCan("network.operate");
   const pollMs = equipment.pollIntervalMinutes ? equipment.pollIntervalMinutes * 60_000 : false;
   const detail = useQuery({
@@ -152,13 +152,9 @@ function EquipmentDetailSection({ equipment }: { equipment: EquipmentRow }) {
 export function EquipmentView() {
   const canEdit = useCan("inventory.edit");
   const { data: rows, isLoading, error } = useQuery({ queryKey: ["equipment"], queryFn: () => unwrap(listEquipment()) });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<EquipmentRow | null>(null);
   const [deleting, setDeleting] = useState<EquipmentRow | null>(null);
-
-  // Sem escolha explícita, abre o primeiro: com um único switch cadastrado, os dados já aparecem.
-  const selected = rows?.find((r) => r.id === selectedId) ?? rows?.[0] ?? null;
 
   function openNew() {
     setEditing(null);
@@ -176,7 +172,7 @@ export function EquipmentView() {
         <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
           <div className="flex flex-col gap-1.5">
             <CardTitle className="text-base">Equipamentos cadastrados</CardTitle>
-            <CardDescription>Clique num equipamento para ver o hardware e as portas em tempo real.</CardDescription>
+            <CardDescription>Clique no nome de um equipamento para abrir sua página de informações SNMP.</CardDescription>
           </div>
           {canEdit && (
             <Button onClick={openNew} className="w-fit">
@@ -193,7 +189,7 @@ export function EquipmentView() {
           ) : !rows?.length ? (
             <div className="flex flex-col items-start gap-3 rounded-md border border-dashed p-4">
               <p className="text-sm text-muted-foreground">
-                Nenhum equipamento cadastrado ainda. Cadastre o switch com o IP, a community e a versão SNMP para acompanhar CPU, temperatura e cada porta.
+                Nenhum equipamento cadastrado ainda. Cadastre um switch, roteador ou impressora com os dados de acesso SNMP para consultar seu estado.
               </p>
               {canEdit && (
                 <Button variant="outline" size="sm" onClick={openNew}>
@@ -216,19 +212,12 @@ export function EquipmentView() {
                 </TableHeader>
                 <TableBody>
                   {rows.map((row) => {
-                    const active = row.id === selected?.id;
                     return (
-                      <TableRow
-                        key={row.id}
-                        onClick={() => setSelectedId(row.id)}
-                        aria-selected={active}
-                        className={cn("cursor-pointer", active && "bg-primary/5 hover:bg-primary/10")}
-                      >
+                      <TableRow key={row.id}>
                         <TableCell className="font-medium">
-                          <button type="button" className="text-left outline-none focus-visible:underline" onClick={() => setSelectedId(row.id)}>
+                          <Link href={`/equipment/${encodeURIComponent(row.id)}`} className="text-left outline-none hover:text-primary focus-visible:underline">
                             {row.name}
-                          </button>
-                          {active && <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" aria-hidden />}
+                          </Link>
                         </TableCell>
                         <TableCell className="font-mono text-xs">{row.ip}</TableCell>
                         <TableCell>
@@ -258,13 +247,8 @@ export function EquipmentView() {
         </CardContent>
       </Card>
 
-      {selected && <EquipmentDetailSection key={selected.id} equipment={selected} />}
-
-      <EquipmentFormDialog open={formOpen} editing={editing} onClose={() => setFormOpen(false)} onSaved={(row) => {
-        setFormOpen(false);
-        setSelectedId(row.id);
-      }} />
-      <DeleteEquipmentDialog equipment={deleting} onClose={() => setDeleting(null)} onDeleted={(id) => id === selectedId && setSelectedId(null)} />
+      <EquipmentFormDialog open={formOpen} editing={editing} onClose={() => setFormOpen(false)} onSaved={() => setFormOpen(false)} />
+      <DeleteEquipmentDialog equipment={deleting} onClose={() => setDeleting(null)} onDeleted={() => {}} />
     </div>
   );
 }
