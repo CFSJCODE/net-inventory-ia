@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment } from "react";
+import { Fragment, type ReactNode } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -184,17 +184,20 @@ export function EquipmentStatusPanel({
   data,
   isFetching,
   onRefresh,
+  controls,
 }: {
   data: EquipmentDetail;
   isFetching: boolean;
   onRefresh: () => void;
+  /** Controles extras ao lado de "Atualizar agora" (a leitura automática). */
+  controls?: ReactNode;
 }) {
   const readAt = new Date(data.readAt).toLocaleTimeString("pt-BR");
   const up = data.ports.filter((p) => p.operStatus === "up").length;
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="text-xs text-muted-foreground">
           {isFetching ? (
             <span className="flex items-center gap-2">
@@ -207,10 +210,13 @@ export function EquipmentStatusPanel({
             </>
           )}
         </p>
-        <Button variant="outline" size="sm" onClick={onRefresh} disabled={isFetching} className="w-fit gap-2">
-          <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
-          Atualizar agora
-        </Button>
+        <div className="flex flex-wrap items-end gap-3">
+          {controls}
+          <Button variant="outline" size="sm" onClick={onRefresh} disabled={isFetching} className="w-fit gap-2">
+            <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
+            Atualizar agora
+          </Button>
+        </div>
       </div>
 
       <Card>
