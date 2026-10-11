@@ -1,5 +1,14 @@
 # Retomada do projeto Net-Inventory — 11/10/2026
 
+## Atualização mais recente — 11/10/2026
+
+- Repositório de trabalho: `CFSJCODE/net-inventory-ia`; alterações preparadas na branch `codex/equipment-snmp-detail` e enviadas ao `origin`.
+- A lista Equipamentos agora mostra os dispositivos cadastrados; abrir o nome leva à página individual de informações SNMP.
+- Suporte cadastral SNMPv3 com autenticação MD5/SHA e `authNoPriv`. Usuário e senha são criptografados no banco; não guardar credenciais em código, documentação ou commits. A impressora Samsung SL-M4070FR pode ser cadastrada com suas credenciais pela interface após instalar a versão que contém esta branch.
+- A tela de detalhes reconhece impressoras e consulta Printer-MIB para suprimentos em vez de solicitar métricas específicas de switch.
+- Configurações do Next/PostCSS/TypeScript e ESLint foram agrupadas em `config/`; instruções completas e contexto de agente estão em `agents_ia/`. Os arquivos mínimos da raiz são apontadores/entradas mantidos para descoberta automática das ferramentas.
+- Validação local nesta branch: build de produção, lint, TypeScript, `prisma validate` e 147 testes passaram. A comunicação SNMP com a impressora real ainda não foi validada; instalador não foi gerado nem instalado.
+
 Repositório oficial de trabalho: `CFSJCODE/net-inventory-ia`. Não direcionar alterações ao fork `douglaspiero/net-inventory-ia`.
 
 ## Estado atual
