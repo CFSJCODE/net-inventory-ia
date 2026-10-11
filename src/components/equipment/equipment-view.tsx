@@ -135,6 +135,8 @@ function EquipmentDetailSection({ equipment }: { equipment: EquipmentRow }) {
               {detail.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               Tentar de novo
             </Button>
+            {/* Mesmo sem leitura, dá para ligar ou desligar a leitura automática (que também repete a tentativa sozinha). */}
+            <AutoReadControl equipment={equipment} />
           </CardContent>
         </Card>
       ) : detail.data ? (
