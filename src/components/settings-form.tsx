@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { cleanupEphemeralDevices, countEphemeralDevices } from "@/app/actions/device-actions";
 import { Field, SimpleSelect } from "@/components/tools/tool-shell";
 import { NotificationSettings } from "@/components/notification-settings";
+import { EmailAlertsCard } from "@/components/email-alerts-card";
 import { AiSettingsCard } from "@/components/ai/ai-settings-card";
 import { IpRulesCard } from "@/components/ip-rules-card";
 import { useCan } from "@/components/auth/user-provider";
@@ -147,7 +148,9 @@ export function SettingsForm() {
 
       <NotificationSettings />
 
-      {/* Chave da IA e limpeza do inventário: só administradores. */}
+      {/* Alertas por e-mail, chave da IA e limpeza do inventário: só administradores. */}
+      {canManage && <EmailAlertsCard />}
+
       {canManage && <AiSettingsCard />}
 
       {canManage && <EphemeralCleanup />}

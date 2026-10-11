@@ -186,6 +186,19 @@ export function configuredDescription(alias: string | undefined, name: string): 
 const num = (v: string | undefined) => (v === undefined || v === "" || Number.isNaN(Number(v)) ? null : Number(v));
 const str = (v: string | undefined) => (v === undefined || v === "" ? null : v);
 
+export interface HealthMetrics {
+  cpuPct: number | null;
+  memPct: number | null;
+  tempC: number | null;
+}
+
+/** Só CPU, memória e temperatura, num único GET: leve o bastante para os alertas consultarem a cada minuto. */
+export async function readHealthMetrics(ip: string, community: string, version: SnmpVersion = "2c"): Promise<HealthMetrics> {
+  const values = await snmpGetMany({ host: ip, community, version }, [OID_CPU, OID_MEM, OID_TEMP]);
+  const read = (oid: string) => (isMissing(values.get(oid)) ? null : num(values.get(oid)));
+  return { cpuPct: read(OID_CPU), memPct: read(OID_MEM), tempC: read(OID_TEMP) };
+}
+
 export async function readEquipmentStatus(ip: string, community: string, version: SnmpVersion = "2c"): Promise<EquipmentStatus> {
   const target = { host: ip, community, version };
   const empty = { columns: [] as string[], rows: [] as Rows };
