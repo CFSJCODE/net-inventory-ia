@@ -250,6 +250,25 @@ async function request(target: SnmpTarget, pduType: number, oids: string[]): Pro
   );
 }
 
+/** Varbinds por GET: cabe com folga num datagrama de ~1.400 bytes mesmo com OIDs e valores longos. */
+const GET_BATCH = 10;
+
+/**
+ * GET de vários OIDs agrupados em poucos pacotes (OID -> valor; ausentes ficam de fora). Bem mais rápido
+ * que um walk por coluna quando já se conhecem os índices: o agente responde um pacote por vez.
+ */
+export async function snmpGetMany(target: SnmpTarget, oids: string[]): Promise<Map<string, string>> {
+  const values = new Map<string, string>();
+  for (let i = 0; i < oids.length; i += GET_BATCH) {
+    const chunk = oids.slice(i, i + GET_BATCH).map((o) => o.replace(/^\./, ""));
+    let vbs = await request(target, PDU_GET, chunk);
+    // Em v1 um único OID inexistente derruba o pacote inteiro (noSuchName): repete um a um.
+    if (!vbs.length && chunk.length > 1) vbs = (await Promise.all(chunk.map((o) => request(target, PDU_GET, [o])))).flat();
+    for (const vb of vbs) if (!vb.exception) values.set(vb.oid, vb.value);
+  }
+  return values;
+}
+
 const MAX_WALK_ROWS = 500;
 
 async function walk(target: SnmpTarget, rootOid: string): Promise<VarBind[]> {
