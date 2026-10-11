@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/douglaspiero/net-inventory-ia/releases/latest"><img alt="Download" src="https://img.shields.io/github/v/release/douglaspiero/net-inventory-ia?label=download&color=22c55e"></a>
+  <a href="https://github.com/CFSJCODE/net-inventory-ia/releases/latest"><img alt="Download" src="https://img.shields.io/github/v/release/CFSJCODE/net-inventory-ia?label=download&color=22c55e"></a>
   <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <img alt="Next.js 15" src="https://img.shields.io/badge/Next.js-15-black">
   <a href="LICENSE"><img alt="Licença MIT" src="https://img.shields.io/badge/licen%C3%A7a-MIT-blue"></a>
@@ -27,7 +27,7 @@ O NetInventory roda em um computador da sua rede e mostra, num painel web acess�
 - **Inventário automático** — scans agendados descobrem cada dispositivo com IPv4, IPv6, MAC, fabricante, hostname e portas abertas, e classificam o tipo (computador, celular, câmera, impressora, roteador…).
 - **Mapa da topologia** — a rede desenhada a partir do gateway, com descoberta de ligações reais via SNMP e posições que você arrasta e ficam salvas.
 - **Ligações monitoradas** — cada link importante é testado a cada 30 segundos; caiu, fica vermelho no mapa e vai para o histórico.
-- **Histórico e alertas** — dispositivos novos, mudanças de IP e hostname, quedas e retornos, com notificações no navegador.
+- **Histórico e alertas** — dispositivos novos, mudanças de IP e hostname, quedas e retornos, notificações no navegador e alertas por e-mail via Resend configuráveis.
 - **Ferramentas de rede** — ARP scan, port scan, SNMP, Wake-on-LAN, DHCP, DNS, tabela ARP, rotas e auditoria de segurança.
 - **Usuários e perfis** — Administrador, Operador e Visualizador, cada pessoa com o acesso certo.
 
@@ -52,7 +52,7 @@ Com a sua chave da OpenAI (opcional), o NetInventory ganha um analista de rede:
 
 ## Instalação (Windows)
 
-1. Baixe o instalador em **[Releases](https://github.com/douglaspiero/net-inventory-ia/releases/latest)** e confira o SHA-256 publicado.
+1. Baixe o instalador em **[Releases](https://github.com/CFSJCODE/net-inventory-ia/releases/latest)** e confira o SHA-256 publicado.
 2. Execute num computador que fique ligado e esteja na rede que será monitorada. Sem assinatura digital, o Windows mostra o aviso do SmartScreen: **Mais informações → Executar assim mesmo**.
 3. Abra `http://localhost:3000` (ou `http://IP-do-computador:3000` de outra máquina) e crie o administrador.
 4. Em **Configurações → Scan da rede**, informe a faixa da sua rede — descubra com `ipconfig`: IPv4 `192.168.0.25` e máscara `255.255.255.0` → `192.168.0.0/24`.
@@ -118,11 +118,11 @@ O resultado é persistido por `src/lib/scan-service.ts`, que compara com o estad
 ## Limitações conhecidas
 
 - Só Windows no instalador; o painel é servido em HTTP na rede local (não exponha a porta 3000 para a internet).
-- Alertas apenas no navegador (ainda sem e-mail, Telegram ou WhatsApp) e sem exportação do inventário.
+- Alertas por e-mail usam o Resend e precisam de configuração; sem essa configuração, as notificações ficam no navegador. Ainda não há integração com Telegram ou WhatsApp nem exportação do inventário.
 - Sistema operacional e usuário logado não são detectados (exigiriam agente ou credenciais).
 - A classificação de tipo é heurística; a topologia sem SNMP mostra ligações presumidas ao gateway.
 
-Sugestões e contribuições são bem-vindas — abra uma [issue](https://github.com/douglaspiero/net-inventory-ia/issues). Para falhas de segurança, veja o [SECURITY.md](.github/SECURITY.md).
+Este fork acompanha o desenvolvimento do NetInventory. Para contribuir com o projeto original, leia o [guia de contribuição](CONTRIBUTING.md), procure issues no [repositório original](https://github.com/douglaspiero/net-inventory-ia/issues) e abra o pull request contra `douglaspiero/net-inventory-ia:main`. Para falhas de segurança, siga o [SECURITY.md](SECURITY.md) e não publique detalhes numa issue.
 
 ## Licença e autor
 

@@ -58,7 +58,7 @@ const OK_COLOR = "#16a34a";
 /** Valor acima do limite: sempre vermelho, mesmo num e-mail de recuperação ou de teste. */
 const BAD_COLOR = TONES.critical.color;
 const FONT = "font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
-const FOOTER = "Enviado automaticamente pelo NetInventory. Para mudar o destinatário, os limites ou desligar os alertas, abra Configurações → Alertas por e-mail.";
+const FOOTER = "Enviado automaticamente pelo NetInventory. Para mudar o destinatário, os limites ou desligar os alertas, abra Alertas → Configurar e-mails.";
 
 export const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 

@@ -73,12 +73,28 @@ begin
   Service := ExpandConstant('{app}\NetInventory.exe');
   if FileExists(Service) then
   begin
-    Exec(Service, 'stop', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec(Service, 'uninstall', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if not Exec(Service, 'stop', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    begin
+      Result := 'Não foi possível parar o serviço NetInventory. Feche a instalação e tente novamente.';
+      Exit;
+    end;
+    if ResultCode <> 0 then
+    begin
+      Result := 'O serviço NetInventory não pôde ser parado. Nenhum arquivo foi substituído.';
+      Exit;
+    end;
+    if not Exec(Service, 'uninstall', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    begin
+      Result := 'Não foi possível atualizar o registro do serviço NetInventory.';
+      Exit;
+    end;
+    if ResultCode <> 0 then
+    begin
+      Result := 'Não foi possível atualizar o registro do serviço NetInventory. Tente novamente.';
+      Exit;
+    end;
   end;
-  // Força o encerramento de qualquer processo node/NetInventory residual para destravar os arquivos em {app}
-  Exec('taskkill.exe', '/F /T /IM NetInventory.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('taskkill.exe', '/F /T /IM node.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // WinSW encerra somente a árvore de processos do próprio serviço.
   Sleep(1500);
   Result := '';
 end;

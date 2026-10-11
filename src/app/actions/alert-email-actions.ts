@@ -75,7 +75,7 @@ export async function sendTestAlertEmail(): Promise<ToolResult<LastDelivery | nu
     const [readings, active] = await Promise.all([collectReadings(config), activeProblems()]);
     const email = buildTestEmail({
       settings: config,
-      equipment: readings.map((r) => ({ target: r.target, reading: r.reading, snmp: r.target.equipment !== null })),
+      equipment: readings.map((r) => ({ target: r.target, reading: r.reading, snmpConfigured: r.target.equipment !== null })),
       activeProblems: active.length,
       intervalMs: ALERT_CHECK_INTERVAL_MS,
       at: Date.now(),

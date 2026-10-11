@@ -29,6 +29,7 @@ const PROBLEM_LABELS: Record<string, string> = {
   cpu: "CPU alta",
   mem: "memória alta",
   temp: "temperatura alta",
+  criticalLatency: "latência crítica",
 };
 
 const THRESHOLD_FIELDS: { key: keyof AlertThresholds; label: string; min: number; max: number }[] = [
@@ -36,6 +37,7 @@ const THRESHOLD_FIELDS: { key: keyof AlertThresholds; label: string; min: number
   { key: "memPct", label: "Memória (%)", min: 1, max: 100 },
   { key: "tempC", label: "Temperatura (°C)", min: 20, max: 150 },
   { key: "latencyMs", label: "Latência (ms)", min: 1, max: 10000 },
+  { key: "criticalLatencyMs", label: "Latência crítica (ms)", min: 1, max: 60000 },
   { key: "lossPct", label: "Perda de pacotes (%)", min: 1, max: 100 },
 ];
 
@@ -128,8 +130,8 @@ export function EmailAlertsCard() {
         </CardTitle>
         <CardDescription>
           Avisa por e-mail (via Resend) quando um equipamento vigiado fica fora do ar ou com desempenho degradado, e quando um
-          equipamento SNMP cadastrado em Equipamentos passa dos limites de CPU, memória ou temperatura. Checa a cada minuto no
-          servidor e manda outro e-mail quando o problema passa.
+          equipamento SNMP cadastrado em Equipamentos passa dos limites de CPU, memória ou temperatura. Verifica a cada 15 segundos
+          e envia o aviso na primeira leitura fora do limite, com todas as métricas disponíveis e as anormais destacadas.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4 text-sm">
@@ -221,7 +223,42 @@ export function EmailAlertsCard() {
           </Field>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-            {THRESHOLD_FIELDS.map((f) => (
+            <Field label="Perfil de envio" htmlFor="alert-mode" className="sm:w-[26rem] sm:shrink-0">
+              <SimpleSelect
+                id="alert-mode"
+                value={settings.mode}
+                onChange={(v) => setSettings({ ...settings, mode: v as EmailAlertSettings["mode"] })}
+                options={{
+                  all: "Todas as métricas quando excederem limites",
+                  critical: "Somente críticos: queda ou latência alta",
+                }}
+              />
+            </Field>
+            {settings.mode === "critical" && (
+              <Field label="Latência crítica (ms)" htmlFor="alert-critical-latency" className="sm:w-44">
+                <Input
+                  id="alert-critical-latency"
+                  type="number"
+                  min={1}
+                  max={60000}
+                  value={settings.thresholds.criticalLatencyMs}
+                  onChange={(e) => setThreshold("criticalLatencyMs", e.target.value)}
+                />
+              </Field>
+            )}
+            <Field label="Intervalo para repetir alerta persistente" htmlFor="alert-cooldown" className="sm:w-64 sm:shrink-0">
+              <SimpleSelect
+                id="alert-cooldown"
+                value={String(settings.cooldownMinutes) as CooldownKey}
+                onChange={(v) => setSettings({ ...settings, cooldownMinutes: Number(v) })}
+                options={COOLDOWNS}
+                className="sm:w-40"
+              />
+            </Field>
+          </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+            {THRESHOLD_FIELDS.filter((f) => f.key !== "criticalLatencyMs").map((f) => (
               <Field key={f.key} label={f.label} htmlFor={`alert-${f.key}`} className="sm:w-36">
                 <Input
                   id={`alert-${f.key}`}
@@ -233,15 +270,6 @@ export function EmailAlertsCard() {
                 />
               </Field>
             ))}
-            <Field label="Intervalo mínimo entre alertas" htmlFor="alert-cooldown">
-              <SimpleSelect
-                id="alert-cooldown"
-                value={String(settings.cooldownMinutes) as CooldownKey}
-                onChange={(v) => setSettings({ ...settings, cooldownMinutes: Number(v) })}
-                options={COOLDOWNS}
-                className="sm:w-40"
-              />
-            </Field>
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">

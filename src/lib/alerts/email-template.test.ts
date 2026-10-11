@@ -29,7 +29,7 @@ describe("renderEmail", () => {
     expect(html).toContain(">93%<");
     expect(html).toContain("limite ≥ 90%");
     expect(html).toContain("🔴 Fora do ar");
-    expect(html).toContain("Configurações → Alertas por e-mail");
+    expect(html).toContain("Alertas → Configurar e-mails");
     // Seção sem conteúdo não aparece.
     expect(html).not.toContain(">Vazia<");
   });
@@ -94,7 +94,7 @@ describe("renderEmail", () => {
         "Você receberá outro e-mail quando o problema passar.",
         "",
         "--",
-        "Enviado automaticamente pelo NetInventory. Para mudar o destinatário, os limites ou desligar os alertas, abra Configurações → Alertas por e-mail.",
+        "Enviado automaticamente pelo NetInventory. Para mudar o destinatário, os limites ou desligar os alertas, abra Alertas → Configurar e-mails.",
       ].join("\n"),
     );
   });

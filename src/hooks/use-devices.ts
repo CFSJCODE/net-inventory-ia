@@ -43,12 +43,31 @@ export function useScanRuns() {
 export function useTriggerScan() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: triggerScan,
+    mutationFn: async () => {
+      const result = await triggerScan();
+      if (!result.ok) {
+        const error = new Error(result.error);
+        error.name = result.code;
+        throw error;
+      }
+      return result.data;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["devices"] });
       queryClient.invalidateQueries({ queryKey: ["scan-config"] });
       queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
     },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["scan-status"] });
+    },
+  });
+}
+
+export function useScanStatus() {
+  return useQuery({
+    queryKey: ["scan-status"],
+    queryFn: () => fetchJson<{ running: boolean }>("/api/scan-status"),
+    refetchInterval: 5_000,
   });
 }
 

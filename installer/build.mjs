@@ -19,8 +19,13 @@ const CACHE = path.join(INSTALLER, ".cache");
 const STAGE = path.join(INSTALLER, "dist", "NetInventory");
 const DIST_DIR = ".next-installer";
 
-// Mesma versão do Node usada no build: o servidor e os módulos nativos (sharp, Prisma) são testados com ela.
+// O launcher usa node:sqlite para aplicar migrações; essa API exige Node >= 22.13.
+// Empacote a mesma versão usada no build, mas nunca permita gerar um instalador incompatível.
 const NODE_VERSION = process.version;
+const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
+if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 13)) {
+  throw new Error(`Node.js ${NODE_VERSION} não é compatível com o launcher (node:sqlite). Use Node.js 22.13 ou superior.`);
+}
 const WINSW_URL = "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe";
 const WINSW_SHA256 = null; // conferido pelo tamanho/assinatura do release do GitHub; preencha para fixar.
 

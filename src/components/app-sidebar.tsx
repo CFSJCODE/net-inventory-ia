@@ -25,6 +25,7 @@ import {
 import { LayoutGridIcon } from "@/components/ui/layout-grid";
 import { HistoryIcon } from "@/components/ui/history";
 import { SettingsIcon } from "@/components/ui/settings";
+import { BellIcon } from "@/components/ui/bell";
 import { WaypointsIcon } from "@/components/ui/waypoints";
 import { WrenchIcon } from "@/components/ui/wrench";
 import { RouterIcon } from "@/components/ui/router";
@@ -63,6 +64,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/assistant", label: "Assistente", icon: BotMessageSquareIcon, badge: "IA", requiresAi: true },
   { href: "/tools", label: "Ferramentas", icon: WrenchIcon },
   { href: "/equipment", label: "Equipamentos", icon: RouterIcon },
+  { href: "/alerts", label: "Alertas", icon: BellIcon, permission: "settings.manage" },
   { href: "/users", label: "Usuários", icon: ShieldCheckIcon, permission: "users.manage" },
   { href: "/settings", label: "Configurações", icon: SettingsIcon },
 ];
