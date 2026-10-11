@@ -27,6 +27,7 @@ import { HistoryIcon } from "@/components/ui/history";
 import { SettingsIcon } from "@/components/ui/settings";
 import { WaypointsIcon } from "@/components/ui/waypoints";
 import { WrenchIcon } from "@/components/ui/wrench";
+import { RouterIcon } from "@/components/ui/router";
 import { BotMessageSquareIcon } from "@/components/ui/bot-message-square";
 import type { AnimatedIcon, AnimatedIconHandle } from "@/components/page-title";
 import { useAiStatus } from "@/components/ai/ai-common";
@@ -61,6 +62,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/history", label: "Histórico", icon: HistoryIcon },
   { href: "/assistant", label: "Assistente", icon: BotMessageSquareIcon, badge: "IA", requiresAi: true },
   { href: "/tools", label: "Ferramentas", icon: WrenchIcon },
+  { href: "/equipment", label: "Equipamentos", icon: RouterIcon },
   { href: "/users", label: "Usuários", icon: ShieldCheckIcon, permission: "users.manage" },
   { href: "/settings", label: "Configurações", icon: SettingsIcon },
 ];
