@@ -1,5 +1,6 @@
 import dgram from "node:dgram";
 import { randomInt } from "node:crypto";
+import * as snmpV3 from "net-snmp";
 
 /**
  * Cliente SNMP v1/v2c mínimo (GET e GETNEXT/walk) com codificação BER própria — o protocolo é
@@ -195,16 +196,59 @@ export function parseResponse(buf: Buffer, expectedId: number): VarBind[] | null
 
 export type SnmpVersion = "1" | "2c";
 
-interface SnmpTarget {
+export interface SnmpCommunityTarget {
   host: string;
   community: string;
   version: SnmpVersion;
 }
 
+export interface SnmpV3Target {
+  host: string;
+  version: "3";
+  username: string;
+  authPassword: string;
+  authProtocol: "md5" | "sha";
+}
+
+export type SnmpTarget = SnmpCommunityTarget | SnmpV3Target;
+
 const TIMEOUT_MS = 2000;
 const RETRIES = 1;
 
+async function requestV3(target: SnmpV3Target, pduType: number, oids: string[]): Promise<VarBind[]> {
+  const user: snmpV3.User = {
+    name: target.username,
+    level: snmpV3.SecurityLevel.authNoPriv,
+    authProtocol: target.authProtocol === "md5" ? snmpV3.AuthProtocols.md5 : snmpV3.AuthProtocols.sha,
+    authKey: target.authPassword,
+  };
+  const session = snmpV3.createV3Session(target.host, user, { version: 3, timeout: TIMEOUT_MS, retries: RETRIES, transport: "udp4" });
+  session.on("error", () => {});
+  try {
+    const bindings = await new Promise<snmpV3.Varbind[]>((resolve, reject) => {
+      const callback: snmpV3.GetSetCallback = (error, result) => error ? reject(error) : resolve(result ?? []);
+      if (pduType === PDU_GET) session.get(oids, callback);
+      else session.getNext(oids, callback);
+    });
+    return bindings.map((binding) => {
+      if (snmpV3.isVarbindError(binding)) return { oid: binding.oid, value: "", exception: snmpV3.varbindError(binding) };
+      const value = binding.value;
+      if (binding.type === snmpV3.ObjectType.TimeTicks && typeof value === "number") {
+        const totalSeconds = Math.floor(value / 100);
+        const days = Math.floor(totalSeconds / 86400);
+        const hours = Math.floor((totalSeconds % 86400) / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        return { oid: binding.oid, value: `${days}d ${hours}h ${minutes}m` };
+      }
+      return { oid: binding.oid, value: Buffer.isBuffer(value) ? formatOctetString(value) : String(value ?? "") };
+    });
+  } finally {
+    session.close();
+  }
+}
+
 async function request(target: SnmpTarget, pduType: number, oids: string[]): Promise<VarBind[]> {
+  if (target.version === "3") return requestV3(target, pduType, oids);
   const socket = dgram.createSocket("udp4");
   socket.on("error", () => {});
   try {
@@ -246,7 +290,7 @@ async function request(target: SnmpTarget, pduType: number, oids: string[]): Pro
   }
 
   throw new Error(
-    `Sem resposta SNMP de ${target.host}. Verifique se o SNMP está habilitado no dispositivo, a community ("${target.community}") e a versão.`,
+      `Sem resposta SNMP de ${target.host}. Verifique se o SNMP está habilitado e confira a versão e as credenciais configuradas.`,
   );
 }
 

@@ -79,7 +79,8 @@ Requisitos: Node.js 22 ou mais novo (testado no 24), Windows (os scans usam `pin
 
 ```bash
 npm install
-cp .env.example .env          # preencha AUTH_SECRET (o comando para gerar está no arquivo)
+cp config/env.example .env          # Bash/Git Bash; no PowerShell use: Copy-Item config/env.example .env
+# preencha AUTH_SECRET (o comando para gerar está no arquivo)
 npx prisma migrate dev        # cria o banco SQLite local (prisma/dev.db)
 npm run dev                   # http://localhost:3000
 ```
@@ -121,8 +122,12 @@ O resultado é persistido por `src/lib/scan-service.ts`, que compara com o estad
 - Sistema operacional e usuário logado não são detectados (exigiriam agente ou credenciais).
 - A classificação de tipo é heurística; a topologia sem SNMP mostra ligações presumidas ao gateway.
 
-Sugestões e contribuições são bem-vindas — abra uma [issue](https://github.com/douglaspiero/net-inventory-ia/issues). Para falhas de segurança, veja o [SECURITY.md](SECURITY.md).
+Sugestões e contribuições são bem-vindas — abra uma [issue](https://github.com/douglaspiero/net-inventory-ia/issues). Para falhas de segurança, veja o [SECURITY.md](.github/SECURITY.md).
 
 ## Licença e autor
 
 [MIT](LICENSE) © 2026 **[Douglas Piero](https://www.linkedin.com/in/douglaspiero/)** — criador e desenvolvedor do NetInventory.
+
+## Estrutura do projeto
+
+Consulte o [índice da documentação](docs/README.md), o [mapa da estrutura do repositório](docs/REPOSITORY-STRUCTURE.md), o [índice das configurações](config/README.md) e a pasta de [instruções para agentes de IA](agents_ia/README.md). Para a política de segurança, consulte `.github/SECURITY.md`.

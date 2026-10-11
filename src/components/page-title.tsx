@@ -41,6 +41,7 @@ const PAGES: Record<string, PageMeta> = {
 
 function metaFor(pathname: string): PageMeta {
   if (PAGES[pathname]) return PAGES[pathname];
+  if (pathname.startsWith("/equipment/")) return { title: "Detalhes do equipamento", icon: RouterIcon };
   if (pathname.startsWith("/devices/")) return { title: "Detalhes do dispositivo", icon: CpuIcon };
   return { title: "NetInventory", icon: LayoutGridIcon };
 }

@@ -249,6 +249,27 @@ export function EquipmentStatusPanel({
         </Card>
       )}
 
+      {data.printerSupplies.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Suprimentos</CardTitle>
+            <CardDescription>Níveis reportados pela impressora via Printer-MIB.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow><TableHead>Suprimento</TableHead><TableHead>Nível</TableHead></TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.printerSupplies.map(([name, level], index) => (
+                  <TableRow key={`${name}-${index}`}><TableCell>{name || `Suprimento ${index + 1}`}</TableCell><TableCell className="font-mono">{level || "—"}</TableCell></TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Portas</CardTitle>
