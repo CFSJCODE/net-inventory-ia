@@ -158,6 +158,8 @@ async function measure(target: Target, prev: HostReading | undefined): Promise<H
 /** Mede todos os equipamentos agora e guarda as leituras (os e-mails e o teste mostram essas leituras). */
 export async function collectReadings(config: EmailAlertConfig): Promise<{ target: Target; reading: HostReading }[]> {
   const state = await loadState();
+  // Estado em memória criado pela versão anterior do módulo (next dev) não tem leituras.
+  state.readings ??= {};
   const targets = await resolveTargets(config);
   const results = await mapWithConcurrency(targets, 6, async (target) => ({ target, reading: await measure(target, state.readings[target.host]) }));
   // Equipamento que saiu da lista some das leituras.
@@ -232,7 +234,8 @@ async function runChecks(): Promise<void> {
       state.checks[key] = next;
       const common = { target, observation: o, reading, at, intervalMs: ALERT_CHECK_INTERVAL_MS, settings: config };
       if (event === "alert") {
-        const email = buildAlertEmail({ ...common, checks: RULES[o.kind].badToFire });
+        // `since` fica antes de `at` quando o aviso esperou o intervalo mínimo entre alertas.
+        const email = buildAlertEmail({ ...common, checks: RULES[o.kind].badToFire, since: next.since });
         enqueue(state, { key, kind: "alert", ...email, createdAt: at });
         console.log(`[alertas] ${alertTitle(o.kind)}: ${targetName(target)} — ${o.detail}`);
       } else if (event === "recovery") {

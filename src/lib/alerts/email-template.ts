@@ -55,6 +55,8 @@ const TONES: Record<EmailTone, { color: string; soft: string }> = {
 };
 
 const OK_COLOR = "#16a34a";
+/** Valor acima do limite: sempre vermelho, mesmo num e-mail de recuperação ou de teste. */
+const BAD_COLOR = TONES.critical.color;
 const FONT = "font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 const FOOTER = "Enviado automaticamente pelo NetInventory. Para mudar o destinatário, os limites ou desligar os alertas, abra Configurações → Alertas por e-mail.";
 
@@ -78,8 +80,8 @@ function renderBar(bar: { value: number; limit: number }, fill: string): string 
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr>${cells}</tr></table>`;
 }
 
-function renderReading(r: EmailReading, toneColor: string): string {
-  const color = r.bad ? toneColor : OK_COLOR;
+function renderReading(r: EmailReading): string {
+  const color = r.bad ? BAD_COLOR : OK_COLOR;
   const limit = r.limit ? `<div style="${FONT};font-size:11px;color:#6b7280;margin-top:2px">limite ${escapeHtml(r.limit)}</div>` : "";
   return `<tr>
 <td style="padding:9px 0;border-top:1px solid #f3f4f6;vertical-align:middle;width:40%"><div style="${FONT};font-size:13px;color:#374151">${escapeHtml(r.label)}</div>${limit}</td>
@@ -102,10 +104,10 @@ function renderItem(item: string): string {
 </tr>`;
 }
 
-function renderSection(s: EmailSection, toneColor: string): string {
+function renderSection(s: EmailSection): string {
   const table = (body: string) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse">${body}</table>`;
   const parts = [
-    s.readings?.length ? table(s.readings.map((r) => renderReading(r, toneColor)).join("")) : "",
+    s.readings?.length ? table(s.readings.map(renderReading).join("")) : "",
     s.rows?.length ? table(s.rows.map(renderRow).join("")) : "",
     s.items?.length ? table(s.items.map(renderItem).join("")) : "",
   ];
@@ -119,7 +121,7 @@ const hasContent = (s: EmailSection) => !!(s.readings?.length || s.rows?.length 
 
 function renderHtml(c: EmailContent): string {
   const t = TONES[c.tone];
-  const sections = c.sections.filter(hasContent).map((s) => renderSection(s, t.color)).join("");
+  const sections = c.sections.filter(hasContent).map(renderSection).join("");
   const notes = (c.notes ?? [])
     .map((n) => `<tr><td style="padding:14px 24px 0;${FONT};font-size:13px;line-height:1.5;color:#4b5563">${escapeHtml(n)}</td></tr>`)
     .join("");
@@ -135,6 +137,7 @@ function renderHtml(c: EmailContent): string {
 <body style="margin:0;padding:0;background:#f3f4f6;-webkit-text-size-adjust:100%">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#f3f4f6">${escapeHtml(c.summary)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f3f4f6"><tr><td align="center" style="padding:24px 12px">
+<!--[if mso]><table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" align="center"><tr><td><![endif]-->
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate">
 <tr><td style="padding:14px 24px;background:#18181b;border-radius:11px 11px 0 0">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
@@ -153,6 +156,7 @@ ${notes}
 <tr><td style="padding:20px 24px 0"></td></tr>
 <tr><td style="padding:14px 24px;background:#f9fafb;border-top:1px solid #e5e7eb;border-radius:0 0 11px 11px;${FONT};font-size:12px;line-height:1.5;color:#6b7280">${escapeHtml(FOOTER)}</td></tr>
 </table>
+<!--[if mso]></td></tr></table><![endif]-->
 </td></tr></table>
 </body>
 </html>`;

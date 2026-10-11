@@ -29,7 +29,7 @@ const snmp: HostReading = { ...online, cpuPct: 93, memPct: 41, tempC: 52, uptime
 
 const modem = { host: "192.168.0.1", label: "Modem" };
 const sw = { host: "192.168.0.3", label: "HP V1910-24G" };
-const common = { at: T0, intervalMs: MIN, settings };
+const common = { at: T0, intervalMs: MIN, settings, since: T0 };
 
 describe("observe", () => {
   it("equipamento vigiado: fora do ar e degradado; SNMP: cpu, memória e temperatura", () => {
@@ -100,7 +100,40 @@ describe("buildAlertEmail", () => {
     const e = buildAlertEmail({ ...common, target: modem, observation: obs(r, "degraded"), reading: r, checks: 3 });
     expect(e.subject).toBe("🟠 Desempenho degradado (230 ms, 25% de perda): Modem (192.168.0.1)");
     expect(e.text).toContain("lenta ou instável nas últimas 3 verificações seguidas: latência média de 230 ms (limite 100 ms) e perda de 25% dos pacotes (limite 25%).");
-    expect(e.text).toContain("- Tempo de atividade: respondendo há 1h 30min, desde ");
+    expect(e.text).toContain("- Respondendo ao NetInventory: há 1h 30min, desde ");
+    expect(e.text).not.toContain("Tempo de atividade");
+  });
+
+  it("leitura igual ao limite: alerta, mas o texto não diz \"acima\"", () => {
+    const r = { ...snmp, cpuPct: 90 };
+    const o = obs(r, "cpu", false);
+    expect(o.bad).toBe(true);
+    const e = buildAlertEmail({ ...common, target: sw, observation: o, reading: r, checks: 3 });
+    expect(e.subject).toBe("🟠 CPU alta (90%): HP V1910-24G (192.168.0.3)");
+    expect(e.text).toContain("está em 90%, igual ao limite de 90%, nas últimas 3 verificações seguidas.");
+  });
+
+  it("equipamento SNMP sem os dados HP/H3C: diz que não informa, em vez de culpar o cadastro", () => {
+    const r = { ...online, uptimeMin: 10 };
+    const e = buildAlertEmail({ ...common, target: { host: "192.168.0.9", label: "Roteador" }, observation: obs(r, "degraded"), reading: { ...r, latencyMs: 300 }, checks: 3 });
+    expect(e.text).toContain("- Tempo de atividade: 10 min (sysUpTime via SNMP)");
+    expect(e.text).toContain("- CPU, memória e temperatura: não informados por este equipamento");
+    expect(e.text).not.toContain("sem SNMP cadastrado");
+  });
+
+  it("alvo vigiado por nome: a linha do endereço não diz IP", () => {
+    const e = buildAlertEmail({ ...common, target: { host: "meu-nas.local", label: null }, observation: obs(offline, "offline"), reading: offline, checks: 2 });
+    expect(e.text).toContain("- Endereço: meu-nas.local");
+    expect(e.text).not.toContain("Endereço IP");
+  });
+
+  it("aviso atrasado pelo intervalo mínimo: diz desde quando o problema está confirmado", () => {
+    const r = { ...snmp, cpuPct: 95 };
+    const e = buildAlertEmail({ ...common, target: sw, observation: obs(r, "cpu", false), reading: r, checks: 3, since: T0 - 16 * MIN });
+    expect(e.text).toMatch(/está em 95%, acima do limite de 90%, desde \S+ às \S+ \(confirmado com 3 leituras seguidas\) e continua agora\./);
+    expect(e.text).toMatch(/- Problema desde: .*\n- Avisado em: .* \(esperou o intervalo mínimo de 15 min entre alertas\)/);
+    expect(e.text).not.toContain("Detectado em");
+    expect(e.text).toContain("- Confirmação: 3 leituras seguidas com problema, uma a cada 1 min");
   });
 
   it("temperatura alta é crítica", () => {
@@ -121,7 +154,7 @@ describe("buildRecoveryEmail", () => {
     expect(e.text).toContain("- Status: No ar");
     expect(e.text).toContain("não pôde ser enviado na hora");
     expect(e.html).toContain(">RECUPERADO<");
-    expect(e.html).toContain("#16a34a");
+    expect(e.html).toContain("border-top:4px solid #16a34a");
   });
 
   it("CPU normalizada: leitura atual e limite", () => {
@@ -129,6 +162,11 @@ describe("buildRecoveryEmail", () => {
     const e = buildRecoveryEmail({ ...common, target: sw, observation: obs(r, "cpu", false), reading: r, since: null, alertUndelivered: false });
     expect(e.subject).toBe("🟢 CPU normalizada: HP V1910-24G (192.168.0.3)");
     expect(e.text).toContain("voltou ao normal: 35% (limite 90%).");
+    const withSince = buildRecoveryEmail({ ...common, target: sw, observation: obs(r, "cpu", false), reading: r, since: T0 - 47 * MIN, alertUndelivered: false });
+    expect(withSince.text).toContain("voltou ao normal depois de 47 min com o problema: 35% (limite 90%).");
+    // Outra medida ainda estourada aparece em vermelho mesmo no e-mail verde.
+    const stillHot = { ...r, tempC: 85 };
+    expect(buildRecoveryEmail({ ...common, target: sw, observation: obs(stillHot, "cpu", false), reading: stillHot, since: null, alertUndelivered: false }).html).toContain("color:#dc2626;width:22%\">85 °C");
     expect(e.text).not.toContain("Duração");
     expect(e.text).not.toContain("não pôde ser enviado");
   });
@@ -149,7 +187,7 @@ describe("buildTestEmail", () => {
     });
     expect(e.subject).toBe("✅ Teste dos alertas do NetInventory: 2 de 2 equipamentos no ar");
     expect(e.text).toContain("- Enviar alertas para: cláudio@example.com");
-    expect(e.text).toContain("- Fora do ar e desempenho (ping): Modem (192.168.0.1), 192.168.0.2");
+    expect(e.text).toContain("- Fora do ar e desempenho (ping): Modem (192.168.0.1), 192.168.0.2, HP V1910-24G (192.168.0.3)\n");
     expect(e.text).toContain("- CPU, memória e temperatura (SNMP): HP V1910-24G (192.168.0.3)");
     expect(e.text).toContain("- Situação agora: 1 problema confirmado");
     expect(e.text).toContain("LEITURAS ATUAIS: MODEM (192.168.0.1)");
@@ -162,10 +200,35 @@ describe("buildTestEmail", () => {
     expect(e.html).toContain(">TESTE<");
   });
 
-  it("avisa quando os alertas estão desativados", () => {
-    const e = buildTestEmail({ settings: { ...settings, enabled: false }, equipment: [], activeProblems: 0, intervalMs: MIN, at: T0 });
+  it("avisa quando os alertas estão desativados e não mostra contagem velha de problemas", () => {
+    const e = buildTestEmail({ settings: { ...settings, enabled: false }, equipment: [], activeProblems: 2, intervalMs: MIN, at: T0 });
     expect(e.text).toContain("os alertas ainda estão desativados");
     expect(e.text).toContain("- Alertas: desativados");
+    expect(e.text).toContain("- Situação agora: verificação desligada");
+    expect(e.text).not.toContain("2 problemas");
+  });
+
+  it("com muitos equipamentos: 6 completos, 30 no resumo, o resto só contado, e o e-mail fica abaixo do corte do Gmail", () => {
+    const equipment = Array.from({ length: 60 }, (_, n) => ({
+      target: { host: `192.168.0.${10 + n}`, label: `Aparelho com nome bem comprido número ${n + 1} (sala de equipamentos)` },
+      reading: n === 59 ? null : { ...snmp, cpuPct: 20 + n, lossPct: n === 7 ? 25 : 0, pingsReceived: n === 7 ? 3 : 4 },
+      snmp: true,
+    }));
+    const e = buildTestEmail({ settings, equipment, activeProblems: 0, intervalMs: MIN, at: T0 });
+    expect(e.text).toContain("LEITURAS ATUAIS: APARELHO COM NOME BEM COMPRIDO NÚMERO 6 ");
+    expect(e.text).not.toContain("LEITURAS ATUAIS: APARELHO COM NOME BEM COMPRIDO NÚMERO 7 ");
+    expect(e.text).toContain("OUTROS 54 EQUIPAMENTOS (RESUMO)");
+    expect(e.text).toContain("número 8 (sala de equipamentos) (192.168.0.17): No ar · 3 ms · 25% de perda · CPU 27% · memória 41% · 52 °C");
+    expect(e.text).toContain("número 36 (sala de equipamentos) (192.168.0.45): No ar");
+    expect(e.text).not.toContain("número 37 (sala de equipamentos) (192.168.0.46): ");
+    expect(e.text).toMatch(/- CPU, memória e temperatura \(SNMP\): .*número 10 \(sala de equipamentos\) \(192\.168\.0\.19\) e mais 50\n/);
+    expect(e.text).toContain("- Mais 24 equipamentos: não listados aqui");
+    expect(e.html.length).toBeLessThan(100_000);
+    // Sem leitura ainda: aparece como tal quando está entre os resumidos.
+    const few = buildTestEmail({ settings, equipment: equipment.slice(0, 8).map((x, n) => (n === 7 ? { ...x, reading: null } : x)), activeProblems: 0, intervalMs: MIN, at: T0 });
+    expect(few.text).toContain("OUTROS 2 EQUIPAMENTOS (RESUMO)");
+    expect(few.text).toContain("(192.168.0.17): ainda sem leitura");
+    expect(few.text).not.toContain("Mais ");
   });
 });
 
