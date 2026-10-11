@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
@@ -54,16 +54,25 @@ export function EmailAlertsCard() {
   const [settings, setSettings] = useState<EmailAlertSettings>(DEFAULT_SETTINGS);
   const [targetsText, setTargetsText] = useState(DEFAULT_SETTINGS.targets.join(", "));
   const [apiKey, setApiKey] = useState("");
+  const hydrated = useRef(false);
 
+  const applySettings = (s: EmailAlertSettings) => {
+    setSettings(s);
+    setTargetsText(s.targets.join(", "));
+  };
+
+  // Preenche o formulário só na primeira carga: a consulta é refeita a cada minuto (último envio,
+  // problemas ativos) e não pode apagar o que o usuário está editando.
   useEffect(() => {
-    if (status) {
-      setSettings(status.settings);
-      setTargetsText(status.settings.targets.join(", "));
+    if (status && !hydrated.current) {
+      hydrated.current = true;
+      applySettings(status.settings);
     }
   }, [status]);
 
   const onStatus = (next: EmailAlertStatus) => {
     queryClient.setQueryData(["email-alerts"], next);
+    applySettings(next.settings);
     setApiKey("");
   };
 
@@ -107,7 +116,8 @@ export function EmailAlertsCard() {
   }
 
   const keepsCurrentKey = Boolean(status?.hasKey);
-  const canSave = !!status && !save.isPending && !!settings.to.trim() && (keepsCurrentKey || !!apiKey.trim() || !settings.enabled);
+  // Destinatário e chave só são obrigatórios para ativar; desativado, dá para salvar o resto.
+  const canSave = !!status && !save.isPending && (!settings.enabled || (!!settings.to.trim() && (keepsCurrentKey || !!apiKey.trim())));
 
   return (
     <Card>

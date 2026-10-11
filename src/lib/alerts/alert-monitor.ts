@@ -126,10 +126,11 @@ interface Observation {
 function observe(target: Target, config: EmailAlertConfig, ping: PingStats, metrics: HealthMetrics | null, watched: boolean): Observation[] {
   const t = config.thresholds;
   const obs: Observation[] = [];
-  const online = ping.received > 0;
+  // Responder ao SNMP também prova que está no ar (equipamento que bloqueia ping).
+  const online = ping.received > 0 || metrics !== null;
   if (watched) {
     obs.push({ kind: "offline", bad: !online, value: null, detail: `Sem resposta a ${PINGS} pings seguidos` });
-    if (online) {
+    if (ping.received > 0) {
       const loss = lossPct(ping);
       const avg = ping.avgMs ?? 0;
       obs.push({
@@ -241,22 +242,19 @@ async function runChecks(): Promise<void> {
 
   const results = await mapWithConcurrency(targets, 6, async (target) => {
     const ping = await pingStats(target.host);
-    // SNMP só com o equipamento respondendo: fora do ar já é o alerta "fora do ar".
-    const metrics =
-      target.equipment && ping.received > 0
-        ? await readHealthMetrics(target.host, target.equipment.community, target.equipment.version).catch(() => null)
-        : null;
+    // SNMP mesmo sem ping: há equipamento que bloqueia ICMP e responde SNMP.
+    const metrics = target.equipment
+      ? await readHealthMetrics(target.host, target.equipment.community, target.equipment.version).catch(() => null)
+      : null;
     return { target, ping, metrics };
   });
 
-  // Equipamento tirado da lista: esquece o estado dele (senão a "recuperação" nunca viria).
-  const hosts = new Set(targets.map((t) => t.host));
-  for (const key of Object.keys(state.checks)) if (!hosts.has(key.split("|")[0])) delete state.checks[key];
-
   const at = now();
+  const seen = new Set<string>();
   for (const { target, ping, metrics } of results) {
     for (const o of observe(target, config, ping, metrics, watched.has(target.host))) {
       const key = `${target.host}|${o.kind}`;
+      seen.add(key);
       const prev = state.checks[key] ?? EMPTY_STATE;
       const { state: next, event } = evaluate(prev, o.bad, at, { ...RULES[o.kind], cooldownMs });
       next.value = o.value;
@@ -271,6 +269,10 @@ async function runChecks(): Promise<void> {
       }
     }
   }
+
+  // Checagem que deixou de existir (equipamento tirado da lista, SNMP descadastrado): esquece o estado,
+  // senão ficaria como problema ativo para sempre.
+  for (const key of Object.keys(state.checks)) if (!seen.has(key)) delete state.checks[key];
 
   await flushOutbox(state, config);
   await saveState(state);

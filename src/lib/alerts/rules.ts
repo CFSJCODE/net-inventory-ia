@@ -39,10 +39,15 @@ export function evaluate(prev: CheckState, isBad: boolean, now: number, opts: Ru
   if (!s.active && isBad && s.bad >= opts.badToFire) {
     s.active = true;
     s.since = now;
-    // Dentro do intervalo mínimo: o problema fica registrado, mas sem e-mail (nem o de recuperação depois).
+    s.notified = false;
+  }
+
+  // Problema confirmado e ainda sem e-mail: manda agora, ou, dentro do intervalo mínimo desde o último
+  // alerta, fica só registrado e é avisado assim que o intervalo passar (se ainda continuar).
+  if (s.active && isBad && !s.notified) {
     const coolingDown = s.lastAlertAt !== null && now - s.lastAlertAt < opts.cooldownMs;
-    s.notified = !coolingDown;
     if (coolingDown) return { state: s, event: null };
+    s.notified = true;
     s.lastAlertAt = now;
     return { state: s, event: "alert" };
   }
@@ -74,14 +79,16 @@ export interface PingStats {
 }
 
 /**
- * Lê a saída do ping de qualquer idioma (Windows em português, Linux...): cada linha com "TTL=" é uma
- * resposta, e o tempo vem dela ("tempo=3ms", "time=0.4 ms", "tempo<1ms").
+ * Lê a saída do ping de qualquer idioma (Windows em português, Linux...): uma resposta é a linha com
+ * "TTL=" ou com um único tempo ("tempo=3ms", "time=0.4 ms", "tempo<1ms" — o ping IPv6 do Windows não
+ * mostra TTL). A linha de estatísticas tem três tempos e por isso não conta.
  */
 export function parsePingOutput(stdout: string, sent: number): PingStats {
   const rtts: number[] = [];
   for (const line of stdout.split(/\r?\n/)) {
-    if (!/ttl[=:]/i.test(line)) continue;
-    const m = line.match(/([=<])\s*([\d.,]+)\s*ms/i);
+    const times = Array.from(line.matchAll(/([=<])\s*([\d.,]+)\s*ms/gi));
+    if (!/ttl[=:]/i.test(line) && times.length !== 1) continue;
+    const m = times[0];
     rtts.push(m ? (m[1] === "<" ? 0 : Number(m[2].replace(",", "."))) : 0);
   }
   const received = Math.min(rtts.length, sent);
