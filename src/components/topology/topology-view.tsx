@@ -15,7 +15,7 @@ import { useLinks, useLinkTransitionToasts } from "./links-panel";
 import { cancelNavigationProgress } from "@/components/top-loading-bar";
 import type { Topology, TopologyEdge } from "@/lib/network/topology";
 import { layoutTopology, type PositionedNode } from "@/lib/topology-layout";
-import { explainPortName } from "@/lib/network/port-name";
+import { explainPortName } from "@/lib/network/port-hint";
 import { DeviceTypeIcon, DEVICE_TYPE_LABELS } from "@/components/device-type-icon";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { explainPortName } from "./port-name";
+import { explainPortName } from "./port-hint";
 
 describe("explainPortName", () => {
   it("explica o nome de porta do HP/Comware", () => {
