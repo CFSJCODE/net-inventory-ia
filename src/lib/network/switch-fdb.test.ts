@@ -53,6 +53,29 @@ describe("placeByFdb", () => {
     expect(placements.get(TV)).toEqual({ parentId: "ap" });
     expect(placements.get(AP)).toEqual({ parentId: "sw", label: "porta 2" });
   });
+
+  it("AP calado que sumiu da tabela continua dono da porta onde foi visto por último", () => {
+    const placements = placeByFdb(
+      [{ swId: "sw", entries: [{ mac: TV, port: "2", portName: "GE1/0/2" }, { mac: PHONE, port: "2", portName: "GE1/0/2" }, { mac: DVR, port: "3", portName: "GE1/0/3" }] }],
+      new Map([[AP, "ap"]]),
+      null,
+      new Map([["ap", { parentId: "sw", label: "porta GE1/0/2" }]]),
+    );
+    expect(placements.get(TV)).toEqual({ parentId: "ap" });
+    expect(placements.get(PHONE)).toEqual({ parentId: "ap" });
+    expect(placements.get(DVR)).toEqual({ parentId: "sw", label: "porta GE1/0/3" });
+  });
+
+  it("a leitura atual vale mais que a posição lembrada do equipamento de rede", () => {
+    const placements = placeByFdb(
+      [{ swId: "sw", entries: [{ mac: AP, port: "4", portName: "GE1/0/4" }, { mac: TV, port: "2", portName: "GE1/0/2" }] }],
+      new Map([[AP, "ap"]]),
+      null,
+      new Map([["ap", { parentId: "sw", label: "porta GE1/0/2" }]]),
+    );
+    expect(placements.get(AP)).toEqual({ parentId: "sw", label: "porta GE1/0/4" });
+    expect(placements.get(TV)).toEqual({ parentId: "sw", label: "porta GE1/0/2" });
+  });
 });
 
 describe("helpers", () => {

@@ -109,11 +109,14 @@ export function portLabel(e: Pick<FdbEntry, "port" | "portName">): string {
  *   do gateway (ex: Wi-Fi do modem), não pendurado no switch.
  * - Se a porta de borda também aprendeu o MAC de outro equipamento de rede (ex: um roteador/AP ligado
  *   naquela porta), o dispositivo está atrás desse equipamento.
+ * - Um AP em modo bridge fica calado e some da tabela antes dos seus clientes Wi-Fi. Se nenhum equipamento
+ *   de rede aparece na porta agora, vale o que foi visto antes nela (`rememberedInfra`: id -> última posição).
  */
 export function placeByFdb(
   fdbs: SwitchFdb[],
   infraByMac: Map<string, string>,
   gatewayMac: string | null,
+  rememberedInfra: Map<string, Placement> = new Map(),
 ): Map<string, Placement> {
   const portKey = (swId: string, port: string) => `${swId}|${port}`;
   const portMacs = new Map<string, string[]>();
@@ -137,6 +140,15 @@ export function placeByFdb(
     }
   }
 
+  // Equipamentos de rede ausentes da leitura atual, agrupados pela porta onde foram vistos por último.
+  const seenNow = new Set([...best.keys()].map((mac) => infraByMac.get(mac)).filter(Boolean));
+  const rememberedAt = new Map<string, string[]>();
+  for (const [id, p] of rememberedInfra) {
+    if (seenNow.has(id) || !p.label) continue;
+    const key = `${p.parentId}|${p.label}`;
+    rememberedAt.set(key, [...(rememberedAt.get(key) ?? []), id]);
+  }
+
   const placements = new Map<string, Placement>();
   for (const [mac, { swId, entry }] of best) {
     const self = infraByMac.get(mac);
@@ -146,7 +158,8 @@ export function placeByFdb(
       .get(portKey(swId, entry.port))!
       .map((m) => infraByMac.get(m))
       .filter((id): id is string => !!id && id !== swId && id !== self);
-    const via = [...new Set(behind)];
+    let via = [...new Set(behind)];
+    if (!via.length) via = (rememberedAt.get(`${swId}|${portLabel(entry)}`) ?? []).filter((id) => id !== swId);
     if (!self && via.length === 1) placements.set(mac, { parentId: via[0] });
     else placements.set(mac, { parentId: swId, label: portLabel(entry) });
   }

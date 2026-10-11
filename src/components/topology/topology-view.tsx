@@ -15,6 +15,7 @@ import { useLinks, useLinkTransitionToasts } from "./links-panel";
 import { cancelNavigationProgress } from "@/components/top-loading-bar";
 import type { Topology, TopologyEdge } from "@/lib/network/topology";
 import { layoutTopology, type PositionedNode } from "@/lib/topology-layout";
+import { explainPortName } from "@/lib/network/port-hint";
 import { DeviceTypeIcon, DEVICE_TYPE_LABELS } from "@/components/device-type-icon";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -143,23 +144,73 @@ function TopologyNodeView({ node, dragging, handlers }: { node: PositionedNode; 
   );
 }
 
-function edgeCaption(edge: TopologyEdge): string | undefined {
-  if (edge.kind !== "manual") return edge.label;
-  const parts = [edge.label];
-  if (edge.status === "DOWN") parts.push(edge.statusSince ? `caiu ${formatRelativeTime(edge.statusSince)}` : "fora do ar");
-  if (edge.status === "UNKNOWN") parts.push("verificando…");
-  return parts.filter(Boolean).join(" · ") || undefined;
+const EDGE_ORIGIN: Record<TopologyEdge["kind"], string> = {
+  wan: "Saída para a Internet",
+  confirmed: "Vista pelo SNMP na tabela de MACs do switch",
+  inferred: "Suposta: sem SNMP, ligada ao gateway",
+  uplink: "\"Conectado a\" definido na página do dispositivo",
+  manual: "Ligação cadastrada e monitorada",
+};
+
+/** "Modem --> Switch" -> "Modem → Switch". */
+function formatLinkName(label: string): string {
+  return label.replace(/\s*-+>\s*/g, " → ").replace(/\s*<-+\s*/g, " ← ").replace(/\s+/g, " ").trim();
+}
+
+/** "porta GE1/0/2" -> "GE1/0/2". */
+function shortPort(port: string): string {
+  return port.replace(/^porta\s+/i, "");
+}
+
+function linkStatusText(edge: TopologyEdge): string | undefined {
+  if (edge.kind !== "manual") return undefined;
+  if (edge.status === "DOWN") return edge.statusSince ? `caiu ${formatRelativeTime(edge.statusSince)}` : "fora do ar";
+  if (edge.status === "UNKNOWN") return "verificando…";
+  return undefined;
+}
+
+/** Linha principal do rótulo: o nome da ligação cadastrada (com o estado, se não estiver no ar). */
+function edgeName(edge: TopologyEdge): string | undefined {
+  if (edge.kind !== "manual") return undefined;
+  return [edge.label && formatLinkName(edge.label), linkStatusText(edge)].filter(Boolean).join(" · ") || undefined;
+}
+
+function nodeText(n: PositionedNode): string {
+  return n.ip && n.ip !== n.label ? `${n.label} (${n.ip})` : n.label;
+}
+
+/** Detalhes mostrados ao passar o mouse ou clicar na ligação. */
+function edgeDetails(edge: TopologyEdge, from: PositionedNode, to: PositionedNode): { title: string; body: string } {
+  const lines = [`${nodeText(from)} → ${nodeText(to)}`, EDGE_ORIGIN[edge.kind]];
+  if (edge.kind === "manual") {
+    const status = edge.status === "UP" ? "no ar" : linkStatusText(edge);
+    if (status) lines.push(`Estado: ${status}${edge.status === "DOWN" && edge.downReason ? ` (${edge.downReason})` : ""}`);
+  }
+  if (edge.port) lines.push("", `Porta ${shortPort(edge.port)}`, ...(explainPortName(edge.port)?.split("\n") ?? []));
+  return { title: edge.label ? formatLinkName(edge.label) : `${from.label} → ${to.label}`, body: lines.join("\n") };
 }
 
 function EdgeView({ edge, from, to }: { edge: TopologyEdge; from: PositionedNode; to: PositionedNode }) {
-  const caption = edgeCaption(edge);
+  const name = edgeName(edge);
+  const port = edge.port ? shortPort(edge.port) : undefined;
+  const details = edge.kind === "wan" ? undefined : edgeDetails(edge, from, to);
+  const showDetails = (e: React.MouseEvent) => {
+    if (!details) return;
+    e.stopPropagation();
+    toast(details.title, { description: <span className="whitespace-pre-line">{details.body}</span> });
+  };
   const isManual = edge.kind === "manual";
   const down = isManual && edge.status === "DOWN";
   const dashed = edge.kind === "inferred" || (isManual && edge.status === "UNKNOWN");
   const thin = edge.kind === "inferred" || edge.kind === "uplink";
+  const midX = (from.x + to.x) / 2;
+  const midY = (from.y + to.y) / 2;
 
   return (
-    <g>
+    <g className={cn(details && "cursor-pointer")} onClick={showDetails}>
+      {details && <title>{`${details.title}\n${details.body}`}</title>}
+      {/* Faixa invisível mais larga: facilita acertar a linha com o mouse. */}
+      <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} className="stroke-transparent" strokeWidth={14} />
       <line
         x1={from.x}
         y1={from.y}
@@ -176,19 +227,29 @@ function EdgeView({ edge, from, to }: { edge: TopologyEdge; from: PositionedNode
         )}
         strokeWidth={thin ? 1.5 : isManual ? 3 : 2}
         strokeDasharray={dashed ? "5 5" : undefined}
-      >
-        {down && edge.downReason && <title>{edge.downReason}</title>}
-      </line>
-      {caption && (
+      />
+      {name && (
         <text
-          x={(from.x + to.x) / 2}
-          y={(from.y + to.y) / 2 - 6}
+          x={midX}
+          y={midY - (port ? 19 : 6)}
           textAnchor="middle"
           paintOrder="stroke"
           strokeWidth={4}
           className={cn("stroke-background text-[11px] font-medium", down ? "fill-red-400" : "fill-muted-foreground")}
         >
-          {caption}
+          {name}
+        </text>
+      )}
+      {port && (
+        <text
+          x={midX}
+          y={midY - 6}
+          textAnchor="middle"
+          paintOrder="stroke"
+          strokeWidth={4}
+          className="stroke-background fill-violet-300 font-mono text-[10px] font-semibold"
+        >
+          {port}
         </text>
       )}
     </g>
