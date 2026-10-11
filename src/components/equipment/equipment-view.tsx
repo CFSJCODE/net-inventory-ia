@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -12,7 +12,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useCan } from "@/components/auth/user-provider";
-import { deleteEquipment, listEquipment, readEquipmentDetail, type EquipmentRow } from "@/app/actions/equipment-actions";
+import { Field, SimpleSelect } from "@/components/tools/tool-shell";
+import { deleteEquipment, listEquipment, readEquipmentDetail, updateEquipmentPollInterval, type EquipmentRow } from "@/app/actions/equipment-actions";
+import { AUTO_INTERVALS, intervalKey, intervalMinutes, type AutoIntervalKey } from "@/lib/auto-interval";
 import type { ToolResult } from "@/app/actions/tool-actions";
 import { EquipmentFormDialog } from "./equipment-form-dialog";
 import { EquipmentStatusPanel } from "./equipment-status-panel";
@@ -57,13 +59,51 @@ function DeleteEquipmentDialog({ equipment, onClose, onDeleted }: { equipment: E
   );
 }
 
+/** Frequência da leitura automática do equipamento, no mesmo formato do "Scan automático" das Configurações. */
+function AutoReadControl({ equipment }: { equipment: EquipmentRow }) {
+  const canEdit = useCan("inventory.edit");
+  const queryClient = useQueryClient();
+  const [pollInterval, setPollInterval] = useState<AutoIntervalKey>(intervalKey(equipment.pollIntervalMinutes));
+  const fieldId = `poll-${equipment.id}`;
+
+  useEffect(() => {
+    setPollInterval(intervalKey(equipment.pollIntervalMinutes));
+  }, [equipment.pollIntervalMinutes]);
+
+  const save = useMutation({
+    mutationFn: () => unwrap(updateEquipmentPollInterval(equipment.id, intervalMinutes(pollInterval))),
+    onSuccess: () => {
+      toast.success("Configuração salva");
+      queryClient.invalidateQueries({ queryKey: ["equipment"] });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  return (
+    <fieldset disabled={!canEdit} className="flex flex-col gap-3 sm:flex-row sm:items-end">
+      <Field label="Leitura automática" htmlFor={fieldId}>
+        <SimpleSelect id={fieldId} value={pollInterval} onChange={setPollInterval} options={AUTO_INTERVALS} className="sm:w-52" />
+      </Field>
+      {canEdit && (
+        <Button type="button" onClick={() => save.mutate()} disabled={save.isPending} className="w-fit">
+          Salvar
+        </Button>
+      )}
+    </fieldset>
+  );
+}
+
 function EquipmentDetailSection({ equipment }: { equipment: EquipmentRow }) {
   const canQuery = useCan("network.operate");
+  const pollMs = equipment.pollIntervalMinutes ? equipment.pollIntervalMinutes * 60_000 : false;
   const detail = useQuery({
     queryKey: ["equipment-detail", equipment.id],
     queryFn: () => unwrap(readEquipmentDetail(equipment.id)),
     enabled: canQuery,
     staleTime: 30_000,
+    // Relê sozinho enquanto a página estiver aberta, mesmo com a aba em segundo plano.
+    refetchInterval: pollMs,
+    refetchIntervalInBackground: true,
     retry: false,
   });
 
@@ -100,7 +140,7 @@ function EquipmentDetailSection({ equipment }: { equipment: EquipmentRow }) {
       ) : detail.data ? (
         <>
           {detail.isError && <p className="text-sm text-destructive">Falha ao atualizar: {detail.error.message}. Mostrando a última leitura.</p>}
-          <EquipmentStatusPanel data={detail.data} isFetching={detail.isFetching} onRefresh={() => detail.refetch()} />
+          <EquipmentStatusPanel data={detail.data} isFetching={detail.isFetching} onRefresh={() => detail.refetch()} controls={<AutoReadControl equipment={equipment} />} />
         </>
       ) : null}
     </section>

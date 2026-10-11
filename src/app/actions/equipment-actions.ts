@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission, requireSession } from "@/lib/auth/server";
 import { decrypt, encrypt } from "@/lib/ai/settings";
 import { displayName } from "@/lib/device-name";
+import { ALLOWED_INTERVAL_MINUTES } from "@/lib/auto-interval";
 import { readEquipmentStatus, type EquipmentStatus } from "@/lib/network/equipment-status";
 import { snmpQuery, type SnmpVersion } from "@/lib/network/tools/snmp";
 import type { ToolResult } from "./tool-actions";
@@ -16,6 +17,8 @@ export interface EquipmentRow {
   ip: string;
   snmpVersion: SnmpVersion;
   notes: string | null;
+  /** Leitura automática na página (minutos); null = desligada. */
+  pollIntervalMinutes: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -46,7 +49,7 @@ export interface ConnectionTest {
 }
 
 const VERSIONS: SnmpVersion[] = ["2c", "1"];
-const ROW_FIELDS = { id: true, name: true, ip: true, snmpVersion: true, notes: true, createdAt: true, updatedAt: true } as const;
+const ROW_FIELDS = { id: true, name: true, ip: true, snmpVersion: true, notes: true, pollIntervalMinutes: true, createdAt: true, updatedAt: true } as const;
 const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.?$/;
 
 async function run<T>(fn: () => Promise<T>): Promise<ToolResult<T>> {
@@ -132,6 +135,16 @@ export async function deleteEquipment(id: string): Promise<ToolResult<{ id: stri
     await requirePermission("inventory.edit");
     await prisma.equipment.delete({ where: { id } });
     return { id };
+  });
+}
+
+/** Frequência da leitura automática do equipamento na página; null desliga. */
+export async function updateEquipmentPollInterval(id: string, minutes: number | null): Promise<ToolResult<EquipmentRow>> {
+  return run(async () => {
+    await requirePermission("inventory.edit");
+    if (minutes !== null && !ALLOWED_INTERVAL_MINUTES.includes(minutes)) throw new Error("Intervalo inválido.");
+    const row = await prisma.equipment.update({ where: { id }, data: { pollIntervalMinutes: minutes }, select: ROW_FIELDS });
+    return toRow(row);
   });
 }
 
