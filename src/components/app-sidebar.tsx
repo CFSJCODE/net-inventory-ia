@@ -61,7 +61,14 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   { href: "/history", label: "Histórico", icon: HistoryIcon },
-  { href: "/assistant", label: "Assistente", icon: BotMessageSquareIcon, badge: "IA", requiresAi: true },
+  {
+    href: "/assistant", label: "Assistente", icon: BotMessageSquareIcon, badge: "IA", permission: "ai.use",
+    children: [
+      { href: "/assistant/settings", label: "Configuração da IA" },
+      { href: "/assistant/usage", label: "Uso e limites" },
+      { href: "/assistant", label: "Chat" },
+    ],
+  },
   { href: "/tools", label: "Ferramentas", icon: WrenchIcon },
   { href: "/equipment", label: "Equipamentos", icon: RouterIcon },
   { href: "/alerts", label: "Alertas", icon: BellIcon, permission: "settings.manage" },

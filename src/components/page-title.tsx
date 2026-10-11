@@ -33,6 +33,8 @@ const PAGES: Record<string, PageMeta> = {
   "/topology/links": { title: "Ligações monitoradas", icon: ActivityIcon },
   "/history": { title: "Histórico", icon: HistoryIcon },
   "/assistant": { title: "Assistente IA", icon: BotMessageSquareIcon },
+  "/assistant/settings": { title: "Configuração da IA", icon: BotMessageSquareIcon },
+  "/assistant/usage": { title: "Uso e limites da IA", icon: BotMessageSquareIcon },
   "/tools": { title: "Ferramentas de rede", icon: WrenchIcon },
   "/equipment": { title: "Equipamentos", icon: RouterIcon },
   "/alerts": { title: "Alertas por e-mail", icon: BellIcon },

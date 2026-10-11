@@ -37,7 +37,7 @@ O NetInventory roda em um computador da sua rede e mostra, num painel web acess�
 
 ## A IA trabalhando na administração da rede
 
-Com a sua chave da OpenAI (opcional), o NetInventory ganha um analista de rede:
+Com um provedor de IA configurado (opcional), o NetInventory ganha um analista de rede:
 
 - **Assistente em português** — "o que entrou na rede nas últimas 24 horas?", "quais dispositivos têm portas arriscadas?". Ele consulta inventário, histórico e ligações antes de responder.
 - **Identificação de dispositivos** — sugere nome e tipo para aparelhos desconhecidos a partir de fabricante, portas e tipo de MAC, com o nível de confiança.
@@ -48,7 +48,13 @@ Com a sua chave da OpenAI (opcional), o NetInventory ganha um analista de rede:
 |---|---|
 | ![Assistente IA](site/screens/ai-assistant.webp) | ![Identificação com IA](site/screens/ai-identify.webp) |
 
-**Privacidade:** IPs, MACs, hostnames e apelidos são substituídos por marcadores (`ip-1`, `dispositivo-1`…) **antes** de qualquer envio e restaurados na resposta ([`src/lib/ai/redact.ts`](src/lib/ai/redact.ts)). As chamadas só acontecem quando você clica, usam `store: false` e ficam em cache por 24 h. A chave fica criptografada (AES-256-GCM) no banco e nunca volta ao navegador.
+O menu **Assistente** reúne três submenus:
+
+- **Configuração da IA:** provedor, chave, modelo e URL para endpoints locais ou personalizados. Somente administradores alteram essas opções.
+- **Uso e limites:** consumo local por período, tokens de entrada/saída, chamadas, falhas, custo informado, tempo médio, cache e consumo por recurso/modelo. Administradores também consultam créditos e limites disponíveis no OpenRouter. [Detalhes da coleta e dos limites](docs/assistente-ia.md).
+- **Chat:** conversa sobre a rede, mantida na memória do navegador ao alternar entre os submenus.
+
+**Privacidade:** IPs, MACs, hostnames e apelidos são substituídos por marcadores (`ip-1`, `dispositivo-1`…) **antes** de qualquer envio e restaurados na resposta ([`src/lib/ai/redact.ts`](src/lib/ai/redact.ts)). As chamadas de análise e chat são iniciadas pelo usuário; análises ficam em cache por 24 h, enquanto perguntas no chat consultam a IA novamente. O submenu de uso consulta metadados de saldo, sem gerar respostas de IA. A chave fica criptografada (AES-256-GCM) no banco e nunca volta ao navegador. A coleta de consumo guarda somente metadados, sem perguntas, respostas ou credenciais.
 
 ## Instalação (Windows)
 
@@ -56,7 +62,7 @@ Com a sua chave da OpenAI (opcional), o NetInventory ganha um analista de rede:
 2. Execute num computador que fique ligado e esteja na rede que será monitorada. Sem assinatura digital, o Windows mostra o aviso do SmartScreen: **Mais informações → Executar assim mesmo**.
 3. Abra `http://localhost:3000` (ou `http://IP-do-computador:3000` de outra máquina) e crie o administrador.
 4. Em **Configurações → Scan da rede**, informe a faixa da sua rede — descubra com `ipconfig`: IPv4 `192.168.0.25` e máscara `255.255.255.0` → `192.168.0.0/24`.
-5. Opcional: cadastre a sua chave da OpenAI quando o app pedir (ou em Configurações).
+5. Opcional: configure o provedor de IA quando o app pedir (ou em **Assistente → Configuração da IA**).
 
 O instalador traz tudo embutido (Node.js, banco SQLite, migrações), registra o serviço **NetInventory** (inicia com o Windows e reinicia sozinho) e libera a porta 3000 no firewall para redes privadas. Os dados ficam em `C:\ProgramData\NetInventory` e são mantidos em atualizações.
 

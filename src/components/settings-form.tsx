@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { cleanupEphemeralDevices, countEphemeralDevices } from "@/app/actions/device-actions";
 import { Field, SimpleSelect } from "@/components/tools/tool-shell";
 import { NotificationSettings } from "@/components/notification-settings";
-import { AiSettingsCard } from "@/components/ai/ai-settings-card";
+import Link from "next/link";
 import { IpRulesCard } from "@/components/ip-rules-card";
 import { IgnoredIpsCard } from "@/components/ignored-ips-card";
 import { useCan } from "@/components/auth/user-provider";
@@ -150,7 +150,12 @@ export function SettingsForm() {
 
       <NotificationSettings />
 
-      {canManage && <AiSettingsCard />}
+      {canManage && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">Inteligência artificial</CardTitle><CardDescription>Provedor, chave, modelo e métricas de consumo estão reunidos no Assistente IA.</CardDescription></CardHeader>
+          <CardContent><Link href="/assistant/settings" className="text-sm text-primary underline underline-offset-4">Abrir configuração da IA</Link></CardContent>
+        </Card>
+      )}
 
       {canManage && <EphemeralCleanup />}
 
