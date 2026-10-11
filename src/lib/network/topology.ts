@@ -5,7 +5,7 @@ import { displayName } from "@/lib/device-name";
 import { readRouteTable } from "./tools/route-table";
 import { mapWithConcurrency } from "./concurrency";
 import { decrypt, encrypt } from "@/lib/ai/settings";
-import { placeByFdb, readSwitchFdb, type FdbEntry, type Placement } from "./switch-fdb";
+import { placeByFdb, portLabel, readSwitchFdb, type FdbEntry, type Placement } from "./switch-fdb";
 
 export type TopologyRole = "internet" | "gateway" | "infra" | "device";
 
@@ -34,6 +34,8 @@ export interface TopologyEdge {
    */
   kind: "wan" | "confirmed" | "inferred" | "uplink" | "manual";
   label?: string;
+  /** Porta do switch usada pela ligação (ex: "porta GE1/0/2"), lida via SNMP, qualquer que seja o tipo da ligação. */
+  port?: string;
   /** false = ligação extra (ex: segundo caminho); desenhada, mas não define a posição na árvore. */
   tree: boolean;
   linkId?: string;
@@ -125,8 +127,7 @@ type Memory = Map<string, Placement & { at: number }>;
 let memoryCache: Memory | null = null;
 let memorizedAt = 0;
 
-/** Junta as posições lidas agora com as guardadas (MAC -> equipamento/porta) e grava quando há leitura nova. */
-async function rememberPlacements(current: Map<string, Placement>, readAt: number): Promise<Memory> {
+async function loadMemory(): Promise<Memory> {
   if (!memoryCache) {
     memoryCache = new Map();
     const row = await prisma.appSetting.findUnique({ where: { key: SETTING_MEMORY } }).catch(() => null);
@@ -138,18 +139,24 @@ async function rememberPlacements(current: Map<string, Placement>, readAt: numbe
       // valor corrompido: recomeça do zero
     }
   }
+  return memoryCache;
+}
+
+/** Junta as posições lidas agora com as guardadas (MAC -> equipamento/porta) e grava quando há leitura nova. */
+async function rememberPlacements(current: Map<string, Placement>, readAt: number): Promise<Memory> {
+  const memory = await loadMemory();
   // readAt > 0 só quando a leitura teve ao menos um equipamento respondendo: aí também expira o que é velho,
   // mesmo que nenhuma posição nova tenha sido encontrada.
   if (readAt > memorizedAt) {
     memorizedAt = readAt;
-    for (const [mac, p] of current) memoryCache.set(mac, { ...p, at: readAt });
-    for (const [mac, v] of memoryCache) if (readAt - v.at > MEMORY_MAX_AGE_MS) memoryCache.delete(mac);
-    const value = JSON.stringify(Object.fromEntries(memoryCache));
+    for (const [mac, p] of current) memory.set(mac, { ...p, at: readAt });
+    for (const [mac, v] of memory) if (readAt - v.at > MEMORY_MAX_AGE_MS) memory.delete(mac);
+    const value = JSON.stringify(Object.fromEntries(memory));
     await prisma.appSetting
       .upsert({ where: { key: SETTING_MEMORY }, create: { key: SETTING_MEMORY, value }, update: { value } })
       .catch(() => {});
   }
-  return memoryCache;
+  return memory;
 }
 
 function localIps(): Set<string> {
@@ -276,11 +283,18 @@ export async function buildTopology(options: { snmpCommunity?: string; allowProb
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
   const infraByMac = new Map(infra.filter((n) => n.mac).map((n) => [n.mac!, n.id]));
+  const remembered = await loadMemory();
+  const rememberedInfra = new Map<string, Placement>();
+  for (const [mac, id] of infraByMac) {
+    const p = remembered.get(mac);
+    if (p) rememberedInfra.set(id, p);
+  }
   const placements = snapshot
     ? placeByFdb(
         snapshot.results.filter((r) => !r.error).map((r) => ({ swId: r.swId, entries: r.entries })),
         infraByMac,
         gateway?.mac ?? null,
+        rememberedInfra,
       )
     : new Map<string, Placement>();
   // Dispositivos parados (impressora em repouso, offline) somem da tabela do switch em poucos minutos;
@@ -295,9 +309,14 @@ export async function buildTopology(options: { snmpCommunity?: string; allowProb
     }
   }
 
-  // "Conectado a" definido pelo usuário na página do dispositivo: vale mais que o SNMP.
+  // "Conectado a" definido pelo usuário na página do dispositivo: vale mais que o SNMP, exceto quando o
+  // SNMP é mais específico sem contradizê-lo (celular "conectado ao switch" que o SNMP achou atrás do AP
+  // ligado nesse switch). Isso só dá para decidir depois das ligações manuais, abaixo.
+  const snmpUnderUplink = new Map<string, { to: string; kind: TopologyEdge["kind"]; label?: string }>();
   for (const d of devices) {
     if (d.uplinkId && d.uplinkId !== d.id && parent.has(d.id) && nodeById.has(d.uplinkId)) {
+      const current = parent.get(d.id)!;
+      if (current.kind === "confirmed") snmpUnderUplink.set(d.id, current);
       parent.set(d.id, { to: d.uplinkId, kind: "uplink" });
     }
   }
@@ -314,6 +333,20 @@ export async function buildTopology(options: { snmpCommunity?: string; allowProb
     if (manualParent.has(l.toDeviceId)) continue;
     manualParent.add(l.toDeviceId);
     parent.set(l.toDeviceId, { to: l.fromDeviceId, kind: "manual", linkId: l.id });
+  }
+
+  for (const [id, snmpParent] of snmpUnderUplink) {
+    const uplinkId = parent.get(id)?.kind === "uplink" ? parent.get(id)!.to : null;
+    if (!uplinkId) continue;
+    // Sobe a partir do pai visto pelo SNMP: se passa pelo "Conectado a", os dois concordam.
+    const seen = new Set<string>([id]);
+    for (let cur: string | undefined = snmpParent.to; cur && !seen.has(cur); cur = parent.get(cur)?.to) {
+      if (cur === uplinkId) {
+        parent.set(id, snmpParent);
+        break;
+      }
+      seen.add(cur);
+    }
   }
 
   // Dois switches podem se enxergar pelas portas de uplink e apontar um para o outro.
@@ -335,6 +368,21 @@ export async function buildTopology(options: { snmpCommunity?: string; allowProb
     return { from, to, kind: "manual", tree, linkId, label: l.label ?? undefined, status: l.status, statusSince: l.lastChangeAt?.toISOString() ?? null, downReason: l.downReason };
   };
 
+  // Porta do switch em cada ligação: a porta onde o switch (pai) aprendeu o MAC do filho, ou a porta
+  // por onde o switch (filho) enxerga o pai (o uplink). Vale também para ligações manuais e "Conectado a".
+  const fdbBySwitch = new Map(
+    (snapshot?.results ?? []).filter((r) => !r.error).map((r) => [r.swId, new Map(r.entries.map((e) => [e.mac, e]))]),
+  );
+  const portOneWay = (parentId: string, childId: string): string | undefined => {
+    const child = nodeById.get(childId);
+    const hit = child?.mac ? (placements.get(child.mac) ?? memory.get(child.mac)) : undefined;
+    if (hit?.parentId === parentId && hit.label) return hit.label;
+    const parentMac = nodeById.get(parentId)?.mac;
+    const entry = parentMac ? fdbBySwitch.get(childId)?.get(parentMac) : undefined;
+    return entry ? portLabel(entry) : undefined;
+  };
+  const portOf = (a: string, b: string) => portOneWay(a, b) ?? portOneWay(b, a);
+
   const edges: TopologyEdge[] = [{ from: INTERNET_ID, to: gatewayId, kind: "wan", tree: true }];
   const inTree = new Set<string>();
   for (const [id, p] of parent) {
@@ -346,6 +394,7 @@ export async function buildTopology(options: { snmpCommunity?: string; allowProb
     }
   }
   for (const l of oriented) if (!inTree.has(l.id)) edges.push(manualEdge(l.id, l.fromDeviceId, l.toDeviceId, false));
+  for (const e of edges) if (e.kind !== "wan") e.port = portOf(e.from, e.to);
 
   return { nodes, edges, gatewayIp, snmp, snmpPending, snmpCommunity: community };
 }
