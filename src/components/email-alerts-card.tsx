@@ -17,7 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BellIcon } from "@/components/ui/bell";
-import { DEFAULT_SETTINGS, type AlertThresholds, type EmailAlertSettings } from "@/lib/alerts/email-settings";
+import { DEFAULT_SETTINGS, type AlertThresholds, type EmailAlertSettings } from "@/lib/alerts/email-defaults";
 import { formatDateTime } from "@/lib/format-time";
 
 const COOLDOWNS = { "5": "5 minutos", "15": "15 minutos", "30": "30 minutos", "60": "1 hora", "180": "3 horas" };
