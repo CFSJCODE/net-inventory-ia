@@ -1,31 +1,37 @@
-## Retomada para Claude — 11/10/2026
+# Retomada do projeto Net-Inventory — 11/10/2026
 
-**Projeto:** Net-Inventory (`CFSJCODE/net-inventory-ia`)
-**Trabalho ativo:** PR #15 — https://github.com/CFSJCODE/net-inventory-ia/pull/15
-**Branch:** `claude/project-thread-u0lkg9`
-**Commit mais recente validado:** `21d8cd6` (remoto e PR atualizado; worktree local `D:\Net-Inventory\wt-pr15`).
-**Versão pretendida:** `0.2.10` (em package.json/package-lock; tag/release ainda não publicada).
+Repositório oficial de trabalho: `CFSJCODE/net-inventory-ia`. Não direcionar alterações ao fork `douglaspiero/net-inventory-ia`.
 
-### Objetivo decidido pelo usuário
-Melhorar e formatar todos os e-mails via Resend (alertas, recuperações e teste), incluindo status, latência, perda, CPU, memória, temperatura, uptime e todos os limites configurados. Aprovado: mesclar PR #15 e lançar v0.2.10 com instalador. Procedimento combinado: revisar/mesclar PR; pedir ao usuário o envio da tag `v0.2.10` pelo PC (Remote Control); aguardar GitHub Actions publicar release e instalador; então atualizar o site com link, tamanho e SHA-256. Não inventar tamanho/hash antes do artefato existir.
+## Estado atual
 
-### Feito nesta continuação
-- Contexto do projeto reconstruído pelo histórico disponível do Claude, PR e Git. Usuário pediu que o resumo retomável seja mantido para Claude quando o limite voltar.
-- Correções anteriores da revisão Codex presentes no PR: timestamp por equipamento ao concluir sua medição e `lastPingAt` separado de `lastSeen`, evitando combinar timestamp SNMP com latência antiga. Comentários de resposta do Claude no PR documentam ambos.
-- Validação em checkout isolado `D:\Net-Inventory\wt-pr15`: Prisma Client gerado; testes focados `alert-emails.test.ts` e `email-template.test.ts`: 16/16 passaram; `npm run lint` passou; `npm run build` passou.
-- Não houve novas alterações de código neste turno.
+- PR #15 (e-mails Resend, apresentação completa de leituras/limites e versão 0.2.10) está mesclado em `main`.
+- Tag e release `v0.2.10` foram publicadas com sucesso. GitHub Actions run `38163192781` concluiu com sucesso, incluindo suíte de testes, build e upload do instalador.
+- Instalador: `NetInventory-Setup-0.2.10.exe`, 45.454.394 bytes (43 MiB, exibido como 43 MB), SHA-256 `eac8ec36032ef1105dba1aad3b0ade1f0f725af360e2d011ca78aaa92974f383`.
+- Release: https://github.com/CFSJCODE/net-inventory-ia/releases/tag/v0.2.10
+- PR #16 de IPs ignorados foi mesclado em `main` em `4722d184f6237d7d686266305e8b6fcf653ad5af`.
+- PR #17 foi mesclado em `main` no commit `bd82ac4d0b6db3e0c8d3c0f5c43b722ea846a946`. O código do site atualiza os dois links de download, nome/tamanho/hash do instalador e exemplo do SmartScreen para v0.2.10.
 
-### Estado remoto conferido
-- PR #15 continua OPEN, não draft, base `main`, head `21d8cd6`; sem status checks reportados pelo GitHub no momento da checagem. A revisão automatizada não trouxe apontamento novo depois de `21d8cd6`; revisão inicial apontou os dois problemas já corrigidos.
-- `main` remoto estava em `fac5d2b`; PR inclui versão 0.2.10.
-- Release/tag `v0.2.10` ainda não existe. Última release verificada antes era `v0.2.9`.
+## Tarefas anteriores já entregues
 
-### Próximas ações
-1. Fazer revisão final do diff/PR #15 e então mesclar conforme a decisão já aprovada. Não confundir com a branch local `claude/ignored-ips`.
-2. Depois do merge, fornecer ao usuário a instrução operacional para enviar a tag `v0.2.10` pelo PC (conforme combinado); esperar a action oficial do Windows gerar instalador e release.
-3. Conferir release/asset publicados e obter tamanho e SHA-256 reais.
-4. Atualizar o site com URL, tamanho e hash; validar links/dados do site publicados.
-5. Manter este arquivo atualizado após cada avanço relevante e ao encerrar cada sessão.
+Categorias IoT/Smart TV e detecção, correção do HP Z230, rótulo DVR/NVR, associação de equipamentos no mapa, identificação por MAC, intervalo automático em Equipamentos, alertas Resend e modelos de e-mail foram integrados em PRs anteriores (#1–#15). Não recriar essas alterações.
 
-### Cuidado com worktrees
-A pasta principal `D:\Net-Inventory\net-inventory-ia` está noutra tarefa (`claude/ignored-ips`) com mudanças não commitadas em settings-form.tsx, scan-service.ts e arquivos ignored-ips. Não modificar, limpar, trocar de branch ou sobrescrever esses arquivos para continuar o PR #15. Use `D:\Net-Inventory\wt-pr15`.
+## Validação registrada
+
+Para PR #15: testes de e-mail 16/16, lint e build local passaram. A execução de release no GitHub também passou integralmente.
+
+Para PR #16: 4 testes do módulo de IP ignorado, lint e build passaram localmente em checkout separado antes do merge.
+
+Para PR #17: merge concluído e `git diff --check` passou. Verificação HTTP de `https://net-inventory-ia-site.vercel.app` retornou 200, mas a página pública ainda serve link/hash da v0.1.0. O código do site em `main` já aponta para v0.2.10; a publicação no host ainda precisa ser atualizada/confirmada.
+
+## Worktrees e arquivos locais
+
+- `D:\Net-Inventory\wt-pr15`: branch atual `claude/site-v0.2.10`, preparando PR #17.
+- `D:\Net-Inventory\wt-ignored-ips`: contém branch local com o commit original `540f679` no fork/push anterior; a versão correta em CFSJCODE foi reaplicada e mesclada via PR #16.
+- `D:\Net-Inventory\net-inventory-ia`: checkout local antigo na branch `claude/ignored-ips`, com seis arquivos locais modificados/não rastreados do recurso de IPs ignorados; foram preservados intactos. Está atrás do main remoto. Não limpar, resetar ou substituir esses arquivos sem primeiro confirmar conteúdo e destino.
+- Outros worktrees antigos (`build-equipment-poll`, `wt-dvr-nvr`) estavam limpos e continham funcionalidades já integradas.
+
+## Próximos passos
+
+1. Investigar/confirmar a atualização do deploy do site Vercel para o conteúdo já mesclado do PR #17.
+2. Confirmar publicamente o link de download v0.2.10 e o SHA-256 depois que o deploy do site atualizar.
+3. Se solicitado, reconciliar com cuidado a cópia local antiga `claude/ignored-ips`; não apagar os arquivos de trabalho sem validar que correspondem ao PR #16.
