@@ -15,6 +15,7 @@ import { useLinks, useLinkTransitionToasts } from "./links-panel";
 import { cancelNavigationProgress } from "@/components/top-loading-bar";
 import type { Topology, TopologyEdge } from "@/lib/network/topology";
 import { layoutTopology, type PositionedNode } from "@/lib/topology-layout";
+import { explainPortName } from "@/lib/network/port-name";
 import { DeviceTypeIcon, DEVICE_TYPE_LABELS } from "@/components/device-type-icon";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -153,6 +154,7 @@ function edgeCaption(edge: TopologyEdge): string | undefined {
 
 function EdgeView({ edge, from, to }: { edge: TopologyEdge; from: PositionedNode; to: PositionedNode }) {
   const caption = edgeCaption(edge);
+  const portHint = edge.kind === "confirmed" && edge.label ? explainPortName(edge.label) : undefined;
   const isManual = edge.kind === "manual";
   const down = isManual && edge.status === "DOWN";
   const dashed = edge.kind === "inferred" || (isManual && edge.status === "UNKNOWN");
@@ -178,6 +180,7 @@ function EdgeView({ edge, from, to }: { edge: TopologyEdge; from: PositionedNode
         strokeDasharray={dashed ? "5 5" : undefined}
       >
         {down && edge.downReason && <title>{edge.downReason}</title>}
+        {portHint && <title>{portHint}</title>}
       </line>
       {caption && (
         <text
@@ -186,8 +189,13 @@ function EdgeView({ edge, from, to }: { edge: TopologyEdge; from: PositionedNode
           textAnchor="middle"
           paintOrder="stroke"
           strokeWidth={4}
-          className={cn("stroke-background text-[11px] font-medium", down ? "fill-red-400" : "fill-muted-foreground")}
+          className={cn(
+            "stroke-background text-[11px] font-medium",
+            down ? "fill-red-400" : "fill-muted-foreground",
+            portHint && "cursor-help underline decoration-dotted",
+          )}
         >
+          {portHint && <title>{portHint}</title>}
           {caption}
         </text>
       )}
