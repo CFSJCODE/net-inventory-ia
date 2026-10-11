@@ -29,7 +29,7 @@ const snmp: HostReading = { ...online, cpuPct: 93, memPct: 41, tempC: 52, uptime
 
 const modem = { host: "192.168.0.1", label: "Modem" };
 const sw = { host: "192.168.0.3", label: "HP V1910-24G" };
-const common = { at: T0, intervalMs: MIN, settings };
+const common = { at: T0, intervalMs: MIN, settings, since: T0 };
 
 describe("observe", () => {
   it("equipamento vigiado: fora do ar e degradado; SNMP: cpu, memória e temperatura", () => {
@@ -127,6 +127,15 @@ describe("buildAlertEmail", () => {
     expect(e.text).not.toContain("Endereço IP");
   });
 
+  it("aviso atrasado pelo intervalo mínimo: diz desde quando o problema está confirmado", () => {
+    const r = { ...snmp, cpuPct: 95 };
+    const e = buildAlertEmail({ ...common, target: sw, observation: obs(r, "cpu", false), reading: r, checks: 3, since: T0 - 16 * MIN });
+    expect(e.text).toMatch(/está em 95%, acima do limite de 90%, desde \S+ às \S+ \(confirmado com 3 leituras seguidas\) e continua agora\./);
+    expect(e.text).toMatch(/- Problema desde: .*\n- Avisado em: .* \(esperou o intervalo mínimo de 15 min entre alertas\)/);
+    expect(e.text).not.toContain("Detectado em");
+    expect(e.text).toContain("- Confirmação: 3 leituras seguidas com problema, uma a cada 1 min");
+  });
+
   it("temperatura alta é crítica", () => {
     const r = { ...snmp, cpuPct: 20, tempC: 82 };
     const e = buildAlertEmail({ ...common, target: sw, observation: obs(r, "temp", false), reading: r, checks: 2 });
@@ -199,20 +208,27 @@ describe("buildTestEmail", () => {
     expect(e.text).not.toContain("2 problemas");
   });
 
-  it("com muitos equipamentos, só os primeiros 8 ganham a seção completa; os outros vão num resumo", () => {
-    const equipment = Array.from({ length: 11 }, (_, n) => ({
-      target: { host: `192.168.0.${10 + n}`, label: `Aparelho ${n + 1}` },
-      reading: n === 10 ? null : { ...snmp, cpuPct: 20 + n, lossPct: n === 9 ? 25 : 0, pingsReceived: n === 9 ? 3 : 4 },
+  it("com muitos equipamentos: 6 completos, 30 no resumo, o resto só contado, e o e-mail fica abaixo do corte do Gmail", () => {
+    const equipment = Array.from({ length: 60 }, (_, n) => ({
+      target: { host: `192.168.0.${10 + n}`, label: `Aparelho com nome bem comprido número ${n + 1} (sala de equipamentos)` },
+      reading: n === 59 ? null : { ...snmp, cpuPct: 20 + n, lossPct: n === 7 ? 25 : 0, pingsReceived: n === 7 ? 3 : 4 },
       snmp: true,
     }));
     const e = buildTestEmail({ settings, equipment, activeProblems: 0, intervalMs: MIN, at: T0 });
-    expect(e.text).toContain("LEITURAS ATUAIS: APARELHO 8 (192.168.0.17)");
-    expect(e.text).not.toContain("LEITURAS ATUAIS: APARELHO 9");
-    expect(e.text).toContain("OUTROS 3 EQUIPAMENTOS (RESUMO)");
-    expect(e.text).toContain("- Aparelho 9 (192.168.0.18): No ar · 3 ms · CPU 28% · memória 41% · 52 °C");
-    expect(e.text).toContain("- Aparelho 10 (192.168.0.19): No ar · 3 ms · 25% de perda · CPU 29% · memória 41% · 52 °C");
-    expect(e.text).toContain("- Aparelho 11 (192.168.0.20): ainda sem leitura");
+    expect(e.text).toContain("LEITURAS ATUAIS: APARELHO COM NOME BEM COMPRIDO NÚMERO 6 ");
+    expect(e.text).not.toContain("LEITURAS ATUAIS: APARELHO COM NOME BEM COMPRIDO NÚMERO 7 ");
+    expect(e.text).toContain("OUTROS 54 EQUIPAMENTOS (RESUMO)");
+    expect(e.text).toContain("número 8 (sala de equipamentos) (192.168.0.17): No ar · 3 ms · 25% de perda · CPU 27% · memória 41% · 52 °C");
+    expect(e.text).toContain("número 36 (sala de equipamentos) (192.168.0.45): No ar");
+    expect(e.text).not.toContain("número 37 (sala de equipamentos) (192.168.0.46): ");
+    expect(e.text).toMatch(/- CPU, memória e temperatura \(SNMP\): .*número 10 \(sala de equipamentos\) \(192\.168\.0\.19\) e mais 50\n/);
+    expect(e.text).toContain("- Mais 24 equipamentos: não listados aqui");
     expect(e.html.length).toBeLessThan(100_000);
+    // Sem leitura ainda: aparece como tal quando está entre os resumidos.
+    const few = buildTestEmail({ settings, equipment: equipment.slice(0, 8).map((x, n) => (n === 7 ? { ...x, reading: null } : x)), activeProblems: 0, intervalMs: MIN, at: T0 });
+    expect(few.text).toContain("OUTROS 2 EQUIPAMENTOS (RESUMO)");
+    expect(few.text).toContain("(192.168.0.17): ainda sem leitura");
+    expect(few.text).not.toContain("Mais ");
   });
 });
 

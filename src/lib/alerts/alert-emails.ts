@@ -188,9 +188,14 @@ interface Common {
 }
 
 export interface AlertEmailInput extends Common {
-  /** Leituras seguidas com problema que confirmaram o alerta. */
+  /** Leituras seguidas com problema que confirmam um alerta (regra da checagem). */
   checks: number;
+  /** Quando o problema foi confirmado. Antes de `at` quando o aviso esperou o intervalo mínimo entre alertas. */
+  since: number | null;
 }
+
+/** O aviso saiu depois da confirmação (esperou o intervalo mínimo entre alertas). */
+const isDelayed = (i: AlertEmailInput) => i.since !== null && i.at - i.since >= i.intervalMs;
 
 /** Trecho do assunto com o valor que estourou: "(93%)", "(230 ms, 25% de perda)". */
 function subjectDetail(o: Observation, r: HostReading, t: AlertThresholds): string {
@@ -216,7 +221,8 @@ function alertSummary(i: AlertEmailInput): string {
   const { observation: o, reading: r, settings } = i;
   const t = settings.thresholds;
   const name = targetName(i.target);
-  const run = `nas últimas ${i.checks} verificações seguidas`;
+  // Aviso atrasado pelo intervalo mínimo: o problema foi confirmado antes e continua agora.
+  const run = isDelayed(i) ? `desde ${formatDateTime(i.since!)} (confirmado com ${i.checks} leituras seguidas) e continua agora` : `nas últimas ${i.checks} verificações seguidas`;
   switch (o.kind) {
     case "offline":
       return `${name} não respondeu a nenhum dos ${r.pingsSent} pings ${run}. O equipamento pode estar desligado, sem energia, travado ou com o cabo de rede desconectado.`;
@@ -239,6 +245,13 @@ export function buildAlertEmail(i: AlertEmailInput): BuiltEmail {
   const k = KINDS[i.observation.kind];
   const name = targetName(i.target);
   const detail = subjectDetail(i.observation, i.reading, i.settings.thresholds);
+  const delayed = isDelayed(i);
+  const when: [string, string][] = delayed
+    ? [
+        ["Problema desde", formatDateTime(i.since!)],
+        ["Avisado em", `${formatDateTime(i.at)} (esperou o intervalo mínimo de ${i.settings.cooldownMinutes} min entre alertas)`],
+      ]
+    : [["Detectado em", formatDateTime(i.at)]];
   const content: EmailContent = {
     tone: k.tone,
     label: "ALERTA",
@@ -253,7 +266,7 @@ export function buildAlertEmail(i: AlertEmailInput): BuiltEmail {
           ["Equipamento", i.target.label ?? i.target.host],
           [addressLabel(i.target.host), i.target.host],
           ["Problema", `${k.alert}: ${i.observation.detail}`],
-          ["Detectado em", formatDateTime(i.at)],
+          ...when,
           ["Confirmação", `${i.checks} leituras seguidas com problema, uma a cada ${formatDuration(i.intervalMs)}`],
         ],
       },
@@ -329,8 +342,12 @@ export interface TestEmailInput {
   at: number;
 }
 
-/** O Gmail corta e-mails acima de ~100 KB: só os primeiros equipamentos ganham a seção completa de leituras. */
-const MAX_DETAILED_READINGS = 8;
+/**
+ * O Gmail corta e-mails acima de ~100 KB: só os primeiros equipamentos ganham a seção completa de
+ * leituras (~8 KB cada), os seguintes vão num resumo de uma linha (~0,5 KB cada) e o resto só é contado.
+ */
+const MAX_DETAILED_READINGS = 6;
+const MAX_COMPACT_READINGS = 30;
 
 /** Resumo de uma linha da leitura, para a lista dos demais equipamentos. */
 function compactReading(r: HostReading | null): string {
@@ -347,12 +364,17 @@ function compactReading(r: HostReading | null): string {
 export function buildTestEmail(i: TestEmailInput): BuiltEmail {
   const s = i.settings;
   const detailed = i.equipment.slice(0, MAX_DETAILED_READINGS);
-  const others = i.equipment.slice(MAX_DETAILED_READINGS);
+  const others = i.equipment.slice(MAX_DETAILED_READINGS, MAX_DETAILED_READINGS + MAX_COMPACT_READINGS);
+  const uncounted = i.equipment.length - detailed.length - others.length;
   const watched = i.equipment.filter((e) => s.targets.includes(e.target.host));
   const snmp = i.equipment.filter((e) => e.snmp);
   const online = i.equipment.filter((e) => e.reading?.online).length;
   const measured = i.equipment.filter((e) => e.reading).length;
-  const list = (items: typeof i.equipment) => items.map((e) => targetName(e.target)).join(", ");
+  // Listas de nomes limitadas: com dezenas de equipamentos a linha viraria um parágrafo.
+  const list = (items: typeof i.equipment, max = 10) => {
+    const names = items.slice(0, max).map((e) => targetName(e.target)).join(", ");
+    return items.length > max ? `${names} e mais ${items.length - max}` : names;
+  };
   const notes: string[] = [];
   if (!s.enabled) notes.push("Atenção: os alertas ainda estão desativados. Em Configurações → Alertas por e-mail, marque “Ativar alertas” e salve para começar a vigiar os equipamentos.");
   const content: EmailContent = {
@@ -383,7 +405,17 @@ export function buildTestEmail(i: TestEmailInput): BuiltEmail {
       },
       limitsSection(s, i.intervalMs),
       ...detailed.map((e) => readingSection(`Leituras atuais: ${targetName(e.target)}`, e.reading, s.thresholds)),
-      ...(others.length ? [{ title: `Outros ${others.length} equipamentos (resumo)`, rows: others.map((e): [string, string] => [targetName(e.target), compactReading(e.reading)]) }] : []),
+      ...(others.length
+        ? [
+            {
+              title: `Outros ${others.length + uncounted} equipamentos (resumo)`,
+              rows: [
+                ...others.map((e): [string, string] => [targetName(e.target), compactReading(e.reading)]),
+                ...(uncounted > 0 ? [[`Mais ${uncounted} equipamentos`, "não listados aqui; as leituras deles aparecem nos alertas"] as [string, string]] : []),
+              ],
+            },
+          ]
+        : []),
       {
         title: "O que você vai receber",
         items: [

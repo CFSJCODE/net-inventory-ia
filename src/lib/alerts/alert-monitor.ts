@@ -234,8 +234,8 @@ async function runChecks(): Promise<void> {
       state.checks[key] = next;
       const common = { target, observation: o, reading, at, intervalMs: ALERT_CHECK_INTERVAL_MS, settings: config };
       if (event === "alert") {
-        // Leituras seguidas com problema de verdade: pode passar de badToFire quando o alerta esperou o intervalo mínimo.
-        const email = buildAlertEmail({ ...common, checks: next.bad });
+        // `since` fica antes de `at` quando o aviso esperou o intervalo mínimo entre alertas.
+        const email = buildAlertEmail({ ...common, checks: RULES[o.kind].badToFire, since: next.since });
         enqueue(state, { key, kind: "alert", ...email, createdAt: at });
         console.log(`[alertas] ${alertTitle(o.kind)}: ${targetName(target)} — ${o.detail}`);
       } else if (event === "recovery") {
