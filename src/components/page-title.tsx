@@ -12,6 +12,7 @@ import { ShieldCheckIcon } from "@/components/ui/shield-check";
 import { UserIcon } from "@/components/ui/user";
 import { CpuIcon } from "@/components/ui/cpu";
 import { BotMessageSquareIcon } from "@/components/ui/bot-message-square";
+import { RouterIcon } from "@/components/ui/router";
 
 /** Contrato comum dos ícones do lucide-animated: animam sozinhos no hover ou sob comando via ref. */
 export interface AnimatedIconHandle {
@@ -32,6 +33,7 @@ const PAGES: Record<string, PageMeta> = {
   "/history": { title: "Histórico", icon: HistoryIcon },
   "/assistant": { title: "Assistente IA", icon: BotMessageSquareIcon },
   "/tools": { title: "Ferramentas de rede", icon: WrenchIcon },
+  "/equipment": { title: "Status dos equipamentos", icon: RouterIcon },
   "/settings": { title: "Configurações", icon: SettingsIcon },
   "/users": { title: "Usuários e acessos", icon: ShieldCheckIcon },
   "/account": { title: "Minha conta", icon: UserIcon },
