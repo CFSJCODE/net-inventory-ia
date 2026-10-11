@@ -188,3 +188,17 @@ model AppSetting {
   value     String
   updatedAt DateTime @updatedAt
 }
+
+/// Equipamento gerenciável via SNMP (switch, roteador...) cadastrado na página Equipamentos para
+/// consulta do estado do hardware e das portas. A community é uma credencial: fica criptografada.
+model Equipment {
+  id          String   @id @default(cuid())
+  name        String
+  ip          String   @unique
+  community   String
+  /// "1" ou "2c" — as versões que o cliente SNMP do app fala.
+  snmpVersion String   @default("2c")
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

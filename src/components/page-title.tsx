@@ -33,7 +33,7 @@ const PAGES: Record<string, PageMeta> = {
   "/history": { title: "Histórico", icon: HistoryIcon },
   "/assistant": { title: "Assistente IA", icon: BotMessageSquareIcon },
   "/tools": { title: "Ferramentas de rede", icon: WrenchIcon },
-  "/equipment": { title: "Status dos equipamentos", icon: RouterIcon },
+  "/equipment": { title: "Equipamentos", icon: RouterIcon },
   "/settings": { title: "Configurações", icon: SettingsIcon },
   "/users": { title: "Usuários e acessos", icon: ShieldCheckIcon },
   "/account": { title: "Minha conta", icon: UserIcon },
