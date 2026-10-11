@@ -125,12 +125,14 @@ export async function resolveTargets(config: EmailAlertConfig): Promise<Target[]
 }
 
 /** Ping + SNMP de um equipamento; o que não muda (desde quando responde, última resposta) vem da leitura anterior. */
-async function measure(target: Target, prev: HostReading | undefined, at: number): Promise<HostReading> {
+async function measure(target: Target, prev: HostReading | undefined): Promise<HostReading> {
   const ping = await pingStats(target.host);
   // SNMP mesmo sem ping: há equipamento que bloqueia ICMP e responde SNMP.
   const metrics = target.equipment
     ? await readHealthMetrics(target.host, target.equipment.community, target.equipment.version).catch(() => null)
     : null;
+  // Hora da medição deste equipamento (com muitos equipamentos, os últimos medem bem depois do início da rodada).
+  const at = now();
   const online = ping.received > 0 || metrics !== null;
   const latencyMs = ping.received > 0 ? ping.avgMs : null;
   return {
@@ -147,6 +149,8 @@ async function measure(target: Target, prev: HostReading | undefined, at: number
     onlineSince: online ? (prev?.online ? (prev.onlineSince ?? at) : at) : null,
     offlineSince: online ? null : prev && !prev.online ? (prev.offlineSince ?? at) : at,
     lastSeen: online ? at : (prev?.lastSeen ?? null),
+    // Hora e latência do último ping respondido andam juntas (o SNMP pode responder sem o ping).
+    lastPingAt: latencyMs !== null ? at : (prev?.lastPingAt ?? null),
     lastLatencyMs: latencyMs ?? prev?.lastLatencyMs ?? null,
   };
 }
@@ -155,8 +159,7 @@ async function measure(target: Target, prev: HostReading | undefined, at: number
 export async function collectReadings(config: EmailAlertConfig): Promise<{ target: Target; reading: HostReading }[]> {
   const state = await loadState();
   const targets = await resolveTargets(config);
-  const at = now();
-  const results = await mapWithConcurrency(targets, 6, async (target) => ({ target, reading: await measure(target, state.readings[target.host], at) }));
+  const results = await mapWithConcurrency(targets, 6, async (target) => ({ target, reading: await measure(target, state.readings[target.host]) }));
   // Equipamento que saiu da lista some das leituras.
   state.readings = Object.fromEntries(results.map((r) => [r.target.host, r.reading]));
   await saveState(state);

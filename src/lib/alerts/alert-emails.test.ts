@@ -21,9 +21,10 @@ const online: HostReading = {
   onlineSince: T0 - 90 * MIN,
   offlineSince: null,
   lastSeen: T0,
+  lastPingAt: T0,
   lastLatencyMs: 3,
 };
-const offline: HostReading = { ...online, online: false, pingsReceived: 0, latencyMs: null, lossPct: 100, onlineSince: null, offlineSince: T0 - 2 * MIN, lastSeen: T0 - 3 * MIN, lastLatencyMs: 4 };
+const offline: HostReading = { ...online, online: false, pingsReceived: 0, latencyMs: null, lossPct: 100, onlineSince: null, offlineSince: T0 - 2 * MIN, lastSeen: T0 - 3 * MIN, lastPingAt: T0 - 3 * MIN, lastLatencyMs: 4 };
 const snmp: HostReading = { ...online, cpuPct: 93, memPct: 41, tempC: 52, uptimeMin: 3 * 1440 + 125 };
 
 const modem = { host: "192.168.0.1", label: "Modem" };
@@ -60,7 +61,8 @@ describe("buildAlertEmail", () => {
     expect(e.subject).toBe("🔴 Fora do ar: Modem (192.168.0.1)");
     expect(e.text).toContain("Modem (192.168.0.1) não respondeu a nenhum dos 4 pings nas últimas 2 verificações seguidas.");
     expect(e.text).toContain("- Status: Fora do ar há 2 min, desde ");
-    expect(e.text).toContain("latência 4 ms");
+    expect(e.text).toMatch(/- Última resposta: .*, latência 4 ms/);
+    expect(e.text).not.toContain("Último ping respondido");
     expect(e.text).toContain("- Ping: 0 de 4 respondidos");
     expect(e.text).toContain("- Endereço IP: 192.168.0.1");
     expect(e.text).toContain("LIMITES CONFIGURADOS");
@@ -70,6 +72,15 @@ describe("buildAlertEmail", () => {
     expect(e.text).toContain("Você receberá outro e-mail quando o problema passar.");
     expect(e.html).toContain(">ALERTA<");
     expect(e.html).toContain("#dc2626");
+  });
+
+  it("fora do ar depois de responder só ao SNMP: última resposta e último ping em linhas separadas", () => {
+    // O switch respondeu ao SNMP às T0-3min (ping já falhava); o último ping respondido foi às T0-10min.
+    const r = { ...offline, lastSeen: T0 - 3 * MIN, lastPingAt: T0 - 10 * MIN, lastLatencyMs: 2 };
+    const e = buildAlertEmail({ ...common, target: sw, observation: obs(r, "offline"), reading: r, checks: 2 });
+    expect(e.text).toMatch(/- Última resposta: \S+ às \S+\n- Último ping respondido: \S+ às \S+, latência 2 ms/);
+    const noPing = { ...r, lastPingAt: null, lastLatencyMs: null };
+    expect(buildAlertEmail({ ...common, target: sw, observation: obs(noPing, "offline"), reading: noPing, checks: 2 }).text).not.toContain("Último ping");
   });
 
   it("CPU alta: valor no assunto, leituras com barra, uptime do SNMP", () => {

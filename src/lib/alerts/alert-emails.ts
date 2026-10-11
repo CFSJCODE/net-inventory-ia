@@ -29,8 +29,10 @@ export interface HostReading {
   /** Desde quando responde / não responde, segundo as verificações do NetInventory. */
   onlineSince: number | null;
   offlineSince: number | null;
-  /** Última vez que respondeu e a latência dessa resposta (ficam quando o equipamento cai). */
+  /** Última vez que respondeu (ping ou SNMP); fica quando o equipamento cai. */
   lastSeen: number | null;
+  /** Último ping respondido e a latência dele (o SNMP pode responder sem o ping, por isso são separados). */
+  lastPingAt: number | null;
   lastLatencyMs: number | null;
 }
 
@@ -123,8 +125,13 @@ function readingRows(r: HostReading): [string, string][] {
     else if (r.onlineSince !== null) rows.push(["Tempo de atividade", `respondendo ${ago(r.onlineSince)}`]);
   } else {
     rows.push(["Status", r.offlineSince !== null ? `Fora do ar ${ago(r.offlineSince)}` : "Fora do ar"]);
-    if (r.lastSeen !== null) rows.push(["Última resposta", `${formatDateTime(r.lastSeen)}${r.lastLatencyMs !== null ? `, latência ${ms(r.lastLatencyMs)}` : ""}`]);
-    else rows.push(["Última resposta", "nenhuma desde que passou a ser vigiado"]);
+    const ping = r.lastPingAt !== null && r.lastLatencyMs !== null ? `${formatDateTime(r.lastPingAt)}, latência ${ms(r.lastLatencyMs)}` : null;
+    if (r.lastSeen === null) rows.push(["Última resposta", "nenhuma desde que passou a ser vigiado"]);
+    else if (ping && r.lastPingAt === r.lastSeen) rows.push(["Última resposta", ping]);
+    else {
+      rows.push(["Última resposta", formatDateTime(r.lastSeen)]);
+      if (ping) rows.push(["Último ping respondido", ping]);
+    }
   }
   rows.push(["Ping", `${r.pingsReceived} de ${r.pingsSent} respondidos${r.latencyMs !== null ? `, média ${ms(r.latencyMs)}` : ""}`]);
   if (r.cpuPct === null && r.memPct === null && r.tempC === null) rows.push(["CPU, memória e temperatura", "não lidos (sem SNMP cadastrado em Equipamentos, ou sem resposta SNMP)"]);
