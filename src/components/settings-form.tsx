@@ -15,11 +15,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useScanConfig, useScanRuns, useUpdateScanConfig } from "@/hooks/use-devices";
+import { AUTO_INTERVALS, intervalKey, intervalMinutes, type AutoIntervalKey } from "@/lib/auto-interval";
 import { formatDateTime } from "@/lib/format-time";
 import { MAX_SCAN_HOSTS, MIN_SCAN_PREFIX, parseScanCidr } from "@/lib/network/subnet";
-
-const INTERVALS = { off: "Desligado", "5": "A cada 5 minutos", "15": "A cada 15 minutos", "30": "A cada 30 minutos", "60": "A cada 1 hora" };
-type IntervalKey = keyof typeof INTERVALS;
 
 const CLEANUP_DAYS = { "1": "1 dia", "7": "7 dias", "30": "30 dias" };
 type CleanupKey = keyof typeof CLEANUP_DAYS;
@@ -87,18 +85,18 @@ export function SettingsForm() {
   const { data: runs } = useScanRuns();
   const { mutate, isPending } = useUpdateScanConfig();
   const [cidr, setCidr] = useState("");
-  const [scanInterval, setScanInterval] = useState<IntervalKey>("off");
+  const [scanInterval, setScanInterval] = useState<AutoIntervalKey>("off");
   const range = describeScanRange(cidr);
 
   useEffect(() => {
     if (config?.cidr) setCidr(config.cidr);
-    if (config) setScanInterval(config.intervalMinutes ? (String(config.intervalMinutes) as IntervalKey) : "off");
+    if (config) setScanInterval(intervalKey(config.intervalMinutes));
   }, [config]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     mutate(
-      { cidr, intervalMinutes: scanInterval === "off" ? null : Number(scanInterval) },
+      { cidr, intervalMinutes: intervalMinutes(scanInterval) },
       {
         onSuccess: () => toast.success("Configuração salva"),
         onError: () => toast.error("Não foi possível salvar a configuração"),
@@ -129,7 +127,7 @@ export function SettingsForm() {
                 />
               </Field>
               <Field label="Scan automático" htmlFor="interval">
-                <SimpleSelect id="interval" value={scanInterval} onChange={setScanInterval} options={INTERVALS} className="sm:w-52" />
+                <SimpleSelect id="interval" value={scanInterval} onChange={setScanInterval} options={AUTO_INTERVALS} className="sm:w-52" />
               </Field>
               {canManage && (
                 <Button type="submit" disabled={isPending || !cidr || range.error} className="w-fit">
