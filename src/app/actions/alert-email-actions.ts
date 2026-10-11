@@ -2,7 +2,8 @@
 
 import { requirePermission } from "@/lib/auth/server";
 import { prisma } from "@/lib/prisma";
-import { activeProblems, deliver, pendingEmails } from "@/lib/alerts/alert-monitor";
+import { ALERT_CHECK_INTERVAL_MS, activeProblems, collectReadings, deliver, pendingEmails, recipients } from "@/lib/alerts/alert-monitor";
+import { buildTestEmail } from "@/lib/alerts/alert-emails";
 import {
   getEmailAlertConfig,
   getLastDelivery,
@@ -11,7 +12,6 @@ import {
   type EmailAlertSettings,
   type LastDelivery,
 } from "@/lib/alerts/email-settings";
-import { renderEmail } from "@/lib/alerts/resend";
 import type { ToolResult } from "./tool-actions";
 
 async function run<T>(fn: () => Promise<T>): Promise<ToolResult<T>> {
@@ -63,22 +63,24 @@ export async function saveEmailAlertSettings(settings: EmailAlertSettings, apiKe
   });
 }
 
-/** Manda um e-mail de teste com a configuração salva, para confirmar chave, remetente e destinatário. */
+/**
+ * Manda um e-mail de teste com a configuração salva, para confirmar chave, remetente e destinatário.
+ * Mede os equipamentos na hora, para o e-mail mostrar as leituras atuais como um alerta real mostraria.
+ */
 export async function sendTestAlertEmail(): Promise<ToolResult<LastDelivery | null>> {
   return run(async () => {
     await requirePermission("settings.manage");
     const config = await getEmailAlertConfig();
-    const { html, text } = renderEmail({
-      title: "Teste dos alertas do NetInventory",
-      color: "#1565c0",
-      lines: [
-        ["Equipamentos vigiados", config.targets.join(", ") || "nenhum"],
-        ["Limites", `CPU ${config.thresholds.cpuPct}%, memória ${config.thresholds.memPct}%, temperatura ${config.thresholds.tempC} °C`],
-        ["Enviado em", new Date().toLocaleString("pt-BR")],
-      ],
-      footer: "Se este e-mail chegou, os alertas estão configurados. Enviado pelo NetInventory.",
+    recipients(config);
+    const [readings, active] = await Promise.all([collectReadings(config), activeProblems()]);
+    const email = buildTestEmail({
+      settings: config,
+      equipment: readings.map((r) => ({ target: r.target, reading: r.reading, snmp: r.target.equipment !== null })),
+      activeProblems: active.length,
+      intervalMs: ALERT_CHECK_INTERVAL_MS,
+      at: Date.now(),
     });
-    await deliver(config, "✅ Teste dos alertas do NetInventory", html, text);
+    await deliver(config, email.subject, email.html, email.text);
     return getLastDelivery();
   });
 }

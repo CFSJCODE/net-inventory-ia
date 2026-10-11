@@ -190,13 +190,16 @@ export interface HealthMetrics {
   cpuPct: number | null;
   memPct: number | null;
   tempC: number | null;
+  /** sysUpTime, em minutos. */
+  uptimeMin: number | null;
 }
 
-/** Só CPU, memória e temperatura, num único GET: leve o bastante para os alertas consultarem a cada minuto. */
+/** Só CPU, memória, temperatura e uptime, num único GET: leve o bastante para os alertas consultarem a cada minuto. */
 export async function readHealthMetrics(ip: string, community: string, version: SnmpVersion = "2c"): Promise<HealthMetrics> {
-  const values = await snmpGetMany({ host: ip, community, version }, [OID_CPU, OID_MEM, OID_TEMP]);
+  const values = await snmpGetMany({ host: ip, community, version }, [OID_CPU, OID_MEM, OID_TEMP, OID_UPTIME]);
   const read = (oid: string) => (isMissing(values.get(oid)) ? null : num(values.get(oid)));
-  return { cpuPct: read(OID_CPU), memPct: read(OID_MEM), tempC: read(OID_TEMP) };
+  const uptime = values.get(OID_UPTIME);
+  return { cpuPct: read(OID_CPU), memPct: read(OID_MEM), tempC: read(OID_TEMP), uptimeMin: isMissing(uptime) ? null : ticksTextToMinutes(uptime) };
 }
 
 export async function readEquipmentStatus(ip: string, community: string, version: SnmpVersion = "2c"): Promise<EquipmentStatus> {

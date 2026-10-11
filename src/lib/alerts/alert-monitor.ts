@@ -4,26 +4,37 @@ import { prisma } from "@/lib/prisma";
 import { decrypt } from "@/lib/ai/settings";
 import { displayName } from "@/lib/device-name";
 import { mapWithConcurrency } from "@/lib/network/concurrency";
-import { readHealthMetrics, type HealthMetrics } from "@/lib/network/equipment-status";
+import { readHealthMetrics } from "@/lib/network/equipment-status";
 import { getEmailAlertConfig, recordDelivery, type EmailAlertConfig } from "./email-settings";
-import { renderEmail, sendResendEmail } from "./resend";
-import { EMPTY_STATE, evaluate, formatDuration, lossPct, parsePingOutput, type CheckState, type PingStats, type RuleOptions } from "./rules";
+import { sendResendEmail } from "./resend";
+import { EMPTY_STATE, evaluate, lossPct, parsePingOutput, type CheckState, type PingStats, type RuleOptions } from "./rules";
+import {
+  alertTitle,
+  buildAlertEmail,
+  buildRecoveryEmail,
+  observe,
+  recoveryTitle,
+  targetName,
+  type CheckKind,
+  type HostReading,
+  type WatchedTarget,
+} from "./alert-emails";
 
 /**
  * Vigia os equipamentos de rede configurados e manda e-mail (Resend) quando um fica fora do ar, com
  * desempenho degradado (latência ou perda de pacotes) ou, nos equipamentos SNMP cadastrados, com CPU,
  * memória ou temperatura acima do limite. Também avisa quando o problema passa.
  *
- * Os e-mails passam por uma fila guardada no banco: se o modem cai, a internet cai junto e o alerta não
- * sai na hora — ele é reenviado assim que a conexão voltar (junto com o aviso de recuperação).
+ * A cada rodada guarda a última leitura de cada equipamento (status, latência, CPU, memória,
+ * temperatura, uptime), que vai nos e-mails. Os e-mails passam por uma fila guardada no banco: se o
+ * modem cai, a internet cai junto e o alerta não sai na hora — ele é reenviado assim que a conexão
+ * voltar (junto com o aviso de recuperação).
  */
 
 export const ALERT_CHECK_INTERVAL_MS = 60_000;
 const PINGS = 4;
 const OUTBOX_MAX_AGE_MS = 24 * 3600_000;
 const OUTBOX_MAX = 50;
-
-type CheckKind = "offline" | "degraded" | "cpu" | "mem" | "temp";
 
 /** Checagens seguidas (1 por minuto) para alertar / para considerar recuperado. */
 const RULES: Record<CheckKind, Omit<RuleOptions, "cooldownMs">> = {
@@ -46,6 +57,8 @@ interface QueuedEmail {
 interface PersistedState {
   checks: Record<string, CheckState>;
   outbox: QueuedEmail[];
+  /** Última leitura de cada equipamento (por IP). */
+  readings: Record<string, HostReading>;
 }
 
 const KEY_STATE = "alerts.state";
@@ -59,9 +72,9 @@ const g = globalThis as typeof globalThis & {
 async function loadState(): Promise<PersistedState> {
   if (g.__alertState) return g.__alertState;
   const row = await prisma.appSetting.findUnique({ where: { key: KEY_STATE } });
-  let state: PersistedState = { checks: {}, outbox: [] };
+  let state: PersistedState = { checks: {}, outbox: [], readings: {} };
   try {
-    if (row) state = { checks: {}, outbox: [], ...(JSON.parse(row.value) as Partial<PersistedState>) };
+    if (row) state = { checks: {}, outbox: [], readings: {}, ...(JSON.parse(row.value) as Partial<PersistedState>) };
   } catch {
     // Estado corrompido: recomeça do zero.
   }
@@ -89,107 +102,65 @@ async function pingStats(host: string): Promise<PingStats> {
 }
 
 const now = () => Date.now();
-const fmtTime = (ms: number) => new Date(ms).toLocaleString("pt-BR");
 
-interface Target {
-  host: string;
-  name: string;
+export interface Target extends WatchedTarget {
   equipment: { community: string; version: "1" | "2c" } | null;
 }
 
 /** Equipamentos vigiados: os da lista + os cadastrados em Equipamentos (para CPU/memória/temperatura). */
-async function resolveTargets(config: EmailAlertConfig): Promise<Target[]> {
+export async function resolveTargets(config: EmailAlertConfig): Promise<Target[]> {
   const equipment = await prisma.equipment.findMany();
   const hosts = Array.from(new Set([...config.targets, ...equipment.map((e) => e.ip)]));
   const devices = await prisma.device.findMany({ where: { ip: { in: hosts } }, select: { ip: true, alias: true, hostname: true } });
   return hosts.map((host) => {
     const eq = equipment.find((e) => e.ip === host);
     const dev = devices.find((d) => d.ip === host);
-    const name = (dev && displayName(dev, null)) || eq?.name || null;
     const community = eq ? decrypt(eq.community) : null;
     return {
       host,
-      name: name ? `${name} (${host})` : host,
+      label: (dev && displayName(dev, null)) || eq?.name || null,
       equipment: eq && community ? { community, version: eq.snmpVersion === "1" ? "1" : "2c" } : null,
     };
   });
 }
 
-interface Observation {
-  kind: CheckKind;
-  bad: boolean;
-  value: number | null;
-  /** Texto do problema para o e-mail de alerta. */
-  detail: string;
-}
-
-function observe(target: Target, config: EmailAlertConfig, ping: PingStats, metrics: HealthMetrics | null, watched: boolean): Observation[] {
-  const t = config.thresholds;
-  const obs: Observation[] = [];
-  // Responder ao SNMP também prova que está no ar (equipamento que bloqueia ping).
+/** Ping + SNMP de um equipamento; o que não muda (desde quando responde, última resposta) vem da leitura anterior. */
+async function measure(target: Target, prev: HostReading | undefined, at: number): Promise<HostReading> {
+  const ping = await pingStats(target.host);
+  // SNMP mesmo sem ping: há equipamento que bloqueia ICMP e responde SNMP.
+  const metrics = target.equipment
+    ? await readHealthMetrics(target.host, target.equipment.community, target.equipment.version).catch(() => null)
+    : null;
   const online = ping.received > 0 || metrics !== null;
-  if (watched) {
-    obs.push({ kind: "offline", bad: !online, value: null, detail: `Sem resposta a ${PINGS} pings seguidos` });
-    if (ping.received > 0) {
-      const loss = lossPct(ping);
-      const avg = ping.avgMs ?? 0;
-      obs.push({
-        kind: "degraded",
-        bad: avg > t.latencyMs || loss >= t.lossPct,
-        value: avg,
-        detail: `Latência média ${avg} ms (limite ${t.latencyMs} ms), perda de pacotes ${loss}% (limite ${t.lossPct}%)`,
-      });
-    }
-  }
-  if (metrics) {
-    if (metrics.cpuPct !== null) obs.push({ kind: "cpu", bad: metrics.cpuPct >= t.cpuPct, value: metrics.cpuPct, detail: `CPU em ${metrics.cpuPct}% (limite ${t.cpuPct}%)` });
-    if (metrics.memPct !== null) obs.push({ kind: "mem", bad: metrics.memPct >= t.memPct, value: metrics.memPct, detail: `Memória em ${metrics.memPct}% (limite ${t.memPct}%)` });
-    if (metrics.tempC !== null) obs.push({ kind: "temp", bad: metrics.tempC >= t.tempC, value: metrics.tempC, detail: `Temperatura em ${metrics.tempC} °C (limite ${t.tempC} °C)` });
-  }
-  return obs;
+  const latencyMs = ping.received > 0 ? ping.avgMs : null;
+  return {
+    at,
+    online,
+    pingsSent: ping.sent,
+    pingsReceived: ping.received,
+    latencyMs,
+    lossPct: lossPct(ping),
+    cpuPct: metrics?.cpuPct ?? null,
+    memPct: metrics?.memPct ?? null,
+    tempC: metrics?.tempC ?? null,
+    uptimeMin: metrics?.uptimeMin ?? null,
+    onlineSince: online ? (prev?.online ? (prev.onlineSince ?? at) : at) : null,
+    offlineSince: online ? null : prev && !prev.online ? (prev.offlineSince ?? at) : at,
+    lastSeen: online ? at : (prev?.lastSeen ?? null),
+    lastLatencyMs: latencyMs ?? prev?.lastLatencyMs ?? null,
+  };
 }
 
-const ALERT_TITLE: Record<CheckKind, string> = {
-  offline: "FORA DO AR",
-  degraded: "DESEMPENHO DEGRADADO",
-  cpu: "CPU ALTA",
-  mem: "MEMÓRIA ALTA",
-  temp: "TEMPERATURA ALTA",
-};
-
-const RECOVERY_TITLE: Record<CheckKind, string> = {
-  offline: "VOLTOU AO AR",
-  degraded: "DESEMPENHO NORMALIZADO",
-  cpu: "CPU NORMALIZADA",
-  mem: "MEMÓRIA NORMALIZADA",
-  temp: "TEMPERATURA NORMALIZADA",
-};
-
-function alertEmail(key: string, target: Target, o: Observation, at: number): QueuedEmail {
-  const title = `${ALERT_TITLE[o.kind]}: ${target.name}`;
-  const { html, text } = renderEmail({
-    title,
-    color: o.kind === "offline" || o.kind === "temp" ? "#c62828" : "#e65100",
-    lines: [
-      ["Equipamento", target.name],
-      ["Problema", o.detail],
-      ["Detectado em", fmtTime(at)],
-    ],
-    footer: "Você receberá outro e-mail quando o problema passar. Enviado pelo NetInventory.",
-  });
-  return { key, kind: "alert", subject: `🔴 ${title}`, html, text, createdAt: at };
-}
-
-function recoveryEmail(key: string, target: Target, o: Observation, since: number | null, at: number, alertUndelivered: boolean): QueuedEmail {
-  const title = `${RECOVERY_TITLE[o.kind]}: ${target.name}`;
-  const lines: [string, string][] = [["Equipamento", target.name]];
-  if (since) lines.push(["Problema desde", fmtTime(since)], ["Normalizado em", fmtTime(at)], ["Duração", formatDuration(at - since)]);
-  if (o.kind !== "offline") lines.push(["Agora", o.detail]);
-  const footer = alertUndelivered
-    ? "O alerta não pôde ser enviado na hora (provavelmente a internet caiu junto). Enviado pelo NetInventory."
-    : "Enviado pelo NetInventory.";
-  const { html, text } = renderEmail({ title, color: "#2e7d32", lines, footer });
-  return { key, kind: "recovery", subject: `🟢 ${title}`, html, text, createdAt: at };
+/** Mede todos os equipamentos agora e guarda as leituras (os e-mails e o teste mostram essas leituras). */
+export async function collectReadings(config: EmailAlertConfig): Promise<{ target: Target; reading: HostReading }[]> {
+  const state = await loadState();
+  const targets = await resolveTargets(config);
+  const at = now();
+  const results = await mapWithConcurrency(targets, 6, async (target) => ({ target, reading: await measure(target, state.readings[target.host], at) }));
+  // Equipamento que saiu da lista some das leituras.
+  state.readings = Object.fromEntries(results.map((r) => [r.target.host, r.reading]));
+  await saveState(state);
+  return results;
 }
 
 function enqueue(state: PersistedState, email: QueuedEmail): void {
@@ -201,13 +172,19 @@ function enqueue(state: PersistedState, email: QueuedEmail): void {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Envia um e-mail e registra o resultado (o último envio aparece em Configurações). */
-export async function deliver(config: EmailAlertConfig, subject: string, html: string, text: string): Promise<void> {
+/** Destinatários da configuração; erro com mensagem para o usuário quando falta chave ou e-mail. */
+export function recipients(config: EmailAlertConfig): string[] {
   if (!config.apiKey) throw new Error("Cadastre a chave da API do Resend.");
   const to = config.to.split(/[,;\s]+/).filter(Boolean);
   if (!to.length) throw new Error("Informe o e-mail que recebe os alertas.");
+  return to;
+}
+
+/** Envia um e-mail e registra o resultado (o último envio aparece em Configurações). */
+export async function deliver(config: EmailAlertConfig, subject: string, html: string, text: string): Promise<void> {
+  const to = recipients(config);
   try {
-    await sendResendEmail(config.apiKey, { from: config.from, to, subject, html, text });
+    await sendResendEmail(config.apiKey!, { from: config.from, to, subject, html, text });
     await recordDelivery({ at: new Date().toISOString(), ok: true, subject });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -236,36 +213,30 @@ async function runChecks(): Promise<void> {
   const config = await getEmailAlertConfig();
   if (!config.enabled || !config.apiKey || !config.to) return;
   const state = await loadState();
-  const targets = await resolveTargets(config);
   const watched = new Set(config.targets);
   const cooldownMs = config.cooldownMinutes * 60_000;
-
-  const results = await mapWithConcurrency(targets, 6, async (target) => {
-    const ping = await pingStats(target.host);
-    // SNMP mesmo sem ping: há equipamento que bloqueia ICMP e responde SNMP.
-    const metrics = target.equipment
-      ? await readHealthMetrics(target.host, target.equipment.community, target.equipment.version).catch(() => null)
-      : null;
-    return { target, ping, metrics };
-  });
+  const results = await collectReadings(config);
 
   const at = now();
   const seen = new Set<string>();
-  for (const { target, ping, metrics } of results) {
-    for (const o of observe(target, config, ping, metrics, watched.has(target.host))) {
+  for (const { target, reading } of results) {
+    for (const o of observe(reading, config.thresholds, watched.has(target.host))) {
       const key = `${target.host}|${o.kind}`;
       seen.add(key);
       const prev = state.checks[key] ?? EMPTY_STATE;
       const { state: next, event } = evaluate(prev, o.bad, at, { ...RULES[o.kind], cooldownMs });
       next.value = o.value;
       state.checks[key] = next;
+      const common = { target, observation: o, reading, at, intervalMs: ALERT_CHECK_INTERVAL_MS, settings: config };
       if (event === "alert") {
-        enqueue(state, alertEmail(key, target, o, at));
-        console.log(`[alertas] ${ALERT_TITLE[o.kind]}: ${target.name} — ${o.detail}`);
+        const email = buildAlertEmail({ ...common, checks: RULES[o.kind].badToFire });
+        enqueue(state, { key, kind: "alert", ...email, createdAt: at });
+        console.log(`[alertas] ${alertTitle(o.kind)}: ${targetName(target)} — ${o.detail}`);
       } else if (event === "recovery") {
-        const undelivered = state.outbox.some((e) => e.key === key && e.kind === "alert");
-        enqueue(state, recoveryEmail(key, target, o, prev.since, at, undelivered));
-        console.log(`[alertas] ${RECOVERY_TITLE[o.kind]}: ${target.name}`);
+        const alertUndelivered = state.outbox.some((e) => e.key === key && e.kind === "alert");
+        const email = buildRecoveryEmail({ ...common, since: prev.since, alertUndelivered });
+        enqueue(state, { key, kind: "recovery", ...email, createdAt: at });
+        console.log(`[alertas] ${recoveryTitle(o.kind)}: ${targetName(target)}`);
       }
     }
   }
