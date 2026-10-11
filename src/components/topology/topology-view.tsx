@@ -145,8 +145,9 @@ function TopologyNodeView({ node, dragging, handlers }: { node: PositionedNode; 
 }
 
 function edgeCaption(edge: TopologyEdge): string | undefined {
-  if (edge.kind !== "manual") return edge.label;
-  const parts = [edge.label];
+  // Nas ligações do SNMP o rótulo já é a porta.
+  const parts = [edge.kind === "confirmed" && edge.label === edge.port ? undefined : edge.label, edge.port];
+  if (edge.kind !== "manual") return parts.filter(Boolean).join(" · ") || undefined;
   if (edge.status === "DOWN") parts.push(edge.statusSince ? `caiu ${formatRelativeTime(edge.statusSince)}` : "fora do ar");
   if (edge.status === "UNKNOWN") parts.push("verificando…");
   return parts.filter(Boolean).join(" · ") || undefined;
@@ -154,7 +155,12 @@ function edgeCaption(edge: TopologyEdge): string | undefined {
 
 function EdgeView({ edge, from, to }: { edge: TopologyEdge; from: PositionedNode; to: PositionedNode }) {
   const caption = edgeCaption(edge);
-  const portHint = edge.kind === "confirmed" && edge.label ? explainPortName(edge.label) : undefined;
+  const portHint = edge.port ? explainPortName(edge.port) : undefined;
+  const showPortHint = (e: React.MouseEvent) => {
+    if (!portHint) return;
+    e.stopPropagation();
+    toast(edge.port, { description: <span className="whitespace-pre-line">{portHint}</span> });
+  };
   const isManual = edge.kind === "manual";
   const down = isManual && edge.status === "DOWN";
   const dashed = edge.kind === "inferred" || (isManual && edge.status === "UNKNOWN");
@@ -194,6 +200,7 @@ function EdgeView({ edge, from, to }: { edge: TopologyEdge; from: PositionedNode
             down ? "fill-red-400" : "fill-muted-foreground",
             portHint && "cursor-help underline decoration-dotted",
           )}
+          onClick={showPortHint}
         >
           {portHint && <title>{portHint}</title>}
           {caption}

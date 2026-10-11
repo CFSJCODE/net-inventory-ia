@@ -5,7 +5,7 @@ import { displayName } from "@/lib/device-name";
 import { readRouteTable } from "./tools/route-table";
 import { mapWithConcurrency } from "./concurrency";
 import { decrypt, encrypt } from "@/lib/ai/settings";
-import { placeByFdb, readSwitchFdb, type FdbEntry, type Placement } from "./switch-fdb";
+import { placeByFdb, portLabel, readSwitchFdb, type FdbEntry, type Placement } from "./switch-fdb";
 
 export type TopologyRole = "internet" | "gateway" | "infra" | "device";
 
@@ -34,6 +34,8 @@ export interface TopologyEdge {
    */
   kind: "wan" | "confirmed" | "inferred" | "uplink" | "manual";
   label?: string;
+  /** Porta do switch usada pela ligação (ex: "porta GE1/0/2"), lida via SNMP, qualquer que seja o tipo da ligação. */
+  port?: string;
   /** false = ligação extra (ex: segundo caminho); desenhada, mas não define a posição na árvore. */
   tree: boolean;
   linkId?: string;
@@ -366,6 +368,21 @@ export async function buildTopology(options: { snmpCommunity?: string; allowProb
     return { from, to, kind: "manual", tree, linkId, label: l.label ?? undefined, status: l.status, statusSince: l.lastChangeAt?.toISOString() ?? null, downReason: l.downReason };
   };
 
+  // Porta do switch em cada ligação: a porta onde o switch (pai) aprendeu o MAC do filho, ou a porta
+  // por onde o switch (filho) enxerga o pai (o uplink). Vale também para ligações manuais e "Conectado a".
+  const fdbBySwitch = new Map(
+    (snapshot?.results ?? []).filter((r) => !r.error).map((r) => [r.swId, new Map(r.entries.map((e) => [e.mac, e]))]),
+  );
+  const portOneWay = (parentId: string, childId: string): string | undefined => {
+    const child = nodeById.get(childId);
+    const hit = child?.mac ? (placements.get(child.mac) ?? memory.get(child.mac)) : undefined;
+    if (hit?.parentId === parentId && hit.label) return hit.label;
+    const parentMac = nodeById.get(parentId)?.mac;
+    const entry = parentMac ? fdbBySwitch.get(childId)?.get(parentMac) : undefined;
+    return entry ? portLabel(entry) : undefined;
+  };
+  const portOf = (a: string, b: string) => portOneWay(a, b) ?? portOneWay(b, a);
+
   const edges: TopologyEdge[] = [{ from: INTERNET_ID, to: gatewayId, kind: "wan", tree: true }];
   const inTree = new Set<string>();
   for (const [id, p] of parent) {
@@ -377,6 +394,7 @@ export async function buildTopology(options: { snmpCommunity?: string; allowProb
     }
   }
   for (const l of oriented) if (!inTree.has(l.id)) edges.push(manualEdge(l.id, l.fromDeviceId, l.toDeviceId, false));
+  for (const e of edges) if (e.kind !== "wan") e.port = portOf(e.from, e.to);
 
   return { nodes, edges, gatewayIp, snmp, snmpPending, snmpCommunity: community };
 }
