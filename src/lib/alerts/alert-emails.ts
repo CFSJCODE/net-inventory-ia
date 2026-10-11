@@ -95,6 +95,10 @@ export function formatDateTime(ms: number): string {
 const pct = (n: number) => `${n}%`;
 const ms = (n: number) => `${n} ms`;
 const celsius = (n: number) => `${n} °C`;
+/** "93%, acima do limite de 90%" ou "90%, igual ao limite de 90%": CPU, memória e temperatura alertam a partir do limite. */
+const vsLimit = (value: number, limit: number, fmt: (n: number) => string) => `${fmt(value)}, ${value > limit ? "acima do" : "igual ao"} limite de ${fmt(limit)}`;
+/** Rótulo do endereço vigiado: a lista aceita IPs e nomes. */
+const addressLabel = (host: string) => (/^[\d.]+$|:/.test(host) ? "Endereço IP" : "Endereço");
 
 /** Medidas da leitura, com barra e limite. Só o que o equipamento informa. */
 function readingGauges(r: HostReading, t: AlertThresholds): EmailReading[] {
@@ -122,7 +126,7 @@ function readingRows(r: HostReading): [string, string][] {
   if (r.online) {
     rows.push(["Status", "No ar"]);
     if (r.uptimeMin !== null) rows.push(["Tempo de atividade", `${formatDuration(r.uptimeMin * 60_000)} (sysUpTime via SNMP)`]);
-    else if (r.onlineSince !== null) rows.push(["Tempo de atividade", `respondendo ${ago(r.onlineSince)}`]);
+    else if (r.onlineSince !== null) rows.push(["Respondendo ao NetInventory", ago(r.onlineSince)]);
   } else {
     rows.push(["Status", r.offlineSince !== null ? `Fora do ar ${ago(r.offlineSince)}` : "Fora do ar"]);
     const ping = r.lastPingAt !== null && r.lastLatencyMs !== null ? `${formatDateTime(r.lastPingAt)}, latência ${ms(r.lastLatencyMs)}` : null;
@@ -134,7 +138,15 @@ function readingRows(r: HostReading): [string, string][] {
     }
   }
   rows.push(["Ping", `${r.pingsReceived} de ${r.pingsSent} respondidos${r.latencyMs !== null ? `, média ${ms(r.latencyMs)}` : ""}`]);
-  if (r.cpuPct === null && r.memPct === null && r.tempC === null) rows.push(["CPU, memória e temperatura", "não lidos (sem SNMP cadastrado em Equipamentos, ou sem resposta SNMP)"]);
+  if (r.cpuPct === null && r.memPct === null && r.tempC === null) {
+    // Com uptime o SNMP respondeu: o equipamento só não informa esses dados (são OIDs HP/H3C Comware).
+    rows.push([
+      "CPU, memória e temperatura",
+      r.uptimeMin !== null
+        ? "não informados por este equipamento (são lidos de switches HP/H3C Comware)"
+        : "não lidos (sem SNMP cadastrado em Equipamentos, ou sem resposta SNMP)",
+    ]);
+  }
   rows.push(["Leitura em", formatDateTime(r.at)]);
   return rows;
 }
@@ -215,11 +227,11 @@ function alertSummary(i: AlertEmailInput): string {
       return `A conexão com ${name} está lenta ou instável ${run}: ${parts.join(" e ") || o.detail}.`;
     }
     case "cpu":
-      return `O uso de CPU de ${name} está em ${pct(r.cpuPct ?? 0)}, acima do limite de ${pct(t.cpuPct)}, ${run}.`;
+      return `O uso de CPU de ${name} está em ${vsLimit(r.cpuPct ?? 0, t.cpuPct, pct)}, ${run}.`;
     case "mem":
-      return `O uso de memória de ${name} está em ${pct(r.memPct ?? 0)}, acima do limite de ${pct(t.memPct)}, ${run}.`;
+      return `O uso de memória de ${name} está em ${vsLimit(r.memPct ?? 0, t.memPct, pct)}, ${run}.`;
     case "temp":
-      return `A temperatura de ${name} chegou a ${celsius(r.tempC ?? 0)}, acima do limite de ${celsius(t.tempC)}, ${run}. Confira a ventilação e a temperatura do ambiente.`;
+      return `A temperatura de ${name} chegou a ${vsLimit(r.tempC ?? 0, t.tempC, celsius)}, ${run}. Confira a ventilação e a temperatura do ambiente.`;
   }
 }
 
@@ -239,7 +251,7 @@ export function buildAlertEmail(i: AlertEmailInput): BuiltEmail {
         title: "Detalhes do alerta",
         rows: [
           ["Equipamento", i.target.label ?? i.target.host],
-          ["Endereço IP", i.target.host],
+          [addressLabel(i.target.host), i.target.host],
           ["Problema", `${k.alert}: ${i.observation.detail}`],
           ["Detectado em", formatDateTime(i.at)],
           ["Confirmação", `${i.checks} leituras seguidas com problema, uma a cada ${formatDuration(i.intervalMs)}`],
@@ -273,11 +285,11 @@ function recoverySummary(i: RecoveryEmailInput): string {
     case "degraded":
       return `A conexão com ${name} voltou ao normal${after}: latência média de ${ms(r.latencyMs ?? 0)} e perda de ${pct(r.lossPct)} dos pacotes.`;
     case "cpu":
-      return `O uso de CPU de ${name} voltou ao normal${after ? `${after} acima do limite` : ""}: ${pct(r.cpuPct ?? 0)} (limite ${pct(t.cpuPct)}).`;
+      return `O uso de CPU de ${name} voltou ao normal${after ? `${after} com o problema` : ""}: ${pct(r.cpuPct ?? 0)} (limite ${pct(t.cpuPct)}).`;
     case "mem":
-      return `O uso de memória de ${name} voltou ao normal${after ? `${after} acima do limite` : ""}: ${pct(r.memPct ?? 0)} (limite ${pct(t.memPct)}).`;
+      return `O uso de memória de ${name} voltou ao normal${after ? `${after} com o problema` : ""}: ${pct(r.memPct ?? 0)} (limite ${pct(t.memPct)}).`;
     case "temp":
-      return `A temperatura de ${name} voltou ao normal${after ? `${after} acima do limite` : ""}: ${celsius(r.tempC ?? 0)} (limite ${celsius(t.tempC)}).`;
+      return `A temperatura de ${name} voltou ao normal${after ? `${after} com o problema` : ""}: ${celsius(r.tempC ?? 0)} (limite ${celsius(t.tempC)}).`;
   }
 }
 
@@ -287,7 +299,7 @@ export function buildRecoveryEmail(i: RecoveryEmailInput): BuiltEmail {
   const duration = i.since !== null ? formatDuration(i.at - i.since) : null;
   const rows: [string, string][] = [
     ["Equipamento", i.target.label ?? i.target.host],
-    ["Endereço IP", i.target.host],
+    [addressLabel(i.target.host), i.target.host],
     ["Problema", k.alert],
   ];
   if (i.since !== null) rows.push(["Problema desde", formatDateTime(i.since)]);
@@ -317,8 +329,25 @@ export interface TestEmailInput {
   at: number;
 }
 
+/** O Gmail corta e-mails acima de ~100 KB: só os primeiros equipamentos ganham a seção completa de leituras. */
+const MAX_DETAILED_READINGS = 8;
+
+/** Resumo de uma linha da leitura, para a lista dos demais equipamentos. */
+function compactReading(r: HostReading | null): string {
+  if (!r) return "ainda sem leitura";
+  const parts = [r.online ? "No ar" : "Fora do ar"];
+  if (r.latencyMs !== null) parts.push(ms(r.latencyMs));
+  if (r.pingsReceived > 0 && r.lossPct > 0) parts.push(`${pct(r.lossPct)} de perda`);
+  if (r.cpuPct !== null) parts.push(`CPU ${pct(r.cpuPct)}`);
+  if (r.memPct !== null) parts.push(`memória ${pct(r.memPct)}`);
+  if (r.tempC !== null) parts.push(celsius(r.tempC));
+  return parts.join(" · ");
+}
+
 export function buildTestEmail(i: TestEmailInput): BuiltEmail {
   const s = i.settings;
+  const detailed = i.equipment.slice(0, MAX_DETAILED_READINGS);
+  const others = i.equipment.slice(MAX_DETAILED_READINGS);
   const watched = i.equipment.filter((e) => s.targets.includes(e.target.host));
   const snmp = i.equipment.filter((e) => e.snmp);
   const online = i.equipment.filter((e) => e.reading?.online).length;
@@ -341,17 +370,25 @@ export function buildTestEmail(i: TestEmailInput): BuiltEmail {
           ["Alertas", s.enabled ? "ativados" : "desativados"],
           ["Fora do ar e desempenho (ping)", list(watched) || "nenhum equipamento na lista"],
           ["CPU, memória e temperatura (SNMP)", list(snmp) || "nenhum equipamento cadastrado em Equipamentos"],
-          ["Situação agora", i.activeProblems ? `${i.activeProblems} problema${i.activeProblems > 1 ? "s" : ""} confirmado${i.activeProblems > 1 ? "s" : ""}` : "nenhum problema confirmado"],
+          [
+            "Situação agora",
+            !s.enabled
+              ? "verificação desligada (os problemas só são acompanhados com os alertas ativados)"
+              : i.activeProblems
+                ? `${i.activeProblems} problema${i.activeProblems > 1 ? "s" : ""} confirmado${i.activeProblems > 1 ? "s" : ""}`
+                : "nenhum problema confirmado",
+          ],
           ["Enviado em", formatDateTime(i.at)],
         ],
       },
       limitsSection(s, i.intervalMs),
-      ...i.equipment.map((e) => readingSection(`Leituras atuais: ${targetName(e.target)}`, e.reading, s.thresholds)),
+      ...detailed.map((e) => readingSection(`Leituras atuais: ${targetName(e.target)}`, e.reading, s.thresholds)),
+      ...(others.length ? [{ title: `Outros ${others.length} equipamentos (resumo)`, rows: others.map((e): [string, string] => [targetName(e.target), compactReading(e.reading)]) }] : []),
       {
         title: "O que você vai receber",
         items: [
           "🔴 Fora do ar: o equipamento parou de responder ao ping (e ao SNMP, quando cadastrado).",
-          "🟠 Desempenho degradado: latência média ou perda de pacotes acima do limite.",
+          "🟠 Desempenho degradado: latência média acima do limite ou perda de pacotes a partir do limite.",
           "🟠 CPU alta e 🟠 Memória alta: nos equipamentos SNMP cadastrados.",
           "🔴 Temperatura alta: nos equipamentos SNMP cadastrados.",
           "🟢 Recuperação: quando o problema passa, com a duração e as leituras de agora.",

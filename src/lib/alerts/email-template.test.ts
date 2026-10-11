@@ -34,13 +34,28 @@ describe("renderEmail", () => {
     expect(html).not.toContain(">Vazia<");
   });
 
-  it("usa a cor do tom na faixa do título e no valor acima do limite; verde no valor normal", () => {
+  it("usa a cor do tom na faixa do título; valor acima do limite sempre vermelho, normal sempre verde", () => {
     const { html } = renderEmail(base);
     expect(html).toContain("border-top:4px solid #dc2626");
     expect(html).toContain("color:#dc2626;width:22%\">93%");
-    const ok = renderEmail({ ...base, tone: "ok", sections: [{ title: "L", readings: [{ label: "CPU", value: "40%", bar: { value: 0.4, limit: 0.9 }, bad: false }] }] });
+    const ok = renderEmail({
+      ...base,
+      tone: "ok",
+      sections: [{ title: "L", readings: [{ label: "CPU", value: "40%", bar: { value: 0.4, limit: 0.9 }, bad: false }, { label: "Memória", value: "95%", bar: { value: 0.95, limit: 0.9 }, bad: true }] }],
+    });
     expect(ok.html).toContain("border-top:4px solid #16a34a");
     expect(ok.html).toContain("color:#16a34a;width:22%\">40%");
+    // Num e-mail de recuperação ou de teste, outra medida ainda estourada continua vermelha.
+    expect(ok.html).toContain("color:#dc2626;width:22%\">95%");
+    const info = renderEmail({ ...base, tone: "info" });
+    expect(info.html).toContain("border-top:4px solid #2563eb");
+    expect(info.html).toContain("color:#dc2626;width:22%\">93%");
+  });
+
+  it("limita a largura no Outlook clássico com a tabela condicional", () => {
+    const { html } = renderEmail(base);
+    expect(html).toContain('<!--[if mso]><table role="presentation" width="600"');
+    expect(html).toContain("<!--[if mso]></td></tr></table><![endif]-->");
   });
 
   it("desenha a barra com o marcador do limite, dos dois lados do valor", () => {
