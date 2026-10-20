@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference='Stop'
+$ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'Profile-Common.ps1')
 function New-InventoryProtectedAcl([bool]$Directory,[string]$ReadSid,[bool]$ReadableCode=$false) {
     $taskAdmins=[Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')

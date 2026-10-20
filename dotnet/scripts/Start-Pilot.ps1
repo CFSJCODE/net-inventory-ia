@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([switch]$CollectLocal, [switch]$StartDesktop, [switch]$OpenBrowser, [int]$Port = 3000)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Profile-Common.ps1')
