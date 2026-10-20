@@ -8,7 +8,7 @@ import type { AlertThresholds, EmailAlertSettings } from "./email-defaults";
 import { renderEmail, type EmailContent, type EmailReading, type EmailSection, type EmailTone } from "./email-template";
 import { formatDuration } from "./rules";
 
-export type CheckKind = "offline" | "degraded" | "cpu" | "mem" | "temp";
+export type CheckKind = "offline" | "degraded" | "criticalLatency" | "cpu" | "mem" | "temp";
 
 /** Última leitura de um equipamento, guardada a cada rodada para os e-mails mostrarem a situação atual. */
 export interface HostReading {
@@ -66,6 +66,12 @@ export function observe(reading: HostReading, t: AlertThresholds, watched: boole
         value: avg,
         detail: `Latência média ${avg} ms (limite ${t.latencyMs} ms), perda de pacotes ${reading.lossPct}% (limite ${t.lossPct}%)`,
       });
+      obs.push({
+        kind: "criticalLatency",
+        bad: avg > t.criticalLatencyMs,
+        value: avg,
+        detail: `Latência média ${avg} ms (limite crítico ${t.criticalLatencyMs} ms)`,
+      });
     }
   }
   if (reading.cpuPct !== null) obs.push({ kind: "cpu", bad: reading.cpuPct >= t.cpuPct, value: reading.cpuPct, detail: `CPU em ${reading.cpuPct}% (limite ${t.cpuPct}%)` });
@@ -74,9 +80,17 @@ export function observe(reading: HostReading, t: AlertThresholds, watched: boole
   return obs;
 }
 
+/** Filtros de métricas para os dois perfis configuráveis de envio. */
+export function selectAlertObservations(observations: Observation[], mode: EmailAlertSettings["mode"]): Observation[] {
+  return mode === "all"
+    ? observations.filter((o) => o.kind !== "criticalLatency")
+    : observations.filter((o) => o.kind === "offline" || o.kind === "criticalLatency");
+}
+
 const KINDS: Record<CheckKind, { alert: string; recovery: string; tone: EmailTone; emoji: string }> = {
   offline: { alert: "Fora do ar", recovery: "Voltou ao ar", tone: "critical", emoji: "🔴" },
   degraded: { alert: "Desempenho degradado", recovery: "Desempenho normalizado", tone: "warning", emoji: "🟠" },
+  criticalLatency: { alert: "Latência crítica", recovery: "Latência normalizada", tone: "critical", emoji: "🔴" },
   cpu: { alert: "CPU alta", recovery: "CPU normalizada", tone: "warning", emoji: "🟠" },
   mem: { alert: "Memória alta", recovery: "Memória normalizada", tone: "warning", emoji: "🟠" },
   temp: { alert: "Temperatura alta", recovery: "Temperatura normalizada", tone: "critical", emoji: "🔴" },
@@ -119,14 +133,22 @@ function readingGauges(r: HostReading, t: AlertThresholds): EmailReading[] {
   return g;
 }
 
+function hasSnmpHardwareMetrics(r: HostReading): boolean {
+  return r.cpuPct !== null || r.memPct !== null || r.tempC !== null;
+}
+
+function hasSnmpData(r: HostReading): boolean {
+  return hasSnmpHardwareMetrics(r) || r.uptimeMin !== null;
+}
+
 /** Linhas da leitura: status, tempo de atividade, última resposta, pings. */
-function readingRows(r: HostReading): [string, string][] {
+function readingRows(r: HostReading, snmpConfigured?: boolean): [string, string][] {
   const rows: [string, string][] = [];
   const ago = (since: number) => `há ${formatDuration(r.at - since)}, desde ${formatDateTime(since)}`;
   if (r.online) {
     rows.push(["Status", "No ar"]);
     if (r.uptimeMin !== null) rows.push(["Tempo de atividade", `${formatDuration(r.uptimeMin * 60_000)} (sysUpTime via SNMP)`]);
-    else if (r.onlineSince !== null) rows.push(["Respondendo ao NetInventory", ago(r.onlineSince)]);
+    else if (r.onlineSince !== null) rows.push(["Tempo respondendo", `${ago(r.onlineSince)} (monitoramento do NetInventory)`]);
   } else {
     rows.push(["Status", r.offlineSince !== null ? `Fora do ar ${ago(r.offlineSince)}` : "Fora do ar"]);
     const ping = r.lastPingAt !== null && r.lastLatencyMs !== null ? `${formatDateTime(r.lastPingAt)}, latência ${ms(r.lastLatencyMs)}` : null;
@@ -138,7 +160,7 @@ function readingRows(r: HostReading): [string, string][] {
     }
   }
   rows.push(["Ping", `${r.pingsReceived} de ${r.pingsSent} respondidos${r.latencyMs !== null ? `, média ${ms(r.latencyMs)}` : ""}`]);
-  if (r.cpuPct === null && r.memPct === null && r.tempC === null) {
+  if ((snmpConfigured || r.uptimeMin !== null) && r.cpuPct === null && r.memPct === null && r.tempC === null) {
     // Com uptime o SNMP respondeu: o equipamento só não informa esses dados (são OIDs HP/H3C Comware).
     rows.push([
       "CPU, memória e temperatura",
@@ -151,24 +173,31 @@ function readingRows(r: HostReading): [string, string][] {
   return rows;
 }
 
-export function readingSection(title: string, r: HostReading | null, t: AlertThresholds): EmailSection {
+export function readingSection(title: string, r: HostReading | null, t: AlertThresholds, snmpConfigured?: boolean): EmailSection {
   if (!r) return { title, rows: [["Status", "ainda sem leitura (a primeira verificação acontece em até 1 min)"]] };
-  return { title, readings: readingGauges(r, t), rows: readingRows(r) };
+  return { title, readings: readingGauges(r, t), rows: readingRows(r, snmpConfigured) };
 }
 
-export function limitsSection(s: Pick<EmailAlertSettings, "thresholds" | "cooldownMinutes">, intervalMs: number): EmailSection {
+export function limitsSection(s: Pick<EmailAlertSettings, "thresholds" | "cooldownMinutes">, intervalMs: number, includeSnmp: boolean): EmailSection {
   const t = s.thresholds;
-  return {
-    title: "Limites configurados",
-    rows: [
+  const rows: [string, string][] = [];
+  if (includeSnmp) {
+    rows.push(
       ["CPU", `alerta a partir de ${pct(t.cpuPct)}`],
       ["Memória", `alerta a partir de ${pct(t.memPct)}`],
       ["Temperatura", `alerta a partir de ${celsius(t.tempC)}`],
-      ["Latência média", `alerta acima de ${ms(t.latencyMs)}`],
-      ["Perda de pacotes", `alerta a partir de ${pct(t.lossPct)}`],
-      ["Verificação", `a cada ${formatDuration(intervalMs)}`],
-      ["Intervalo mínimo entre alertas", `${s.cooldownMinutes} min para o mesmo problema`],
-    ],
+    );
+  }
+  rows.push(
+    ["Latência média", `alerta acima de ${ms(t.latencyMs)}`],
+    ["Latência crítica", `alerta acima de ${ms(t.criticalLatencyMs)}`],
+    ["Perda de pacotes", `alerta a partir de ${pct(t.lossPct)}`],
+    ["Verificação", `a cada ${formatDuration(intervalMs)}`],
+    ["Intervalo mínimo entre alertas", `${s.cooldownMinutes} min para o mesmo problema`],
+  );
+  return {
+    title: "Limites configurados",
+    rows,
   };
 }
 
@@ -185,17 +214,21 @@ interface Common {
   at: number;
   intervalMs: number;
   settings: Pick<EmailAlertSettings, "thresholds" | "cooldownMinutes">;
+  /** Há configuração SNMP cadastrada para o equipamento. */
+  snmpConfigured?: boolean;
+  /** Quando o problema foi confirmado; pode anteceder o envio por cooldown. */
+  since?: number | null;
 }
 
 export interface AlertEmailInput extends Common {
   /** Leituras seguidas com problema que confirmam um alerta (regra da checagem). */
   checks: number;
-  /** Quando o problema foi confirmado. Antes de `at` quando o aviso esperou o intervalo mínimo entre alertas. */
-  since: number | null;
+  /** Outras métricas anormais detectadas no mesmo equipamento e rodada. */
+  additionalObservations?: Observation[];
 }
 
 /** O aviso saiu depois da confirmação (esperou o intervalo mínimo entre alertas). */
-const isDelayed = (i: AlertEmailInput) => i.since !== null && i.at - i.since >= i.intervalMs;
+const isDelayed = (i: AlertEmailInput) => i.since != null && i.at - i.since >= i.intervalMs;
 
 /** Trecho do assunto com o valor que estourou: "(93%)", "(230 ms, 25% de perda)". */
 function subjectDetail(o: Observation, r: HostReading, t: AlertThresholds): string {
@@ -208,6 +241,8 @@ function subjectDetail(o: Observation, r: HostReading, t: AlertThresholds): stri
       if (r.lossPct >= t.lossPct) parts.push(`${pct(r.lossPct)} de perda`);
       return parts.join(", ");
     }
+    case "criticalLatency":
+      return r.latencyMs !== null ? ms(r.latencyMs) : "";
     case "cpu":
       return r.cpuPct !== null ? pct(r.cpuPct) : "";
     case "mem":
@@ -221,8 +256,9 @@ function alertSummary(i: AlertEmailInput): string {
   const { observation: o, reading: r, settings } = i;
   const t = settings.thresholds;
   const name = targetName(i.target);
-  // Aviso atrasado pelo intervalo mínimo: o problema foi confirmado antes e continua agora.
-  const run = isDelayed(i) ? `desde ${formatDateTime(i.since!)} (confirmado com ${i.checks} leituras seguidas) e continua agora` : `nas últimas ${i.checks} verificações seguidas`;
+  const run = isDelayed(i)
+    ? `desde ${formatDateTime(i.since!)} (confirmado com ${i.checks} leituras seguidas) e continua agora`
+    : i.checks <= 1 ? "na leitura atual" : `nas últimas ${i.checks} verificações seguidas`;
   switch (o.kind) {
     case "offline":
       return `${name} não respondeu a nenhum dos ${r.pingsSent} pings ${run}. O equipamento pode estar desligado, sem energia, travado ou com o cabo de rede desconectado.`;
@@ -232,6 +268,8 @@ function alertSummary(i: AlertEmailInput): string {
       if (r.lossPct >= t.lossPct) parts.push(`perda de ${pct(r.lossPct)} dos pacotes (limite ${pct(t.lossPct)})`);
       return `A conexão com ${name} está lenta ou instável ${run}: ${parts.join(" e ") || o.detail}.`;
     }
+    case "criticalLatency":
+      return `${name} está com latência média de ${ms(r.latencyMs ?? 0)}, acima do limite crítico de ${ms(t.criticalLatencyMs)}, ${run}.`;
     case "cpu":
       return `O uso de CPU de ${name} está em ${vsLimit(r.cpuPct ?? 0, t.cpuPct, pct)}, ${run}.`;
     case "mem":
@@ -242,6 +280,7 @@ function alertSummary(i: AlertEmailInput): string {
 }
 
 export function buildAlertEmail(i: AlertEmailInput): BuiltEmail {
+  const alerts = [i.observation, ...(i.additionalObservations ?? [])];
   const k = KINDS[i.observation.kind];
   const name = targetName(i.target);
   const detail = subjectDetail(i.observation, i.reading, i.settings.thresholds);
@@ -252,14 +291,23 @@ export function buildAlertEmail(i: AlertEmailInput): BuiltEmail {
         ["Avisado em", `${formatDateTime(i.at)} (esperou o intervalo mínimo de ${i.settings.cooldownMinutes} min entre alertas)`],
       ]
     : [["Detectado em", formatDateTime(i.at)]];
+  const multi = alerts.length > 1;
+  const title = multi ? `${alerts.length} métricas fora do limite` : k.alert;
+  const tone = alerts.some((o) => KINDS[o.kind].tone === "critical") ? "critical" : k.tone;
+  const anomalies = alerts.map((o) => {
+    const value = subjectDetail(o, i.reading, i.settings.thresholds);
+    return `${KINDS[o.kind].alert}${value ? ` (${value})` : ""}`;
+  });
   const content: EmailContent = {
-    tone: k.tone,
+    tone,
     label: "ALERTA",
-    title: k.alert,
+    title,
     subtitle: name,
-    summary: alertSummary(i),
+    summary: multi
+      ? `Uma ou mais métricas de ${name} ultrapassaram os limites configurados: ${anomalies.join("; ")}.`
+      : alertSummary(i),
     sections: [
-      readingSection("Leituras atuais", i.reading, i.settings.thresholds),
+      readingSection("Leituras atuais", i.reading, i.settings.thresholds, i.snmpConfigured),
       {
         title: "Detalhes do alerta",
         rows: [
@@ -268,16 +316,18 @@ export function buildAlertEmail(i: AlertEmailInput): BuiltEmail {
           ["Problema", `${k.alert}: ${i.observation.detail}`],
           ...when,
           ["Confirmação", `${i.checks} leituras seguidas com problema, uma a cada ${formatDuration(i.intervalMs)}`],
+          ...alerts.map((o) => [`Métrica anormal: ${KINDS[o.kind].alert}`, o.detail] as [string, string]),
         ],
       },
-      limitsSection(i.settings, i.intervalMs),
+      limitsSection(i.settings, i.intervalMs, i.snmpConfigured ?? hasSnmpData(i.reading)),
     ],
     notes: [
       "Você receberá outro e-mail quando o problema passar.",
       `Para não lotar sua caixa de entrada, um novo alerta deste mesmo problema só é enviado depois de ${i.settings.cooldownMinutes} min.`,
     ],
   };
-  return { subject: `${k.emoji} ${k.alert}${detail ? ` (${detail})` : ""}: ${name}`, ...renderEmail(content) };
+  const subjectAlerts = multi ? anomalies.join(" + ") : `${k.alert}${detail ? ` (${detail})` : ""}`;
+  return { subject: `${tone === "critical" ? "🔴" : k.emoji} ${subjectAlerts}: ${name}`, ...renderEmail(content) };
 }
 
 export interface RecoveryEmailInput extends Common {
@@ -297,6 +347,8 @@ function recoverySummary(i: RecoveryEmailInput): string {
       return `${name} voltou a responder${after ? `${after} fora do ar` : ""}.`;
     case "degraded":
       return `A conexão com ${name} voltou ao normal${after}: latência média de ${ms(r.latencyMs ?? 0)} e perda de ${pct(r.lossPct)} dos pacotes.`;
+    case "criticalLatency":
+      return `A latência de ${name} voltou ao normal${after}: ${ms(r.latencyMs ?? 0)} (limite crítico ${ms(t.criticalLatencyMs)}).`;
     case "cpu":
       return `O uso de CPU de ${name} voltou ao normal${after ? `${after} com o problema` : ""}: ${pct(r.cpuPct ?? 0)} (limite ${pct(t.cpuPct)}).`;
     case "mem":
@@ -324,7 +376,7 @@ export function buildRecoveryEmail(i: RecoveryEmailInput): BuiltEmail {
     title: k.recovery,
     subtitle: name,
     summary: recoverySummary(i),
-    sections: [readingSection("Leituras atuais", i.reading, i.settings.thresholds), { title: "Detalhes", rows }, limitsSection(i.settings, i.intervalMs)],
+    sections: [readingSection("Leituras atuais", i.reading, i.settings.thresholds, i.snmpConfigured), { title: "Detalhes", rows }, limitsSection(i.settings, i.intervalMs, i.snmpConfigured ?? hasSnmpData(i.reading))],
     notes: i.alertUndelivered
       ? ["O alerta deste problema não pôde ser enviado na hora, provavelmente porque a internet caiu junto com o equipamento. Ele foi substituído por este aviso."]
       : [],
@@ -335,7 +387,7 @@ export function buildRecoveryEmail(i: RecoveryEmailInput): BuiltEmail {
 export interface TestEmailInput {
   settings: EmailAlertSettings;
   /** Todos os equipamentos medidos (lista vigiada + SNMP cadastrados), com a leitura de agora. */
-  equipment: { target: WatchedTarget; reading: HostReading | null; snmp: boolean }[];
+  equipment: { target: WatchedTarget; reading: HostReading | null; snmpConfigured: boolean }[];
   /** Problemas confirmados neste momento. */
   activeProblems: number;
   intervalMs: number;
@@ -367,7 +419,7 @@ export function buildTestEmail(i: TestEmailInput): BuiltEmail {
   const others = i.equipment.slice(MAX_DETAILED_READINGS, MAX_DETAILED_READINGS + MAX_COMPACT_READINGS);
   const uncounted = i.equipment.length - detailed.length - others.length;
   const watched = i.equipment.filter((e) => s.targets.includes(e.target.host));
-  const snmp = i.equipment.filter((e) => e.snmp);
+  const snmp = i.equipment.filter((e) => e.snmpConfigured);
   const online = i.equipment.filter((e) => e.reading?.online).length;
   const measured = i.equipment.filter((e) => e.reading).length;
   // Listas de nomes limitadas: com dezenas de equipamentos a linha viraria um parágrafo.
@@ -376,13 +428,13 @@ export function buildTestEmail(i: TestEmailInput): BuiltEmail {
     return items.length > max ? `${names} e mais ${items.length - max}` : names;
   };
   const notes: string[] = [];
-  if (!s.enabled) notes.push("Atenção: os alertas ainda estão desativados. Em Configurações → Alertas por e-mail, marque “Ativar alertas” e salve para começar a vigiar os equipamentos.");
+  if (!s.enabled) notes.push("Atenção: os alertas ainda estão desativados. No submenu Alertas → Configurar e-mails, marque “Ativar alertas” e salve para começar a vigiar os equipamentos.");
   const content: EmailContent = {
     tone: "info",
     label: "TESTE",
     title: "Os alertas por e-mail estão funcionando",
     subtitle: `${online} de ${measured} equipamentos no ar agora`,
-    summary: `Se este e-mail chegou, a chave do Resend, o remetente e o destinatário estão corretos. Os alertas abaixo serão enviados para este endereço, e cada um traz as últimas leituras do equipamento e os limites configurados.`,
+    summary: `Se este e-mail chegou, a chave do Resend, o remetente e o destinatário estão corretos. O perfil escolhido determina quais avisos serão enviados.`,
     sections: [
       {
         title: "Configuração",
@@ -390,21 +442,20 @@ export function buildTestEmail(i: TestEmailInput): BuiltEmail {
           ["Enviar alertas para", s.to || "ninguém (informe o e-mail)"],
           ["Remetente", s.from],
           ["Alertas", s.enabled ? "ativados" : "desativados"],
+          ["Perfil de envio", s.mode === "all" ? "todas as métricas ao exceder limites" : "somente queda e latência crítica"],
           ["Fora do ar e desempenho (ping)", list(watched) || "nenhum equipamento na lista"],
-          ["CPU, memória e temperatura (SNMP)", list(snmp) || "nenhum equipamento cadastrado em Equipamentos"],
-          [
-            "Situação agora",
-            !s.enabled
-              ? "verificação desligada (os problemas só são acompanhados com os alertas ativados)"
-              : i.activeProblems
-                ? `${i.activeProblems} problema${i.activeProblems > 1 ? "s" : ""} confirmado${i.activeProblems > 1 ? "s" : ""}`
-                : "nenhum problema confirmado",
-          ],
+          ...(snmp.length ? [["CPU, memória e temperatura (SNMP)", list(snmp)] as [string, string]] : []),
+          ...(snmp.length ? [["CPU, memória e temperatura (SNMP)", list(snmp)] as [string, string]] : []),
+          ["Situação agora", !s.enabled
+            ? "verificação desligada (os problemas só são acompanhados com os alertas ativados)"
+            : i.activeProblems
+              ? `${i.activeProblems} problema${i.activeProblems > 1 ? "s" : ""} confirmado${i.activeProblems > 1 ? "s" : ""}`
+              : "nenhum problema confirmado"],
           ["Enviado em", formatDateTime(i.at)],
         ],
       },
-      limitsSection(s, i.intervalMs),
-      ...detailed.map((e) => readingSection(`Leituras atuais: ${targetName(e.target)}`, e.reading, s.thresholds)),
+      limitsSection(s, i.intervalMs, snmp.length > 0),
+      ...detailed.map((e) => readingSection(`Leituras atuais: ${targetName(e.target)}`, e.reading, s.thresholds, e.snmpConfigured)),
       ...(others.length
         ? [
             {
@@ -419,11 +470,10 @@ export function buildTestEmail(i: TestEmailInput): BuiltEmail {
       {
         title: "O que você vai receber",
         items: [
-          "🔴 Fora do ar: o equipamento parou de responder ao ping (e ao SNMP, quando cadastrado).",
-          "🟠 Desempenho degradado: latência média acima do limite ou perda de pacotes a partir do limite.",
-          "🟠 CPU alta e 🟠 Memória alta: nos equipamentos SNMP cadastrados.",
-          "🔴 Temperatura alta: nos equipamentos SNMP cadastrados.",
-          "🟢 Recuperação: quando o problema passa, com a duração e as leituras de agora.",
+          ...(s.mode === "all"
+            ? [`🔴 Fora do ar e 🟠 latência/perda acima dos limites${snmp.length ? "; CPU, memória e temperatura acima dos limites para equipamentos com SNMP" : ""}.`]
+            : [`🔴 Fora do ar ou latência média acima de ${s.thresholds.criticalLatencyMs} ms, detectados na primeira leitura fora do limite.`]),
+          "🟢 Aviso de recuperação quando um problema passa, com duração e leituras atuais.",
         ],
       },
     ],

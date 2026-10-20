@@ -9,6 +9,8 @@ export interface AlertThresholds {
   tempC: number;
   /** Latência média acima disso = desempenho degradado. */
   latencyMs: number;
+  /** Latência acima disso é tratada como crítica no modo crítico. */
+  criticalLatencyMs: number;
   /** Perda de pacotes a partir disso = desempenho degradado. */
   lossPct: number;
 }
@@ -20,7 +22,9 @@ export interface EmailAlertSettings {
   /** IPs (ou nomes) vigiados: fora do ar e desempenho degradado. */
   targets: string[];
   thresholds: AlertThresholds;
-  /** Intervalo mínimo entre dois alertas do mesmo problema. */
+  /** Todas as métricas que excedam limites, ou somente problemas críticos. */
+  mode: "all" | "critical";
+  /** Intervalo mínimo antes de repetir um alerta persistente. */
   cooldownMinutes: number;
 }
 
@@ -32,6 +36,7 @@ export const DEFAULT_SETTINGS: EmailAlertSettings = {
   from: DEFAULT_FROM,
   to: "",
   targets: ["192.168.0.1", "192.168.0.2", "192.168.0.3"],
-  thresholds: { cpuPct: 90, memPct: 90, tempC: 80, latencyMs: 100, lossPct: 25 },
+  thresholds: { cpuPct: 90, memPct: 90, tempC: 80, latencyMs: 100, criticalLatencyMs: 500, lossPct: 25 },
+  mode: "all",
   cooldownMinutes: 15,
 };

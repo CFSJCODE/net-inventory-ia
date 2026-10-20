@@ -1,0 +1,23 @@
+@page "/console/windows"
+@page "/"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inherits UnifiedInventoryPageBase
+<PageTitle>Inventário unificado · NetInventory</PageTitle>
+<div class="page-heading"><div><div class="eyebrow">Rede e computadores Windows</div><h1>Inventário unificado</h1><p class="muted">Os dispositivos da rede e as coletas dos agentes no mesmo inventário.</p></div><button class="button" @onclick="RefreshAsync" disabled="@Loading">@(Loading ? "Atualizando…" : "Atualizar")</button></div>
+@if (Error is not null) { <div class="notice warning" role="alert">@Error</div> }
+<HostProfileNotice />
+<section class="stats-grid" aria-label="Resumo do inventário unificado">
+    <article class="stat-card"><span class="stat-label">Dispositivos</span><strong>@Devices.Length</strong><span class="muted">Registros de rede e agentes correlacionados</span></article>
+    <article class="stat-card"><span class="stat-label"><span class="dot success"></span>Respondem ao scan</span><strong>@Devices.Count(d => d.Status == "ONLINE")</strong><span class="muted">Resultado da última descoberta de rede</span></article>
+    <article class="stat-card"><span class="stat-label">Agentes Windows</span><strong>@Devices.Count(d => d.AgentId is not null)</strong><span class="muted">Hardware, sessões e métricas do computador</span></article>
+    <article class="stat-card"><span class="stat-label"><span class="dot warning"></span>Vínculos pendentes</span><strong>@Devices.Count(d => d.Id.StartsWith("agent:", StringComparison.Ordinal))</strong><span class="muted">Agentes ainda sem dispositivo correspondente</span></article>
+</section>
+<section class="overview-grid">
+    <article class="panel host-summary"><div class="section-heading"><h2>Host do inventário</h2><span class="badge success"><span class="dot"></span>Em execução</span></div><dl class="definition-grid"><dt>Modo</dt><dd>@(OperatingSystem.IsLinux() ? "Servidor Linux" : "Servidor local Windows")</dd><dt>Atualização</dt><dd>A cada 15 segundos</dd><dt>Última consulta</dt><dd class="timestamp">@ConsoleDisplay.Date(RefreshedAt, Configuration)</dd><dt>Coletas recentes</dt><dd>@Devices.Count(d => d.AgentId is not null && InventoryPresentation.Recency(UnifiedDisplay.Snapshot(d), Now) == SampleRecency.Recent) agente(s) nos últimos 5 minutos</dd></dl><a class="text-link" href="/console/connection">Ver conexão e diagnóstico →</a></article>
+    <article class="panel"><h2>Rede e agente</h2><p class="muted">O scan informa a resposta do dispositivo na rede. O agente informa a idade da coleta de hardware e sessões. Esses estados são exibidos separadamente.</p><p class="footnote">MACs correspondentes vinculam o agente ao registro existente, preservando nome, anotações e conexões. IP e hostname não mesclam dispositivos automaticamente.</p>@if(!string.IsNullOrWhiteSpace(Configuration["Inventory:LegacyOrigin"])) { <div class="actions"><a class="button small" href="/legacy" data-enhance-nav="false">Descoberta e edição de rede</a><a class="button small" href="/topology" data-enhance-nav="false">Topologia</a></div> }</article>
+</section>
+<section class="panel inventory-panel"><div class="section-heading"><div><h2>Inventário</h2><p class="muted">Rede, identidade e agente de cada dispositivo.</p></div><a class="button small" href="/console/devices">Buscar dispositivos</a></div><UnifiedDeviceTable Devices="Devices" Now="Now" /></section>
+
+
+

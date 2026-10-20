@@ -1,0 +1,13 @@
+@page "/console/connection"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inherits InventoryPageBase
+@inject NavigationManager Navigation
+<PageTitle>Conexão · NetInventory</PageTitle>
+<div class="page-heading"><div><div class="eyebrow">Servidor e comunicação</div><h1>Conexão</h1><p class="muted">O painel consulta o host. Cada agente envia os dados da máquina em que está instalado.</p></div><button class="button" @onclick="RefreshAsync" disabled="@Loading">Atualizar diagnóstico</button></div>
+@if (Error is not null) { <div class="notice warning" role="alert">@Error</div> }
+<HostProfileNotice />
+<section class="detail-grid"><article class="panel"><div class="section-heading"><h2>Host atual</h2><span class="badge @(Error is null ? "success" : "warning")">@(Error is null ? "Consulta concluída" : "Falha na consulta")</span></div><dl class="definition-grid"><dt>Endereço do painel</dt><dd class="mono">@Navigation.BaseUri</dd><dt>Modo de hospedagem</dt><dd>@(OperatingSystem.IsLinux() ? "Linux Server" : "Windows local")</dd><dt>Computador do host</dt><dd>@Environment.MachineName</dd><dt>API</dt><dd class="mono">/api/v1</dd><dt>Última consulta</dt><dd>@ConsoleDisplay.Date(RefreshedAt, Configuration)</dd></dl></article>
+<article class="panel"><h2>Comunicação dos agentes</h2><p class="muted">As conexões partem do agente para o host. Fechar o navegador ou o cliente WinUI não interrompe a coleta.</p><dl class="definition-grid"><dt>Cadastrados</dt><dd>@Devices.Length</dd><dt>Último recebimento</dt><dd>@ConsoleDisplay.Date(LastReceived, Configuration)</dd><dt>Fila durante indisponibilidade</dt><dd>Persistida em cada agente e reenviada após a reconexão</dd><dt>Transporte remoto</dt><dd>HTTPS e credencial individual do agente</dd></dl></article></section>
+<article class="panel"><h2>Operação local e servidor Linux</h2><div class="mode-grid"><div><h3>Sem host Linux</h3><p class="muted">O serviço .NET local hospeda a API, o painel e o banco. Abra <span class="mono">http://localhost:3000/</span> quando esse for o endereço configurado pelo controlador.</p></div><div><h3>Com host Linux</h3><p class="muted">Configure os agentes para o endereço HTTPS do servidor Linux. O painel é acessado nesse mesmo host e centraliza os computadores autorizados.</p></div></div><p class="footnote">A mudança de host é configurada. Uma queda de rede mantém os dados na fila do agente; não cria automaticamente um segundo inventário.</p></article>
+@code { private DateTimeOffset? LastReceived => Devices.Where(d => d.ReceivedAt is not null).Select(d => d.ReceivedAt).DefaultIfEmpty().Max(); }

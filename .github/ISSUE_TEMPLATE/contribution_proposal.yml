@@ -1,0 +1,54 @@
+name: Proposta de contribuição
+description: Proponha uma funcionalidade ou melhoria para o NetInventory.
+title: "[Proposta]: "
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Procure propostas existentes antes de enviar. Para mudanças grandes, aguarde o alinhamento
+        da manutenção antes de começar a implementação. Não inclua dados reais da sua rede ou segredos.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema ou necessidade
+      description: Que dificuldade concreta esta proposta resolveria e para quem?
+      placeholder: Descreva o cenário atual e seu impacto.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Solução proposta
+      description: Como você imagina que o comportamento deveria funcionar?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas
+      description: Há outra forma de resolver o problema ou algum contorno disponível?
+    validations:
+      required: false
+  - type: textarea
+    id: impact
+    attributes:
+      label: Áreas afetadas
+      description: Se souber, indique telas, APIs, banco/migrações, rede, permissões ou instalador envolvidos.
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Como verificar a contribuição
+      description: Que resultado observável demonstraria que a proposta foi atendida?
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Confirmações
+      options:
+        - label: Procurei issues existentes e esta proposta não parece duplicada.
+          required: true
+        - label: Removi dados pessoais, endereços reais, credenciais e informações sensíveis.
+          required: true

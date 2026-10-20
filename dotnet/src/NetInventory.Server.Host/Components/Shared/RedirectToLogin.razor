@@ -1,0 +1,5 @@
+@inject NavigationManager Navigation
+<p>É necessário entrar para consultar o inventário.</p>
+@code {
+    protected override void OnInitialized() => Navigation.NavigateTo("/sign-in", forceLoad: true);
+}

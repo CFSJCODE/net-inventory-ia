@@ -1,0 +1,45 @@
+@page "/console/security"
+@attribute [Authorize(Roles = "admin")]
+@rendermode InteractiveServer
+@inject ConsoleIdentityService Identities
+@inject AuthenticationStateProvider Authentication
+<PageTitle>Segurança · NetInventory</PageTitle>
+<div class="page-heading"><div><div class="eyebrow">Sua conta no host</div><h1>Segurança</h1><p class="muted">Proteja o acesso administrativo com senha e autenticação em duas etapas.</p></div></div>
+@if (Message is not null) { <div class="notice @(Enabled ? "success" : "info")" role="status">@Message</div> }
+<section class="detail-grid"><article class="panel"><div class="section-heading"><h2>Autenticação em duas etapas</h2><span class="badge @(Enabled ? "success" : "neutral")">@(Enabled ? "Ativada" : "Não ativada")</span></div><p class="muted">Utilize um aplicativo autenticador compatível com TOTP. Depois de ativar, o login exigirá senha e código temporário.</p>
+@if(!Enabled && Setup is null) { <button class="button primary" @onclick="BeginAsync" disabled="@Busy">Configurar autenticador</button> }
+@if(Setup is not null && !Enabled) { <div class="form-stack"><label>Chave para cadastro manual</label><div class="code-box" aria-label="Chave de configuração do autenticador">@Setup.Secret</div><p class="footnote">No aplicativo autenticador, adicione uma conta usando esta chave. Mantenha-a privada. Ela não será exibida depois da confirmação.</p><label for="mfa-code">Código do aplicativo</label><input id="mfa-code" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" @bind="Code" placeholder="6 dígitos" /><div class="actions"><button class="button primary" @onclick="ConfirmAsync" disabled="@Busy">Confirmar e ativar</button><button class="button quiet" @onclick="Cancel">Ocultar chave</button></div></div> }
+@if(Enabled) { <div class="notice success">Sua conta usa códigos temporários em novos acessos.</div> }
+</article><article class="panel"><h2>Separação de acessos</h2><dl class="definition-grid"><dt>Usuário conectado</dt><dd>@Username</dd><dt>Perfil</dt><dd>Administrador</dd><dt>Navegador</dt><dd>Sessão em cookie protegido</dd><dt>Agentes</dt><dd>Credencial individual para envio de coletas</dd><dt>Cadastro de agentes</dt><dd>Convite temporário de uso único</dd></dl><p class="footnote">O token de um agente não permite consultar o inventário completo ou alterar a configuração do host.</p></article></section>
+@code {
+    private string Username = "";
+    private bool Enabled;
+    private bool Busy;
+    private MfaSetup? Setup;
+    private string Code = "";
+    private string? Message;
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await Authentication.GetAuthenticationStateAsync()).User;
+        if (user.Identity?.IsAuthenticated != true || !user.IsInRole("admin")) return;
+        Username = user.Identity.Name ?? ""; Enabled = await Identities.HasMfaAsync(Username);
+    }
+    private async Task<bool> AuthorizedAsync() { var user = (await Authentication.GetAuthenticationStateAsync()).User; return user.Identity?.IsAuthenticated == true && user.IsInRole("admin") && user.Identity.Name == Username; }
+    private async Task BeginAsync()
+    {
+        if (!await AuthorizedAsync()) return;
+        Busy = true; Message = null;
+        try { Setup = await Identities.BeginMfaAsync(Username); Code = ""; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Message = "Não foi possível iniciar a configuração."; }
+        finally { Busy = false; }
+    }
+    private async Task ConfirmAsync()
+    {
+        if (!await AuthorizedAsync() || Setup is null || Code.Length != 6 || Code.Any(c => !char.IsAsciiDigit(c))) { Message = "Informe o código de 6 dígitos do autenticador."; return; }
+        Busy = true;
+        try { Enabled = await Identities.ConfirmMfaAsync(Username, Code); Message = Enabled ? "Autenticação em duas etapas ativada." : "Código inválido ou expirado. Confira o relógio do autenticador e tente novamente."; if (Enabled) { Setup = null; Code = ""; } }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Message = "Não foi possível confirmar o código."; }
+        finally { Busy = false; }
+    }
+    private void Cancel() { Setup = null; Code = ""; Message = "A chave foi ocultada. A autenticação em duas etapas ainda não foi ativada."; }
+}

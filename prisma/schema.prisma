@@ -171,6 +171,25 @@ model AiCache {
   createdAt DateTime @default(now())
 }
 
+/// Metadados de consumo. Nunca armazena perguntas, respostas, chaves ou dados da rede.
+model AiUsage {
+  id           String   @id @default(cuid())
+  provider     String
+  model        String
+  feature      String
+  status       String
+  inputTokens  Int?
+  outputTokens Int?
+  totalTokens  Int?
+  costUsd      Float?
+  durationMs   Int
+  httpStatus   Int?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([provider, createdAt])
+}
+
 /// Resumos de eventos gerados pela IA, exibidos no topo do Histórico.
 model AiSummary {
   id        String   @id @default(cuid())
@@ -202,6 +221,8 @@ model Equipment {
   snmpUsername      String?
   snmpAuthPassword  String?
   snmpAuthProtocol  String?
+    snmpPrivPassword  String?
+    snmpPrivProtocol  String?
   notes       String?
   /// Leitura automática na página de Equipamentos (minutos); null = desligada.
   pollIntervalMinutes Int?

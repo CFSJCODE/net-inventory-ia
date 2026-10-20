@@ -13,17 +13,19 @@ import {
   buildAlertEmail,
   buildRecoveryEmail,
   observe,
+  selectAlertObservations,
   recoveryTitle,
   targetName,
   type CheckKind,
   type HostReading,
+  type Observation,
   type WatchedTarget,
 } from "./alert-emails";
 
 /**
- * Vigia os equipamentos de rede configurados e manda e-mail (Resend) quando um fica fora do ar, com
- * desempenho degradado (latência ou perda de pacotes) ou, nos equipamentos SNMP cadastrados, com CPU,
- * memória ou temperatura acima do limite. Também avisa quando o problema passa.
+ * Vigia os equipamentos e manda um e-mail por aparelho quando uma ou mais métricas ultrapassam seus
+ * limites. Cada mensagem reúne todas as leituras disponíveis e destaca as anormais. Também avisa quando
+ * os problemas passam.
  *
  * A cada rodada guarda a última leitura de cada equipamento (status, latência, CPU, memória,
  * temperatura, uptime), que vai nos e-mails. Os e-mails passam por uma fila guardada no banco: se o
@@ -31,18 +33,20 @@ import {
  * voltar (junto com o aviso de recuperação).
  */
 
-export const ALERT_CHECK_INTERVAL_MS = 60_000;
+/** A detecção de alertas roda em intervalo curto; o envio começa na primeira rodada fora do limite. */
+export const ALERT_CHECK_INTERVAL_MS = 15_000;
 const PINGS = 4;
 const OUTBOX_MAX_AGE_MS = 24 * 3600_000;
 const OUTBOX_MAX = 50;
 
-/** Checagens seguidas (1 por minuto) para alertar / para considerar recuperado. */
+/** Um único resultado fora do limite dispara alerta; duas leituras normais confirmam recuperação. */
 const RULES: Record<CheckKind, Omit<RuleOptions, "cooldownMs">> = {
-  offline: { badToFire: 2, goodToClear: 1 },
-  degraded: { badToFire: 3, goodToClear: 2 },
-  cpu: { badToFire: 3, goodToClear: 2 },
-  mem: { badToFire: 3, goodToClear: 2 },
-  temp: { badToFire: 2, goodToClear: 2 },
+  offline: { badToFire: 1, goodToClear: 1 },
+  degraded: { badToFire: 1, goodToClear: 2 },
+  criticalLatency: { badToFire: 1, goodToClear: 2 },
+  cpu: { badToFire: 1, goodToClear: 2 },
+  mem: { badToFire: 1, goodToClear: 2 },
+  temp: { badToFire: 1, goodToClear: 2 },
 };
 
 interface QueuedEmail {
@@ -225,18 +229,18 @@ async function runChecks(): Promise<void> {
   const at = now();
   const seen = new Set<string>();
   for (const { target, reading } of results) {
-    for (const o of observe(reading, config.thresholds, watched.has(target.host))) {
+    const observations = selectAlertObservations(observe(reading, config.thresholds, watched.has(target.host)), config.mode);
+    const newAlerts: { observation: Observation; since: number | null }[] = [];
+    for (const o of observations) {
       const key = `${target.host}|${o.kind}`;
       seen.add(key);
       const prev = state.checks[key] ?? EMPTY_STATE;
       const { state: next, event } = evaluate(prev, o.bad, at, { ...RULES[o.kind], cooldownMs });
       next.value = o.value;
       state.checks[key] = next;
-      const common = { target, observation: o, reading, at, intervalMs: ALERT_CHECK_INTERVAL_MS, settings: config };
+      const common = { target, observation: o, reading, at, intervalMs: ALERT_CHECK_INTERVAL_MS, settings: config, snmpConfigured: target.equipment !== null };
       if (event === "alert") {
-        // `since` fica antes de `at` quando o aviso esperou o intervalo mínimo entre alertas.
-        const email = buildAlertEmail({ ...common, checks: RULES[o.kind].badToFire, since: next.since });
-        enqueue(state, { key, kind: "alert", ...email, createdAt: at });
+        newAlerts.push({ observation: o, since: next.since });
         console.log(`[alertas] ${alertTitle(o.kind)}: ${targetName(target)} — ${o.detail}`);
       } else if (event === "recovery") {
         const alertUndelivered = state.outbox.some((e) => e.key === key && e.kind === "alert");
@@ -244,6 +248,23 @@ async function runChecks(): Promise<void> {
         enqueue(state, { key, kind: "recovery", ...email, createdAt: at });
         console.log(`[alertas] ${recoveryTitle(o.kind)}: ${targetName(target)}`);
       }
+    }
+    if (newAlerts.length) {
+      const primary = newAlerts[0];
+      const currentAnomalies = observations.filter((o) => o.bad);
+      const email = buildAlertEmail({
+        target,
+        observation: primary.observation,
+        additionalObservations: currentAnomalies.filter((o) => o.kind !== primary.observation.kind),
+        reading,
+        at,
+        intervalMs: ALERT_CHECK_INTERVAL_MS,
+        settings: config,
+        snmpConfigured: target.equipment !== null,
+        checks: 1,
+        since: primary.since,
+      });
+      enqueue(state, { key: `${target.host}|${newAlerts.map(({ observation }) => observation.kind).sort().join(",")}`, kind: "alert", ...email, createdAt: at });
     }
   }
 

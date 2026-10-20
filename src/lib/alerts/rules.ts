@@ -1,7 +1,7 @@
 /**
  * Máquina de estados de um alerta (equipamento fora do ar, CPU alta...). Pura, sem banco nem rede, para
- * ser testada isoladamente. Só avisa na transição (OK -> problema e problema -> OK), e só depois de
- * algumas checagens seguidas, para um ping perdido ou um pico de CPU de um segundo não virar e-mail.
+ * ser testada isoladamente. Permite disparo na primeira leitura anormal, recuperação estabilizada e
+ * repetição de problemas persistentes respeitando o intervalo configurado.
  */
 
 export interface CheckState {
@@ -42,9 +42,8 @@ export function evaluate(prev: CheckState, isBad: boolean, now: number, opts: Ru
     s.notified = false;
   }
 
-  // Problema confirmado e ainda sem e-mail: manda agora, ou, dentro do intervalo mínimo desde o último
-  // alerta, fica só registrado e é avisado assim que o intervalo passar (se ainda continuar).
-  if (s.active && isBad && !s.notified) {
+  // Problema confirmado: dispara na primeira leitura anormal e repete somente após o intervalo salvo.
+  if (s.active && isBad) {
     const coolingDown = s.lastAlertAt !== null && now - s.lastAlertAt < opts.cooldownMs;
     if (coolingDown) return { state: s, event: null };
     s.notified = true;

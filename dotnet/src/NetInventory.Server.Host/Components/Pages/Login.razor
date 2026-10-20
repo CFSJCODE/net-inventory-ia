@@ -1,0 +1,52 @@
+@page "/sign-in"
+@attribute [AllowAnonymous]
+<PageTitle>Entrar · NetInventory</PageTitle>
+<div class="login-grid">
+<section class="login-intro" aria-label="Apresentação do NetInventory">
+    <img class="login-background" src="background.jpg" alt="" />
+    <div class="login-intro-content">
+        <a class="login-intro-logo" href="/"><img src="logo.png" alt="" width="32" height="32" /><span>NetInventory</span></a>
+        <div class="login-intro-copy">
+            <h2>Seu inventário, sob controle.</h2>
+            <p>Conheça os computadores, acompanhe suas métricas e centralize as informações em um só lugar.</p>
+            <ul class="intro-features">
+                <li><span class="dot" aria-hidden="true"></span><div><strong>Inventário Windows</strong><span>Sistema, hardware e sessões dos computadores cadastrados.</span></div></li>
+                <li><span class="dot" aria-hidden="true"></span><div><strong>Métricas e histórico</strong><span>CPU, memória, armazenamento e rede com a origem da coleta.</span></div></li>
+                <li><span class="dot" aria-hidden="true"></span><div><strong>Um painel para seu ambiente</strong><span>Host local ou servidor Linux, conforme sua configuração.</span></div></li>
+            </ul>
+        </div>
+        <p class="login-copyright">© @DateTime.Now.Year NetInventory</p>
+    </div>
+</section>
+<section class="login-form-region">
+    <div class="login-form-wrap">
+    <a class="login-mobile-brand" href="/"><img src="logo.png" alt="" width="32" height="32" /><span>NetInventory</span></a>
+    <article class="login-card">
+    <div class="login-heading"><h1>Bem-vindo de volta</h1>
+    <p class="muted">Entre com seu usuário e senha para acessar o painel.</p></div>
+    @if (Error == "mfa")
+    {
+        <div class="notice info" role="status">Digite o código de 6 dígitos do seu aplicativo autenticador para concluir o acesso.</div>
+    }
+    else if (!string.IsNullOrEmpty(Error))
+    {
+        <div class="notice warning" role="alert">Não foi possível entrar. Confira usuário, senha e código de autenticação.</div>
+    }
+    <form method="post" action="/console/login" data-enhance="false" class="form-stack">
+        <AntiforgeryToken />
+        <label for="username">Usuário</label>
+        <input id="username" name="username" autocomplete="username" maxlength="64" required autofocus />
+        <label for="password">Senha</label>
+        <input id="password" type="password" name="password" autocomplete="current-password" maxlength="256" required />
+        <label for="totp">Código de autenticação <span class="muted">se ativado</span></label>
+        <input id="totp" name="totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6 dígitos" />
+        <button type="submit" class="button primary">Entrar</button>
+    </form>
+    <p class="footnote">Use uma conta deste host. O cadastro dos agentes é feito separadamente.</p>
+</article>
+</div>
+</section>
+</div>
+@code {
+    [SupplyParameterFromQuery(Name = "error")] public string? Error { get; set; }
+}

@@ -1,0 +1,25 @@
+@page "/console/devices/{DeviceId}"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inherits UnifiedInventoryPageBase
+<PageTitle>@(Device?.Name ?? "Dispositivo") · NetInventory</PageTitle>
+<a class="back-link" href="@(string.IsNullOrWhiteSpace(Configuration["Inventory:LegacyOrigin"]) ? "/console/devices" : $"/devices/{Uri.EscapeDataString(DeviceId)}")" data-enhance-nav="false">← Dispositivo</a>
+@if (Error is not null) { <div class="notice warning" role="alert">@Error</div> }
+@if (Device is not { } device)
+{
+    <div class="panel empty-state"><h1>Dispositivo não encontrado</h1><p>O registro não está disponível no inventário deste host.</p></div>
+}
+else
+{
+    <div class="page-heading"><div><div class="eyebrow">Registro unificado</div><h1>@device.Name</h1><div class="device-meta"><span class="badge @UnifiedDisplay.NetworkClass(device)">@UnifiedDisplay.NetworkStatus(device)</span><span class="muted">@InventoryPresentation.TypeLabel(device.Type) @(device.TypeLocked ? "· tipo fixado" : "")</span><span class="muted">@UnifiedDisplay.Source(device)</span></div></div><button class="button" @onclick="RefreshAsync" disabled="@Loading">Atualizar</button></div>
+    <section class="detail-grid">
+        <article class="panel"><h2>Identidade na rede</h2><dl class="definition-grid"><dt>Identificador</dt><dd class="mono">@device.Id</dd><dt>Hostname</dt><dd>@ConsoleDisplay.Value(device.Hostname)</dd><dt>Apelido</dt><dd>@ConsoleDisplay.Value(device.Alias)</dd><dt>IPv4</dt><dd class="mono">@ConsoleDisplay.Value(device.Ip)</dd><dt>MAC</dt><dd class="mono">@ConsoleDisplay.Value(device.Mac)</dd><dt>Fabricante</dt><dd>@ConsoleDisplay.Value(device.Vendor)</dd><dt>Primeira observação</dt><dd>@ConsoleDisplay.Date(device.FirstSeenAt, Configuration)</dd><dt>Última observação</dt><dd>@ConsoleDisplay.Date(device.LastSeenAt, Configuration)</dd></dl>@if(!device.Id.StartsWith("agent:", StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(Configuration["Inventory:LegacyOrigin"])) { <a class="button small" href="@($"/devices/{Uri.EscapeDataString(device.Id)}")" data-enhance-nav="false">Editar identidade e ver histórico de rede</a> }</article>
+        <article class="panel"><h2>Coleta do agente</h2><dl class="definition-grid"><dt>Vínculo</dt><dd>@UnifiedDisplay.LinkState(device)</dd><dt>Sistema operacional</dt><dd>@UnifiedDisplay.OperatingSystem(device)</dd><dt>Usuários</dt><dd>@UnifiedDisplay.Users(device)</dd><dt>Agente</dt><dd class="mono">@(device.AgentId?.ToString() ?? "Sem agente vinculado")</dd><dt>Coletado</dt><dd>@ConsoleDisplay.Date(device.Latest?.CollectedAt, Configuration)</dd><dt>Recebido</dt><dd>@ConsoleDisplay.Date(device.ReceivedAt, Configuration)</dd></dl>@if(device.Notes is not null) { <h3>Anotações</h3><p>@device.Notes</p> }<p class="footnote">A identificação por MAC preserva o registro existente. Uma coleta antiga não prova que o dispositivo esteja desligado.</p></article>
+    </section>
+    @if(device.AgentId is { } agentId) { <DeviceDetails AgentId="agentId" ShowHeading="false" @key="agentId" /> }
+    else { <div class="notice info">Este dispositivo ainda não tem um agente Windows vinculado. Descoberta, equipamentos, topologia e histórico de rede continuam disponíveis no mesmo host.</div> }
+}
+@code {
+    [Parameter] public string DeviceId { get; set; } = "";
+    private UnifiedDevice? Device => Devices.FirstOrDefault(d => d.Id == DeviceId) ?? (Guid.TryParse(DeviceId, out var id) ? Devices.FirstOrDefault(d => d.AgentId == id) : null);
+}

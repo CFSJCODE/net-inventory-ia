@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+# Configuracao e operacao do host NetInventory no proprio Ubuntu Server.
+# Edita somente as chaves de rede em /etc/netinventory-dotnet/backend.env; credenciais nunca sao impressas.
+env_file=/etc/netinventory-dotnet/backend.env
+unit=netinventory-dotnet.service
+data=/var/lib/netinventory-dotnet
+
+usage() {
+    cat <<'EOF'
+Uso: sudo netinventoryctl <comando>
+
+  status                     Estado do servico, enderecos e resposta do /health
+  show                       Configuracao de rede atual (sem credenciais)
+  set port <1024-65535>      Porta do painel e dos agentes
+  set exposure lan|proxy     lan: todas as interfaces; proxy: so 127.0.0.1, atras do Nginx/HTTPS
+  set lan-http on|off        Aceitar HTTP de IPs privados da LAN
+  set address <ip|->         IP privado anunciado aos agentes na pagina Host ("-" remove)
+  set public-url <https://...|->  URL publica HTTPS do proxy reverso ("-" remove)
+  apply                      Reinicia o servico e aguarda o /health
+  logs [-f]                  Log do servico (journalctl)
+  invite [rotulo] [minutos] [id-do-agente]
+                             Gera um convite de uso unico para cadastrar um agente Windows;
+                             com o id, o convite so recadastra aquele agente (ex.: banco migrado)
+  backup [pasta]             Copia consistente dos bancos, config.json e chaves (padrao /var/backups/netinventory-dotnet)
+  firewall [rede/cidr]       Libera a porta no ufw para a rede (padrao 192.168.0.0/16)
+
+As alteracoes de "set" valem depois de "apply".
+EOF
+}
+fail() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+need_root() { [[ $EUID -eq 0 ]] || fail 'Execute com sudo.'; [[ -f $env_file ]] || fail "Configuracao ausente: $env_file (rode install-linux.sh)."; }
+get() { sed -n "s/^$1=//p" "$env_file" | tail -n1; }
+put() {
+    local key=$1 value=$2 tmp
+    tmp=$(mktemp "$env_file.XXXXXX")
+    grep -v "^$key=" "$env_file" > "$tmp" || true
+    printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$env_file"
+}
+drop() {
+    local tmp
+    tmp=$(mktemp "$env_file.XXXXXX")
+    grep -v "^$1=" "$env_file" > "$tmp" || true
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$env_file"
+}
+urls() { get ASPNETCORE_URLS; }
+port() { urls | sed -E 's#.*:([0-9]+)/?$#\1#'; }
+exposure() { [[ $(urls) == *127.0.0.1* ]] && echo proxy || echo lan; }
+lan_ips() { ip -4 -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}' | grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)' || true; }
+private_ip() {
+    local IFS=. octets
+    [[ $1 =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+    read -r -a octets <<<"$1"
+    for o in "${octets[@]}"; do ((10#$o <= 255)) || return 1; done
+    ((10#${octets[0]} == 10)) || ((10#${octets[0]} == 192 && 10#${octets[1]} == 168)) || ((10#${octets[0]} == 172 && 10#${octets[1]} >= 16 && 10#${octets[1]} <= 31))
+}
+# Loopback requests never go through an HTTP proxy inherited from /etc/environment.
+local_curl() { curl --noproxy '*' "$@"; }
+# Port of the socket the running service itself listens on; refuses a port taken by anything else.
+live_port() {
+    local pid
+    systemctl is-active --quiet "$unit" || fail 'Servico parado. Rode "sudo netinventoryctl apply" antes.'
+    pid=$(systemctl show -p MainPID --value "$unit")
+    [[ $pid =~ ^[1-9][0-9]*$ ]] || fail 'Processo do servico nao identificado.'
+    ss -Hltnp 2>/dev/null | grep -F "pid=$pid," | awk '{print $4}' | sed -E 's/.*:([0-9]+)$/\1/' | grep -vx 3001 | head -n1
+}
+
+show() {
+    printf 'Porta:                %s\n' "$(port)"
+    printf 'Exposicao:            %s\n' "$(exposure)"
+    printf 'HTTP na LAN:          %s\n' "$( [[ $(get Inventory__AllowPrivateLanHttp) == true ]] && echo permitido || echo bloqueado)"
+    local advertised public
+    advertised=$(get Inventory__AdvertisedAddress)
+    public=$(get Inventory__PublicUrl)
+    printf 'Endereco anunciado:   %s\n' "${advertised:-(IPs detectados)}"
+    printf 'URL publica HTTPS:    %s\n' "${public:-(nenhuma)}"
+    printf 'Painel original:      %s\n' "$( [[ $(get Inventory__ManageLegacyRuntime) == true ]] && echo 'motor em 127.0.0.1:3001' || echo 'nao configurado')"
+    printf 'Dados:                %s\n' "$data"
+}
+
+cmd=${1:-}
+case "$cmd" in
+    ''|-h|--help|help) usage ;;
+    show) need_root; show ;;
+    status)
+        need_root
+        systemctl --no-pager --lines=0 status "$unit" || true
+        printf '\n'; show; printf '\n'
+        if [[ $(exposure) == lan ]]; then
+            for task_ip in $(lan_ips); do printf 'Agentes na LAN:       http://%s:%s/\n' "$task_ip" "$(port)"; done
+        fi
+        if local_curl -fsS -m 5 "http://127.0.0.1:$(port)/health" >/dev/null 2>&1; then echo 'Health:               respondendo'; else echo 'Health:               sem resposta'; fi
+        ;;
+    set)
+        need_root
+        [[ $# -eq 3 ]] || { usage; exit 2; }
+        key=$2 value=$3
+        case "$key" in
+            port)
+                [[ $value =~ ^[0-9]{4,5}$ ]] && ((10#$value >= 1024 && 10#$value <= 65535)) || fail 'Porta deve estar entre 1024 e 65535.' 2
+                ((10#$value != 3001)) || fail 'A porta 3001 e reservada ao motor interno.' 2
+                value=$((10#$value))
+                if [[ $(exposure) == proxy ]]; then put ASPNETCORE_URLS "http://127.0.0.1:$value"; else put ASPNETCORE_URLS "http://0.0.0.0:$value"; fi ;;
+            exposure)
+                case "$value" in
+                    lan) put ASPNETCORE_URLS "http://0.0.0.0:$(port)"; put Inventory__TrustLoopbackProxy false ;;
+                    proxy) put ASPNETCORE_URLS "http://127.0.0.1:$(port)"; put Inventory__TrustLoopbackProxy true; put Inventory__AllowPrivateLanHttp false ;;
+                    *) fail 'Use lan ou proxy.' 2 ;;
+                esac ;;
+            lan-http)
+                case "$value" in
+                    on) [[ $(exposure) == lan ]] || fail 'HTTP na LAN exige exposure lan.' 2; put Inventory__AllowPrivateLanHttp true ;;
+                    off) put Inventory__AllowPrivateLanHttp false ;;
+                    *) fail 'Use on ou off.' 2 ;;
+                esac ;;
+            address)
+                if [[ $value == - ]]; then drop Inventory__AdvertisedAddress
+                # The Windows agent accepts HTTP only to a private IPv4 literal; names need the HTTPS public URL.
+                elif private_ip "$value"; then put Inventory__AdvertisedAddress "$value"
+                else fail 'Informe um IPv4 privado valido (10.x, 172.16-31.x, 192.168.x). Para nomes, use set public-url com HTTPS.' 2; fi ;;
+            public-url)
+                if [[ $value == - ]]; then drop Inventory__PublicUrl
+                elif [[ $value =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$ ]]; then put Inventory__PublicUrl "${value%/}/"
+                else fail 'Informe https://dominio[:porta]/ sem caminho.' 2; fi ;;
+            *) usage; exit 2 ;;
+        esac
+        echo 'Salvo. Rode "sudo netinventoryctl apply" para aplicar.' ;;
+    apply)
+        need_root
+        systemctl restart "$unit"
+        for _ in $(seq 1 60); do
+            if local_curl -fsS -m 2 "http://127.0.0.1:$(port)/health" >/dev/null 2>&1; then echo "Aplicado. Host respondendo na porta $(port)."; exit 0; fi
+            sleep 1
+        done
+        fail 'O host nao respondeu em 60 s. Veja: sudo netinventoryctl logs' ;;
+    logs)
+        need_root
+        if [[ ${2:-} == -f ]]; then journalctl -u "$unit" -f; else journalctl -u "$unit" --no-pager -n 100; fi ;;
+    invite)
+        need_root
+        label=${2:-agente-windows} minutes=${3:-30} agent=${4:-}
+        agent_json=''
+        if [[ -n $agent ]]; then
+            [[ $agent =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]] || fail 'Id do agente invalido (GUID).' 2
+            agent_json=",\"agentId\":\"$agent\""
+        fi
+        [[ $label =~ ^[A-Za-z0-9._-]{1,64}$ ]] || fail 'Rotulo: letras, numeros, ponto, hifen ou sublinhado.' 2
+        [[ $minutes =~ ^[0-9]{1,4}$ ]] && ((10#$minutes >= 5 && 10#$minutes <= 1440)) || fail 'Validade entre 5 e 1440 minutos.' 2
+        minutes=$((10#$minutes))
+        live=$(live_port)
+        [[ -n $live ]] || fail 'O servico nao esta escutando; nenhum token foi enviado.'
+        token=$(get Inventory__AdminToken)
+        [[ -n $token ]] || fail 'Token administrativo ausente no backend.env.'
+        # The token goes to curl on stdin (printf is a builtin), never on a command line visible in ps.
+        response=$(printf 'Authorization: Bearer %s\n' "$token" | local_curl -fsS -m 10 -X POST -H @- -H 'Content-Type: application/json' \
+            -d "{\"label\":\"$label\",\"expiresInMinutes\":$minutes$agent_json}" "http://127.0.0.1:$live/api/v1/enrollment-invitations") || fail "O host nao gerou o convite${agent:+ (agente inexistente ou revogado?)}; confira 'netinventoryctl status'."
+        unset token
+        invitation=$(grep -oE '"token":"[0-9A-Fa-f]{64}"' <<<"$response" | grep -oE '[0-9A-Fa-f]{64}') || fail 'Resposta inesperada do host; nenhum convite exibido.'
+        printf 'Convite (uso unico, %s min): %s\n' "$minutes" "$invitation"
+        echo 'No Windows: .\scripts\Enroll-Agent.ps1 e informe o convite.' ;;
+    backup)
+        need_root
+        command -v sqlite3 >/dev/null || fail 'Instale sqlite3: sudo apt install sqlite3'
+        if [[ -n ${2:-} ]]; then
+            dest=$2
+            parent=$(realpath -e -- "$(dirname -- "$dest")") || fail 'A pasta de destino precisa existir.'
+            dest=$parent/$(basename -- "$dest")
+        else
+            # Root-owned and outside the service's data directory, which the service account can write.
+            root_dir=/var/backups/netinventory-dotnet
+            [[ -e $root_dir || -L $root_dir ]] || install -d -m 0700 -o root -g root "$root_dir"
+            parent=$root_dir
+            dest=$root_dir/$(date +%Y%m%dT%H%M%S)
+        fi
+        [[ ! -L $parent && $(stat -c %u -- "$parent") == 0 ]] || fail 'A pasta de destino deve pertencer ao root e nao ser link.'
+        (( (8#$(stat -c %a -- "$parent") & 8#022) == 0 )) || fail 'A pasta de destino nao pode ter escrita para grupo ou outros.'
+        [[ ! -e $dest && ! -L $dest ]] || fail 'Destino ja existe; nada foi sobrescrito.'
+        mkdir -m 0700 -- "$dest"
+        copied=0
+        for db in "$data"/*.db; do
+            name=$(basename -- "$db")
+            # Names come from a directory the service owns: only plain files with simple names are read.
+            [[ -f $db && ! -L $db && $name =~ ^[A-Za-z0-9._-]+\.db$ ]] || continue
+            sqlite3 "$db" ".backup '$dest/$name'"
+            copied=$((copied + 1))
+        done
+        ((copied > 0)) || fail "Nenhum banco encontrado em $data."
+        [[ -f $data/config.json && ! -L $data/config.json ]] && cp -P -- "$data/config.json" "$dest/"
+        [[ -d $data/keys && ! -L $data/keys ]] && cp -RP -- "$data/keys" "$dest/keys"
+        chmod -R go-rwx -- "$dest"
+        echo "Backup consistente em $dest ($copied banco(s), config.json e chaves quando presentes)." ;;
+    firewall)
+        need_root
+        command -v ufw >/dev/null || fail 'ufw nao instalado.'
+        cidr=${2:-192.168.0.0/16}
+        [[ $cidr =~ ^[0-9.]+/[0-9]{1,2}$ ]] || fail 'Informe a rede como 192.168.0.0/24.' 2
+        ufw allow from "$cidr" to any port "$(port)" proto tcp ;;
+    *) usage; exit 2 ;;
+esac

@@ -1,0 +1,9 @@
+@inject HostProfileService Profiles
+@if (Profile.Mode == "remote")
+{
+    <div class="notice info"><strong>Destino configurado: host remoto.</strong> Este painel exibe o inventário armazenado no host que está aberto. <a href="@Profile.Endpoint" target="_blank" rel="noopener noreferrer">Abra o servidor configurado</a> para consultar os dados recebidos nele.</div>
+}
+@code {
+    private HostProfile Profile = new();
+    protected override void OnInitialized() => Profile = Profiles.Load();
+}

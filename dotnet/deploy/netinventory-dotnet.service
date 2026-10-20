@@ -1,0 +1,31 @@
+[Unit]
+Description=NetInventory .NET host
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# O host avisa o systemd quando o Kestrel esta pronto (Microsoft.Extensions.Hosting.Systemd).
+Type=notify
+User=netinventory-dotnet
+Group=netinventory-dotnet
+WorkingDirectory=/opt/netinventory-dotnet
+# Pacote self-contained linux-x64; o instalador troca para /usr/bin/dotnet se o pacote depender do runtime.
+ExecStart=/opt/netinventory-dotnet/NetInventory.Server.Host
+EnvironmentFile=/etc/netinventory-dotnet/backend.env
+Environment=DOTNET_NOLOGO=1
+StateDirectory=netinventory-dotnet
+StateDirectoryMode=0700
+UMask=0077
+TimeoutStartSec=90
+Restart=on-failure
+RestartSec=5
+# O motor Node (127.0.0.1:3001) e filho do host: parar/reiniciar o servico encerra todo o cgroup.
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/netinventory-dotnet
+
+[Install]
+WantedBy=multi-user.target

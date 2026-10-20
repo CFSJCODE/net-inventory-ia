@@ -1,0 +1,72 @@
+@page "/console/host"
+@attribute [Authorize(Roles = "admin")]
+@inject HostProfileService Profiles
+@inject IConfiguration Configuration
+@inject NavigationManager Navigation
+@inject Microsoft.AspNetCore.Hosting.Server.IServer Server
+<PageTitle>Host · NetInventory</PageTitle>
+@if (OperatingSystem.IsLinux())
+{
+<div class="page-heading"><div><div class="eyebrow">Servidor Linux</div><h1>Host do inventário</h1><p class="muted">Os agentes Windows enviam as coletas para este servidor Linux, e o painel apresenta esses dados.</p></div></div>
+<section class="detail-grid"><article class="panel"><h2>Endereço para os agentes</h2>@if (AgentEndpoints.Count > 0) { <dl class="definition-grid">@foreach (var endpoint in AgentEndpoints) { <dt>@endpoint.Label</dt><dd class="mono">@endpoint.Url</dd> }<dt>Este painel</dt><dd class="mono">@Navigation.BaseUri</dd></dl><p class="footnote">@(LanHttp ? "Use o endereço da rede em que estão os computadores Windows. HTTP é aceito somente de IPs privados da LAN." : "HTTP na rede local está bloqueado; os agentes usam somente HTTPS.")</p> } else { <div class="notice info">Nenhum endereço disponível para os agentes. No servidor, defina o endereço anunciado, a exposição em rede local ou a URL pública HTTPS (<span class="mono">sudo netinventoryctl help</span>).</div> }</article>
+<article class="panel"><h2>Cadastrar um computador Windows</h2><p class="muted">Crie um convite de uso único e execute no computador a monitorar:</p><div class="code-box" aria-label="Comandos para apontar o agente para este host">@AgentCommand<br />.\scripts\Enroll-Agent.ps1</div><div class="actions spaced-small"><a class="button small" href="/console/agents">Gerar convite em Agentes</a></div><p class="footnote">O agente mantém uma fila de coletas se este servidor ficar indisponível e reenvia ao mesmo destino.</p></article></section>
+<section class="detail-grid"><article class="panel"><h2>Configuração do servidor</h2><dl class="definition-grid"><dt>Porta</dt><dd class="mono">@Port</dd><dt>Exposição</dt><dd>@(BehindProxy ? "Proxy HTTPS — somente loopback" : "Rede local — painel e agentes na LAN")</dd><dt>HTTP na rede local</dt><dd>@(LanHttp ? "Permitido para IPs privados" : "Bloqueado — somente HTTPS")</dd><dt>Endereço anunciado</dt>@if (Configuration["Inventory:AdvertisedAddress"] is { Length: > 0 } advertisedValue) { <dd class="mono">@advertisedValue</dd> } else { <dd>IPs detectados</dd> }<dt>URL pública HTTPS</dt>@if (Configuration["Inventory:PublicUrl"] is { Length: > 0 } publicValue) { <dd class="mono">@publicValue</dd> } else { <dd>Nenhuma</dd> }</dl><p class="footnote">A configuração é feita no próprio servidor, pelo terminal.</p></article>
+<article class="panel"><h2>Alterar no servidor</h2><p class="muted">No terminal do Ubuntu Server, como administrador:</p><div class="code-box" aria-label="Comandos de configuração do servidor">sudo netinventoryctl show<br />sudo netinventoryctl set port @Port<br />sudo netinventoryctl set address 192.168.0.72<br />sudo netinventoryctl apply</div><p class="footnote">Use <span class="mono">sudo netinventoryctl help</span> para exposição, HTTP na LAN, URL pública, convites, logs, backup e firewall.</p></article></section>
+}
+else
+{
+<div class="page-heading"><div><div class="eyebrow">Destino do inventário</div><h1>Configurar host</h1><p class="muted">Use o serviço local ou informe o endereço do seu servidor Linux.</p></div></div>
+@if (Result == "saved" || Saved == "1") { <div class="notice success" role="status">Perfil de host salvo. Consulte o status do agente para confirmar o destino e o próximo envio.</div> }
+@if (Result == "reachable" || Test == "success") { <div class="notice success" role="status">O host respondeu ao teste de comunicação. Isso não confirma o cadastro ou o envio do agente.</div> }
+@if (!string.IsNullOrEmpty(Error) || Test == "failed") { <div class="notice warning" role="alert">Não foi possível concluir a operação. Confira endereço, porta, protocolo e disponibilidade do host.</div> }
+<section class="detail-grid"><article class="panel"><h2>Perfil de implantação</h2><form method="post" action="/console/host-save" data-enhance="false"><AntiforgeryToken /><div class="field-grid"><label class="full" for="mode">Modo<select id="mode" name="mode"><option value="local" selected="@(Profile.Mode == "local")">Local — sem host Linux</option><option value="remote" selected="@(Profile.Mode == "remote")">Servidor Linux ou outro host</option></select></label><label class="full" for="address">Endereço do servidor<input id="address" name="address" value="@Profile.Address" placeholder="192.168.0.72 ou inventario.exemplo.com" maxlength="253" /><span class="footnote">Somente IP ou nome; protocolo e porta são informados separadamente. No modo local, esse campo é ignorado.</span></label><label for="port">Porta<input id="port" name="port" type="number" min="1" max="65535" value="@Profile.Port" required /></label><label for="protocol">Protocolo<select id="protocol" name="useHttps"><option value="false" selected="@(!Profile.UseHttps)">HTTP — rede privada/local</option><option value="true" selected="@Profile.UseHttps">HTTPS — acesso protegido</option></select></label></div><div class="actions spaced"><button type="submit" class="button primary">Salvar configuração</button><button type="submit" class="button" formaction="/console/host-test">Testar conexão</button></div></form></article>
+<article class="panel"><h2>Destino configurado</h2><dl class="definition-grid"><dt>Modo</dt><dd>@(Profile.Mode == "local" ? OperatingSystem.IsLinux() ? "Servidor Linux" : "Local Windows" : "Host remoto")</dd><dt>Endereço</dt><dd class="mono">@(Profile.Mode == "local" ? Navigation.BaseUri : Profile.Endpoint.ToString())</dd><dt>Este painel</dt><dd class="mono">@Navigation.BaseUri</dd></dl><a class="button small" href="@(Profile.Mode == "local" ? Navigation.BaseUri : Profile.Endpoint.ToString())" target="_blank" rel="noopener noreferrer">Abrir painel do host ↗</a><p class="footnote">O navegador consulta o host que estiver aberto. Para ver o inventário do servidor Linux, abra seu endereço e entre com a conta desse servidor.</p>
+@if (Profile.Mode == "remote") { <div class="notice info spaced">Este painel local mantém os registros locais. A seleção de um host remoto não mistura os bancos e não transfere automaticamente o histórico.</div> }
+<h3 class="spaced">Durante uma indisponibilidade</h3><p class="muted">O agente mantém uma fila de coletas e tenta enviar novamente. Um segundo inventário local não é criado automaticamente.</p></article></section>
+
+<article class="panel"><h2>Acesso fora da rede</h2><p class="muted">O host remoto deve usar HTTPS, um endereço acessível e contas individuais. Uma VPN privada também permite acesso autorizado ao servidor sem publicar o painel diretamente.</p><p class="footnote">Salvar um endereço não publica o servidor nem abre portas no roteador. A configuração da hospedagem e do acesso externo é feita separadamente.</p></article>
+}
+@code {
+    private HostProfile Profile = new();
+    [SupplyParameterFromQuery(Name = "result")] public string? Result { get; set; }
+    [SupplyParameterFromQuery(Name = "saved")] public string? Saved { get; set; }
+    [SupplyParameterFromQuery(Name = "test")] public string? Test { get; set; }
+    [SupplyParameterFromQuery(Name = "error")] public string? Error { get; set; }
+    private sealed record AgentEndpoint(string Label, string Url);
+    private List<AgentEndpoint> AgentEndpoints = [];
+    private string AgentCommand = "";
+    private int Port = 3000;
+    private bool BehindProxy;
+    private bool LanHttp;
+    protected override void OnInitialized()
+    {
+        Profile = Profiles.Load();
+        if (!OperatingSystem.IsLinux()) return;
+        // What the running host bound; netinventoryctl changes it in backend.env and restarts the service.
+        var bound = (Server.Features.Get<Microsoft.AspNetCore.Hosting.Server.Features.IServerAddressesFeature>()?.Addresses ?? [])
+            .Select(a => new Uri(a.Replace("://+", "://0.0.0.0").Replace("://*", "://0.0.0.0"))).ToList();
+        Port = bound.FirstOrDefault()?.Port ?? 3000;
+        LanHttp = Configuration.GetValue<bool>("Inventory:AllowPrivateLanHttp");
+        BehindProxy = bound.Count > 0 && bound.All(u => System.Net.IPAddress.TryParse(u.Host.Trim('[', ']'), out var ip) && System.Net.IPAddress.IsLoopback(ip));
+        // HTTP addresses only help the agents when the host accepts HTTP from the LAN.
+        var ports = LanHttp ? bound.Where(u => u.Scheme == "http" && u.Host is "0.0.0.0" or "[::]").Select(u => u.Port).Distinct().ToList() : [];
+        var advertised = Configuration["Inventory:AdvertisedAddress"];
+        if (!string.IsNullOrEmpty(advertised))
+            AgentEndpoints.AddRange(ports.Select(port => Uri.TryCreate($"http://{advertised}:{port}/", UriKind.Absolute, out var url) ? new AgentEndpoint("Anunciado", url.AbsoluteUri) : null).OfType<AgentEndpoint>());
+        else
+        {
+            var lan = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+                .Where(n => n.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
+                .SelectMany(n => n.GetIPProperties().UnicastAddresses).Select(a => a.Address)
+                .Where(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && NetworkPolicy.IsPrivate(a) && !System.Net.IPAddress.IsLoopback(a))
+                .Select(a => a.ToString()).Distinct().ToList();
+            AgentEndpoints.AddRange(ports.SelectMany(port => lan.Select(ip => new AgentEndpoint("Rede local", $"http://{ip}:{port}/"))));
+        }
+        if (Uri.TryCreate(Configuration["Inventory:PublicUrl"], UriKind.Absolute, out var publicUrl) && publicUrl.Scheme == "https")
+            AgentEndpoints.Add(new("HTTPS público", publicUrl.AbsoluteUri));
+        var first = AgentEndpoints.FirstOrDefault();
+        AgentCommand = first is null ? @".\scripts\Configure-Host.ps1 -ServerUrl https://SEU_DOMINIO/"
+            : first.Url.StartsWith("https://", StringComparison.Ordinal) ? $@".\scripts\Configure-Host.ps1 -ServerUrl {first.Url}"
+            : $@".\scripts\Configure-Host.ps1 -Address {new Uri(first.Url).Host} -Port {new Uri(first.Url).Port}";
+    }
+}

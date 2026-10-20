@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/NetInventory.Agent.Windows/NetInventory.Agent.Windows.csproj" />
+    <Project Path="src/NetInventory.Contracts/NetInventory.Contracts.csproj" />
+    <Project Path="src/NetInventory.Core/NetInventory.Core.csproj" />
+    <Project Path="src/NetInventory.Desktop/NetInventory.Desktop.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/NetInventory.Infrastructure/NetInventory.Infrastructure.csproj" />
+    <Project Path="src/NetInventory.Server.Host/NetInventory.Server.Host.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/NetInventory.Validation/NetInventory.Validation.csproj" />
+  </Folder>
+</Solution>

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, SendHorizontal, Trash2 } from "lucide-react";
 import { aiAsk } from "@/app/actions/ai-actions";
 import type { ChatMessage } from "@/lib/ai/features";
@@ -9,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { AiUnavailable, SimpleMarkdown, useAiAccess } from "./ai-common";
+import { useAssistantConversation } from "./assistant-conversation";
 
 const SUGGESTIONS = [
   "O que entrou na rede nas últimas 24 horas?",
@@ -19,11 +21,9 @@ const SUGGESTIONS = [
 
 /** Chat com a IA sobre a rede. A conversa fica só no navegador (não é salva). */
 export function AssistantChat() {
-  const { blocked } = useAiAccess();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [draft, setDraft] = useState("");
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { blocked, ready } = useAiAccess();
+  const { messages, setMessages, draft, setDraft, pending, setPending, error, setError } = useAssistantConversation();
+  const queryClient = useQueryClient();
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -32,16 +32,23 @@ export function AssistantChat() {
 
   async function send(text: string) {
     const question = text.trim();
-    if (!question || pending) return;
+    if (!question || pending || !ready) return;
     const next: ChatMessage[] = [...messages, { role: "user", content: question }];
     setMessages(next);
     setDraft("");
     setError(null);
     setPending(true);
-    const result = await aiAsk(next);
-    setPending(false);
-    if (!result.ok) return setError(result.error);
-    setMessages([...next, { role: "assistant", content: result.data }]);
+    try {
+      const result = await aiAsk(next);
+      if (!result.ok) return setError(result.error);
+      setMessages([...next, { role: "assistant", content: result.data }]);
+    } catch {
+      setError("Não foi possível concluir a consulta. Tente novamente.");
+    } finally {
+      setPending(false);
+      void queryClient.invalidateQueries({ queryKey: ["ai-usage"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai-provider-usage"] });
+    }
   }
 
   if (blocked) {
@@ -56,8 +63,8 @@ export function AssistantChat() {
 
   return (
     <Card className="flex min-h-[60vh] flex-col">
-      <CardContent className="flex flex-1 flex-col gap-4">
-        <div className="flex flex-1 flex-col gap-3 overflow-y-auto">
+      <CardContent className="flex min-w-0 flex-1 flex-col gap-4">
+        <div role="log" aria-label="Conversa com o assistente" aria-live="polite" className="flex max-h-[65vh] flex-1 flex-col gap-4 overflow-y-auto">
           {!messages.length && (
             <div className="flex flex-col gap-3 py-6">
               <p className="text-sm text-muted-foreground">
@@ -66,7 +73,7 @@ export function AssistantChat() {
               </p>
               <div className="flex flex-wrap gap-2">
                 {SUGGESTIONS.map((s) => (
-                  <Button key={s} variant="outline" size="sm" onClick={() => send(s)}>
+                  <Button key={s} variant="outline" size="sm" disabled={!ready || pending} className="h-auto min-h-8 whitespace-normal text-left" onClick={() => send(s)}>
                     {s}
                   </Button>
                 ))}
@@ -77,7 +84,7 @@ export function AssistantChat() {
             <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
               <div
                 className={cn(
-                  "max-w-[85%] rounded-2xl px-4 py-2.5",
+                  "max-w-[90%] break-words rounded-2xl px-4 py-3 sm:max-w-[85%]",
                   m.role === "user" ? "bg-primary text-primary-foreground" : "border bg-card",
                 )}
               >
@@ -101,12 +108,12 @@ export function AssistantChat() {
           }}
           className="flex items-center gap-2"
         >
-          <Input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Pergunte algo sobre a rede…" disabled={pending} maxLength={4000} />
-          <Button type="submit" size="icon" disabled={pending || !draft.trim()} aria-label="Enviar">
+          <Input aria-label="Sua pergunta sobre a rede" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Pergunte algo sobre a rede…" disabled={pending || !ready} maxLength={4000} />
+          <Button type="submit" size="icon" disabled={pending || !ready || !draft.trim()} aria-label="Enviar">
             <SendHorizontal className="h-4 w-4" />
           </Button>
           {!!messages.length && (
-            <Button type="button" variant="ghost" size="icon" onClick={() => setMessages([])} disabled={pending} aria-label="Limpar conversa">
+            <Button type="button" variant="ghost" size="icon" onClick={() => { setMessages([]); setError(null); }} disabled={pending} aria-label="Limpar conversa">
               <Trash2 className="h-4 w-4" />
             </Button>
           )}

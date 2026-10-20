@@ -46,6 +46,8 @@ export function AiSettingsCard() {
 
   const onStatus = (status: AiStatus) => {
     queryClient.setQueryData(["ai-status"], status);
+    void queryClient.invalidateQueries({ queryKey: ["ai-usage"] });
+    void queryClient.invalidateQueries({ queryKey: ["ai-provider-usage"] });
     setApiKey("");
   };
 
@@ -85,18 +87,18 @@ export function AiSettingsCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <SparklesIcon size={16} className="text-primary" />
-          Inteligência artificial
+          Configuração da IA
         </CardTitle>
         <CardDescription>
           Identificação de dispositivos, análise de segurança, resumo de eventos e assistente. IPs, MACs, hostnames e apelidos são
-          mascarados antes do envio; as chamadas só acontecem quando você clica e as respostas ficam em cache por 24 h.
+          mascarados antes do envio. As análises ficam em cache por 24 h; cada pergunta no chat consulta a IA novamente.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4 text-sm">
         {!ai ? (
           <p className="text-muted-foreground">Verificando…</p>
         ) : ai.configured ? (
-          <p>
+          <p className="break-words leading-relaxed">
             <span className="text-primary">● Ativa</span> — {ai.providerName}
             {ai.keyHint && (
               <>
@@ -124,16 +126,16 @@ export function AiSettingsCard() {
         )}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <Field label="Provedor" htmlFor="ai-provider" className="sm:w-48">
-              <SimpleSelect id="ai-provider" value={provider} onChange={changeProvider} options={PROVIDER_OPTIONS} className="sm:w-48" />
+          <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <Field label="Provedor" htmlFor="ai-provider" className="min-w-0">
+              <SimpleSelect id="ai-provider" value={provider} onChange={changeProvider} options={PROVIDER_OPTIONS} className="w-full sm:w-full" />
             </Field>
             <Field
               label={
                 !def.requiresApiKey ? "Chave da API (opcional)" : keepsCurrentKey ? "Nova chave (deixe vazio para manter)" : "Chave da API"
               }
               htmlFor="ai-key"
-              className="sm:flex-1"
+              className="min-w-0"
             >
               <Input
                 id="ai-key"
@@ -145,7 +147,7 @@ export function AiSettingsCard() {
                 className="font-mono"
               />
             </Field>
-            <Field label="Modelo" htmlFor="ai-model" className="sm:w-48">
+            <Field label="Modelo" htmlFor="ai-model" className="min-w-0 sm:col-span-2">
               <Input
                 id="ai-model"
                 value={model}
@@ -154,14 +156,6 @@ export function AiSettingsCard() {
                 className="font-mono"
               />
             </Field>
-            <Button
-              type="submit"
-              disabled={!ai || save.isPending || !model.trim() || (def.requiresApiKey && !apiKey.trim() && !keepsCurrentKey)}
-              className="w-fit"
-            >
-              {save.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {save.isPending ? "Testando…" : "Salvar"}
-            </Button>
           </div>
           {showBaseUrl && (
             <Field label="URL base da API" htmlFor="ai-base-url">
@@ -174,10 +168,18 @@ export function AiSettingsCard() {
               />
             </Field>
           )}
+          <Button
+            type="submit"
+            disabled={!ai || save.isPending || remove.isPending || !model.trim() || (def.requiresApiKey && !apiKey.trim() && !keepsCurrentKey)}
+            className="w-fit"
+          >
+            {save.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {save.isPending ? "Testando…" : "Salvar"}
+          </Button>
         </form>
 
         {ai?.configured && (
-          <Button variant="outline" onClick={() => remove.mutate()} disabled={remove.isPending} className="w-fit">
+          <Button variant="outline" onClick={() => remove.mutate()} disabled={remove.isPending || save.isPending} className="w-fit">
             Remover chave
           </Button>
         )}

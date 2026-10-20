@@ -1,0 +1,33 @@
+@inject IConfiguration Configuration
+@if (Devices.Length == 0)
+{
+    <div class="empty-state"><h3>Nenhum dispositivo encontrado</h3><p>Cadastre um agente ou ajuste o filtro de busca.</p></div>
+}
+else
+{
+    <div class="table-scroll"><table class="data-table">
+        <thead><tr><th scope="col">Dispositivo</th><th scope="col">Coleta</th><th scope="col">Endereço IP</th><th scope="col">Sistema operacional</th><th scope="col">Usuários</th><th scope="col">Amostra recebida</th></tr></thead>
+        <tbody>
+        @foreach (var device in Devices)
+        {
+            <tr>
+                <td><a class="device-link" href="@($"/console/devices/{device.AgentId}")">@(device.Latest?.Hostname ?? device.Label)<span class="table-detail">@InventoryPresentation.TypeLabel(device.Classification?.Type)</span></a></td>
+                <td><span class="badge @ConsoleDisplay.RecencyClass(device, Now)">@ConsoleDisplay.Recency(device, Now)</span><span class="table-detail">@ConsoleDisplay.Age(device.Latest?.CollectedAt, Now)</span></td>
+                <td class="mono">@Address(device)</td>
+                <td>@(device.Latest?.OperatingSystem?.Caption ?? "Aguardando coleta")<span class="table-detail">@(device.Latest?.OperatingSystem?.Build)</span></td>
+                <td>@Users(device)</td>
+                <td><span class="timestamp">@ConsoleDisplay.Date(device.ReceivedAt, Configuration)</span></td>
+            </tr>
+        }
+        </tbody>
+    </table></div>
+}
+@code {
+    [Parameter] public DeviceSnapshot[] Devices { get; set; } = [];
+    [Parameter] public DateTimeOffset Now { get; set; }
+    private static string Address(DeviceSnapshot device) => device.Latest is null ? "—" : string.Join(", ", device.Latest.Adapters.SelectMany(a => a.Addresses).Where(a => !a.Contains(':')).Distinct().Take(3)) is { Length: > 0 } result ? result : "Indisponível";
+    private static string Users(DeviceSnapshot device) => device.Latest is null ? "—" : device.Latest.SessionState != CollectionState.Observed ? ConsoleDisplay.Collection(device.Latest.SessionState) : device.Latest.Sessions.Length == 0 ? "Nenhuma sessão" : string.Join(", ", device.Latest.Sessions.Select(s => s.User).Distinct());
+}
+
+
+

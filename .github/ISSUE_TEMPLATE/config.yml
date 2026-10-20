@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Guia de contribuição
+    url: https://github.com/CFSJCODE/net-inventory-ia/blob/main/CONTRIBUTING.md
+    about: Leia antes de propor uma mudança ou começar uma implementação.
+  - name: Ajuda e suporte
+    url: https://github.com/CFSJCODE/net-inventory-ia/blob/main/SUPPORT.md
+    about: Consulte a documentação e escolha o canal adequado para sua dúvida.
+  - name: Reporte privado de segurança
+    url: https://github.com/douglaspiero/net-inventory-ia/security/advisories/new
+    about: Não publique vulnerabilidades como issues abertas.

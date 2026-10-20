@@ -34,6 +34,7 @@ export async function getEmailAlertConfig(): Promise<EmailAlertConfig> {
   cache = {
     ...DEFAULT_SETTINGS,
     ...stored,
+    mode: stored.mode === "critical" ? "critical" : "all",
     thresholds: { ...DEFAULT_SETTINGS.thresholds, ...stored.thresholds },
     apiKey: enc ? decrypt(enc) : null,
   };
@@ -74,8 +75,11 @@ export function normalizeSettings(input: EmailAlertSettings): EmailAlertSettings
       memPct: clamp(input.thresholds.memPct, 1, 100, d.memPct),
       tempC: clamp(input.thresholds.tempC, 20, 150, d.tempC),
       latencyMs: clamp(input.thresholds.latencyMs, 1, 10_000, d.latencyMs),
+      criticalLatencyMs: clamp(input.thresholds.criticalLatencyMs, 1, 60_000, d.criticalLatencyMs),
       lossPct: clamp(input.thresholds.lossPct, 1, 100, d.lossPct),
     },
+    // Compatibilidade: configurações antigas do perfil periódico passam ao modo completo por evento.
+    mode: input.mode === "critical" ? "critical" : "all",
     cooldownMinutes: clamp(input.cooldownMinutes, 0, 24 * 60, DEFAULT_SETTINGS.cooldownMinutes),
   };
 }

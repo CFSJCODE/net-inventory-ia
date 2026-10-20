@@ -1,0 +1,26 @@
+[Unit]
+Description=NetInventory .NET pilot backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=netinventory-pilot
+Group=netinventory-pilot
+WorkingDirectory=/opt/netinventory-pilot
+ExecStart=/usr/bin/dotnet /opt/netinventory-pilot/NetInventory.Server.Host.dll
+EnvironmentFile=/etc/netinventory-pilot/backend.env
+Environment=Inventory__DataDirectory=/var/lib/netinventory-pilot
+StateDirectory=netinventory-pilot
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/netinventory-pilot
+
+[Install]
+WantedBy=multi-user.target

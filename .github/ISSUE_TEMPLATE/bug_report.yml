@@ -1,0 +1,61 @@
+name: Relato de bug
+description: Informe um comportamento incorreto que possa ser reproduzido.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Antes de enviar, procure relatos existentes. Use valores fictícios para IP, MAC, hostname,
+        e-mail e demais dados da rede. Não anexe `.env`, banco local, logs integrais ou chaves.
+  - type: input
+    id: version
+    attributes:
+      label: Versão do NetInventory
+      placeholder: "Ex.: 0.2.x"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Ambiente
+      description: Versão do Windows e, se relevante, navegador ou tipo de instalação.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Passos para reproduzir
+      placeholder: |
+        1. Acesse ...
+        2. Selecione ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Resultado esperado
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Resultado observado
+    validations:
+      required: true
+  - type: textarea
+    id: sanitized-evidence
+    attributes:
+      label: Evidências sanitizadas
+      description: Inclua apenas mensagens relevantes após remover segredos e identificadores reais.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Confirmações
+      options:
+        - label: Procurei issues existentes e este relato não parece duplicado.
+          required: true
+        - label: Revisei e removi informações pessoais, dados reais da rede e segredos.
+          required: true
