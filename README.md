@@ -32,6 +32,8 @@
 
 <p align="center"><em>Local network inventory, topology map, SNMP equipment and link monitoring with an AI assistant — free and open source.</em></p>
 
+> **Sobre este repositório:** Este projeto ([`CFSJCODE/net-inventory-ia`](https://github.com/CFSJCODE/net-inventory-ia)) é uma versão amplamente modificada e expandida por **[Cláudio Francisco Dos Santos Júnior (@CFSJCODE)](https://github.com/CFSJCODE)** a partir do repositório original [`douglaspiero/net-inventory-ia`](https://github.com/douglaspiero/net-inventory-ia), criado por **[Douglas Piero](https://www.linkedin.com/in/douglaspiero/)** sob a [Licença MIT](LICENSE). Consulte a seção [Licença e autor](#licença-e-autor) para os créditos obrigatórios e a lista de novas implementações.
+
 ![Inventário de rede do NetInventory](site/screens/inventario.webp)
 
 ## Sumário
@@ -441,7 +443,22 @@ Sugestões e contribuições são bem-vindas: abra uma [issue](https://github.co
 
 ## Licença e autor
 
-[MIT](LICENSE) © 2026 **[Douglas Piero](https://www.linkedin.com/in/douglaspiero/)**, criador e desenvolvedor do NetInventory.
+Distribuído sob a licença **[MIT](LICENSE)**, mantendo integralmente a licença e os avisos obrigatórios de direitos autorais exigidos pelo autor original:
+
+- **Projeto e base original ([`douglaspiero/net-inventory-ia`](https://github.com/douglaspiero/net-inventory-ia)):** [MIT](LICENSE) © 2026 **[Douglas Piero](https://www.linkedin.com/in/douglaspiero/)**, criador e desenvolvedor original do NetInventory.
+- **Amplas modificações, expansões e implementação de novos recursos ([`CFSJCODE/net-inventory-ia`](https://github.com/CFSJCODE/net-inventory-ia)):** [MIT](LICENSE) © 2026 **[Cláudio Francisco Dos Santos Júnior (@CFSJCODE)](https://github.com/CFSJCODE)** — responsável por todas as adições, evoluções arquiteturais e implementações de novos recursos neste repositório.
+
+### Adições e novos recursos implementados por Cláudio (@CFSJCODE)
+
+Sobre a base original do projeto, todas as ampliações e novas funcionalidades deste repositório foram desenvolvidas e implementadas por **[Cláudio Francisco Dos Santos Júnior (@CFSJCODE)](https://github.com/CFSJCODE)**, incluindo:
+
+- **Modo Servidor (Ubuntu Server) e Agente Windows (.NET 10):** host `ASP.NET Core` (`netinventory-dotnet.service` e CLI `netinventoryctl`) com suporte a Linux e Windows, e agente instalável para Windows (`NetInventoryDotNetAgent` + aplicativo desktop) com coleta contínua de SO, usuário logado, hardware, sensores, armazenamento, rede e sessões via convite de uso único.
+- **Módulo de Equipamentos SNMP (`/equipment` e `/equipment/[id]`):** cadastro e monitoramento de switches, roteadores e impressoras gerenciáveis com SNMP v1, v2c e v3 (`authNoPriv` MD5/SHA com credenciais criptografadas), leitura automática agendada, métricas de hardware (CPU, memória, temperatura, ventoinhas e fontes via MIBs padrão e HH3C), painel de portas em tempo real com detalhes por porta e níveis de suprimentos de impressoras (Printer-MIB).
+- **Topologia real via SNMP e mapeamento de portas:** posicionamento automático de dispositivos, switches e clientes Wi-Fi/APs pela tabela FDB/MAC do switch, exibição da porta do switch nos rótulos das ligações com dicas detalhadas, vínculo manual *"Conectado a"* e identificação de *"esta máquina"* por MAC em hosts com múltiplas interfaces.
+- **Alertas por e-mail (Resend):** monitoramento ativo com máquina de estados, confirmação por leituras seguidas, intervalo mínimo entre avisos (*cooldown*), fila persistente no banco, alertas de queda/degradação e limites de CPU, memória e temperatura, notificações de recuperação e envio de e-mail de teste.
+- **IA multi-provedor:** suporte a Google Gemini, OpenRouter, Groq, Ollama e servidores compatíveis com a API da OpenAI (além do suporte original à OpenAI), com melhorias nos prompts de classificação.
+- **Evoluções no Scan e no Inventário:** continuidade de cadastro pelo endereço MAC (preservando histórico, apelido e vínculos ao mudar de IP e mesclando duplicados), detecção de hosts que bloqueiam ping via sondagem TCP (*TCP liveness probe*), descoberta por mDNS e resolução aprimorada de hostnames no Windows, categorias `SMART_TV`, `IOT` e `DVR/NVR`, regras de classificação por IP, bloqueio de tipo individual/em lote, lista de IPs ignorados e prévia ao vivo da faixa CIDR.
+- **Automação de Build, Release e Atualização:** workflow de GitHub Actions ([`release.yml`](.github/workflows/release.yml)) para compilação e publicação automática do instalador `.exe` (Inno Setup) com hash SHA-256 nas Releases, encerramento automático de processos antigos durante o upgrade e scripts de atualização rápida do serviço local ([`scripts/windows/`](scripts/windows/)).
 
 ## Estrutura do projeto
 
