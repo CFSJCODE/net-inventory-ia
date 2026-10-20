@@ -1,4 +1,4 @@
-﻿[CmdletBinding(DefaultParameterSetName='Local')]
+[CmdletBinding(DefaultParameterSetName='Local')]
 param(
     [Parameter(Mandatory=$true, ParameterSetName='Local')][switch]$Local,
     [Parameter(ParameterSetName='Local')][Parameter(ParameterSetName='Host')][ValidateRange(1,65535)][int]$Port=3000,

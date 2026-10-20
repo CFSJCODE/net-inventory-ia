@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([string]$OriginalUserSid, [switch]$Unified, [string]$DiagnosticPath)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Legacy-Migration-Common.ps1')

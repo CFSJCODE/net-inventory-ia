@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 function Set-InventoryPrivateDirectory([string]$Path) {
     New-Item -ItemType Directory -Path $Path -Force | Out-Null
     $taskAcl = New-Object System.Security.AccessControl.DirectorySecurity

@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([Security.SecureString]$InvitationToken)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Profile-Common.ps1')
