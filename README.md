@@ -12,14 +12,15 @@
 <p align="center">
   <a href="https://github.com/CFSJCODE/net-inventory-ia/releases/latest"><img alt="Download" src="https://img.shields.io/github/v/release/CFSJCODE/net-inventory-ia?label=download&logo=windows&color=22c55e"></a>
   <a href="https://github.com/CFSJCODE/net-inventory-ia/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/CFSJCODE/net-inventory-ia/total?label=downloads&color=22c55e"></a>
-  <a href="https://github.com/CFSJCODE/net-inventory-ia/actions/workflows/release.yml"><img alt="Release Windows Installer" src="https://github.com/CFSJCODE/net-inventory-ia/actions/workflows/release.yml/badge.svg"></a>
+  <a href="https://github.com/CFSJCODE/net-inventory-ia/actions/workflows/release.yml"><img alt="Release Windows Installer" src="https://img.shields.io/github/actions/workflow/status/CFSJCODE/net-inventory-ia/release.yml?label=release"></a>
   <a href="https://github.com/CFSJCODE/net-inventory-ia/commits/main"><img alt="Último commit" src="https://img.shields.io/github/last-commit/CFSJCODE/net-inventory-ia/main?label=%C3%BAltimo%20commit"></a>
   <a href="LICENSE"><img alt="Licença MIT" src="https://img.shields.io/badge/licen%C3%A7a-MIT-blue"></a>
 </p>
 
 <p align="center">
   <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows">
-  <img alt="Instalador .exe" src="https://img.shields.io/badge/instalador-.exe%20%28Inno%20Setup%29-0078D6">
+  <img alt="Ubuntu Server" src="https://img.shields.io/badge/Ubuntu_Server-22.04%20%7C%2024.04-E95420?logo=ubuntu&logoColor=white">
+  <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet">
   <img alt="Next.js 15" src="https://img.shields.io/badge/Next.js-15-black?logo=nextdotjs">
   <img alt="React 19" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white">
@@ -32,7 +33,7 @@
 
 <p align="center"><em>Local network inventory, topology map, SNMP equipment and link monitoring with an AI assistant — free and open source.</em></p>
 
-> **Sobre este repositório:** Este projeto ([`CFSJCODE/net-inventory-ia`](https://github.com/CFSJCODE/net-inventory-ia)) é uma versão amplamente modificada e expandida por **[Cláudio Francisco Dos Santos Júnior (@CFSJCODE)](https://github.com/CFSJCODE)** a partir do repositório original [`douglaspiero/net-inventory-ia`](https://github.com/douglaspiero/net-inventory-ia), criado por **[Douglas Piero](https://www.linkedin.com/in/douglaspiero/)** sob a [Licença MIT](LICENSE). Consulte a seção [Licença e autor](#licença-e-autor) para os créditos obrigatórios e a lista de novas implementações.
+> **Sobre este repositório:** Versão expandida por **[Cláudio Francisco Dos Santos Júnior (@CFSJCODE)](https://github.com/CFSJCODE)** a partir do projeto original [`douglaspiero/net-inventory-ia`](https://github.com/douglaspiero/net-inventory-ia), criado por **[Douglas Piero](https://www.linkedin.com/in/douglaspiero/)** sob a [Licença MIT](LICENSE). Todos os novos recursos e expansões foram implementados por Cláudio (@CFSJCODE) — detalhes em [Licença e autor](#licença-e-autor).
 
 ![Inventário de rede do NetInventory](site/screens/inventario.webp)
 
@@ -55,26 +56,29 @@
 
 ## Download do instalador para Windows (.exe)
 
-O instalador **não fica versionado no Git** (as pastas `installer/output/` e `installer/dist/` estão no `.gitignore`). Ele é gerado pelo workflow [`release.yml`](.github/workflows/release.yml) a cada tag `v*` e publicado como anexo da Release no GitHub.
+Os instaladores **não ficam versionados no Git** (as pastas `installer/output/`, `installer/dist/` e `dotnet/.artifacts/` estão no `.gitignore`). Eles ficam publicados na aba [Releases](https://github.com/CFSJCODE/net-inventory-ia/releases) do GitHub.
 
-| Versão atual | Arquivo | Tamanho | SHA-256 |
-|---|---|---|---|
-| [v0.2.10](https://github.com/CFSJCODE/net-inventory-ia/releases/tag/v0.2.10) | [`NetInventory-Setup-0.2.10.exe`](https://github.com/CFSJCODE/net-inventory-ia/releases/download/v0.2.10/NetInventory-Setup-0.2.10.exe) | 43 MB | `eac8ec36032ef1105dba1aad3b0ade1f0f725af360e2d011ca78aaa92974f383` |
+| Pacote | Versão | Arquivo | Tamanho | SHA-256 |
+|---|---|---|---|---|
+| **NetInventory (Painel / Serviço Windows)** | [v0.2.23](https://github.com/CFSJCODE/net-inventory-ia/releases/tag/v0.2.23) | [`NetInventory-Setup-0.2.23.exe`](https://github.com/CFSJCODE/net-inventory-ia/releases/download/v0.2.23/NetInventory-Setup-0.2.23.exe) | 255 MB | `052e9bd565b8b9e9dfe757f01e715061277b5043bb916632a02d81b247ade469` |
+| **NetInventory (Rev. compatível com Host .NET)** | [v0.2.23](https://github.com/CFSJCODE/net-inventory-ia/releases/tag/v0.2.23) | [`NetInventory-Setup-0.2.23-r2.exe`](https://github.com/CFSJCODE/net-inventory-ia/releases/download/v0.2.23/NetInventory-Setup-0.2.23-r2.exe) | 255 MB | `41b92c7394f842f7bfa0a47c6ad7db1e8b3ecaa74c1de20a40c88147eefb5844` |
+| **NetInventory Agente Windows (.NET 10)** | [v0.2.23](https://github.com/CFSJCODE/net-inventory-ia/releases/tag/v0.2.23) | [`NetInventory-Agente-Setup.exe`](https://github.com/CFSJCODE/net-inventory-ia/releases/download/v0.2.23/NetInventory-Agente-Setup.exe) | 160 MB | `0cbec4fee4bd94aa469da25d34c5b643006a32fed91c7bd856106edc3566e25a` |
 
 Confira o hash antes de instalar (PowerShell):
 
 ```powershell
-Get-FileHash .\NetInventory-Setup-0.2.10.exe -Algorithm SHA256
+Get-FileHash .\NetInventory-Setup-0.2.23.exe -Algorithm SHA256
+Get-FileHash .\NetInventory-Agente-Setup.exe -Algorithm SHA256
 ```
 
 Versões anteriores ficam em [Releases](https://github.com/CFSJCODE/net-inventory-ia/releases).
 
 ## O que ele faz
 
-O NetInventory roda como serviço em um computador da sua rede e mostra, num painel web acessível de qualquer navegador da rede:
+O NetInventory roda como serviço em um computador ou servidor da sua rede e mostra, num painel web acessível de qualquer navegador da LAN:
 
-- **Inventário automático**: scans manuais ou agendados (5, 15, 30 ou 60 minutos) descobrem cada dispositivo com IPv4, IPv6, MAC, fabricante, hostname e portas abertas, e classificam o tipo (computador, notebook, celular, impressora, câmera, DVR/NVR, switch, roteador, servidor, Smart TV, IoT).
-- **Equipamentos SNMP**: cadastro de switches, roteadores e impressoras gerenciáveis com SNMP v1, v2c ou v3 (MD5/SHA). Mostra CPU, memória, temperatura, ventoinhas, fontes, estado de cada porta e, nas impressoras, os suprimentos (Printer-MIB).
+- **Inventário automático**: scans manuais ou agendados (5, 15, 30 ou 60 minutos) descobrem cada dispositivo com IPv4, IPv6, MAC, fabricante, hostname e portas abertas, preservam o cadastro pelo MAC mesmo quando o IP muda e classificam o tipo (computador, notebook, celular, impressora, câmera, DVR/NVR, switch, roteador, servidor, Smart TV, IoT).
+- **Equipamentos SNMP e HTTP/Nest**: cadastro de switches, roteadores, impressoras e dispositivos HTTP/HTTPS com SNMP v1, v2c ou v3 (MD5/SHA, authNoPriv/authPriv). Mostra CPU, memória, temperatura, ventoinhas, fontes, estado de cada porta, suprimentos de impressoras (Printer-MIB) e telemetria de dispositivos Google Nest (`/setup/eureka_info`).
 - **Mapa da topologia**: a rede desenhada a partir do gateway, com descoberta de ligações reais via SNMP (tabela de MACs do switch) e posições que você arrasta e ficam salvas.
 - **Ligações monitoradas**: cada link importante é testado a cada 30 segundos e só é declarado caído após 2 falhas seguidas; caiu, fica vermelho no mapa e vai para o histórico.
 - **Histórico e alertas**: dispositivos novos, mudanças de IP e hostname, quedas e retornos, com notificações no navegador e alertas por e-mail (Resend) para equipamento fora do ar, desempenho degradado e CPU, memória ou temperatura acima do limite.
@@ -109,9 +113,7 @@ Como as peças se encaixam no modo servidor:
  Navegador de qualquer PC da LAN ──────────────────▶ └─ SQLite em /var/lib/netinventory-dotnet
 ```
 
-O host .NET serve o painel original (o mesmo visual e as mesmas telas descritas abaixo) e acrescenta o grupo **Servidor** no menu lateral (Agentes, Conexão, Host e Segurança). O motor Node.js do painel roda como processo filho do host, escutando somente em `127.0.0.1:3001`, e os dois usam um único banco SQLite. O scan da rede é feito pelo host, então no modo servidor ele enxerga a rede onde o Ubuntu está.
-
-> **Situação do código:** o host .NET, o agente Windows e os scripts de implantação citados abaixo (pasta `dotnet/`) foram desenvolvidos e testados no PC do autor (Ubuntu Server 24.04 numa VM VirtualBox, IP fixo `192.168.0.50`) e ainda serão enviados a este repositório. Até lá, o instalador publicado em Releases é o do NetInventory original (seção [Instalação (Windows)](#instalação-windows)).
+O host .NET ([`dotnet/`](dotnet/)) serve o painel original e acrescenta o grupo **Servidor** no menu lateral (Agentes, Conexão, Host e Segurança). O motor Node.js do painel roda como processo filho do host, escutando somente em `127.0.0.1:3001`, e os dois usam um único banco SQLite. O scan da rede é feito pelo host, então no modo servidor ele enxerga a rede onde o Ubuntu está.
 
 ## Modo servidor: instalar o host no Ubuntu Server
 
@@ -147,7 +149,7 @@ sudo apt install -y iputils-ping net-tools sqlite3 curl xz-utils npm openssl ufw
 
 ### 2. No Windows: preparar os arquivos
 
-Na pasta `dotnet` do repositório, publique o host para Linux:
+Na pasta [`dotnet`](dotnet/) do repositório, publique o host para Linux:
 
 ```powershell
 dotnet publish .\src\NetInventory.Server.Host\NetInventory.Server.Host.csproj -c Release -r linux-x64 --self-contained true -o D:\migracao\linux-x64-host
@@ -245,7 +247,7 @@ Ou pelo painel, em **Servidor › Agentes**: gere um convite para um PC novo, ou
 
 ### Instalar
 
-1. Baixe o `NetInventory-Agente-Setup.exe` (cerca de 160 MB, *self-contained*: não precisa instalar .NET). Enquanto ele não estiver anexado às Releases, gere-o na pasta `dotnet` com `.\scripts\Build-AgentSetup.ps1` (saída em `dotnet\.artifacts\setup\`).
+1. Baixe o [`NetInventory-Agente-Setup.exe`](https://github.com/CFSJCODE/net-inventory-ia/releases/download/v0.2.23/NetInventory-Agente-Setup.exe) em **[Releases](https://github.com/CFSJCODE/net-inventory-ia/releases/latest)** (~160 MB, *self-contained*: não precisa instalar .NET). Para compilar localmente a partir do código-fonte, execute `.\scripts\Build-AgentSetup.ps1` na pasta [`dotnet`](dotnet/).
 2. Execute e aceite o pedido de administrador. A tela **Instalar o NetInventory Agente** pede o destino das coletas:
 
 | Campo | Modo local | Modo servidor |
@@ -274,20 +276,21 @@ O instalador registra o serviço `NetInventoryDotNetAgent` com início automáti
 |---|---|---|---|
 | Inventário | `/` | Lista, filtra e ordena os dispositivos; dispara o scan; identificação em lote com IA | `src/components/device-inventory.tsx`, `device-table.tsx`, `device-filters.tsx` |
 | Dispositivo | `/devices/[id]` | Detalhes, portas, identidade (nome, tipo, uplink) e diagnóstico de segurança com IA | `src/components/device-identity-card.tsx`, `ai/device-security-card.tsx` |
-| Equipamentos | `/equipment` | Cadastro SNMP e leitura automática no intervalo escolhido | `src/components/equipment/`, `src/lib/network/equipment-status.ts` |
-| Detalhe do equipamento | `/equipment/[id]` | Hardware, portas em tempo real e suprimentos de impressora | `equipment-status-panel.tsx`, `port-popover.tsx` |
+| Equipamentos | `/equipment` | Cadastro SNMP/HTTP e leitura automática no intervalo escolhido | `src/components/equipment/`, `src/lib/network/equipment-status.ts` |
+| Detalhe do equipamento | `/equipment/[id]` | Hardware, portas em tempo real, suprimentos de impressora e painel Nest/HTTP | `equipment-status-panel.tsx`, `port-popover.tsx`, `nest-monitoring-panel.tsx` |
 | Topologia | `/topology` | Mapa arrastável com ligações descobertas ou presumidas | `src/components/topology/topology-view.tsx`, `src/lib/topology-layout.ts` |
 | Ligações | `/topology/links` | Links monitorados, latência e estado | `topology/links-panel.tsx`, `src/lib/network/link-monitor.ts` |
 | Histórico | `/history` | Linha do tempo de eventos com resumo de 24 h ou 7 dias pela IA | `ai/ai-summary-card.tsx`, modelo `DeviceEvent` |
-| Assistente | `/assistant` | Chat em português que consulta inventário, histórico e ligações | `ai/assistant-chat.tsx`, `src/lib/ai/features.ts` |
+| Alertas | `/alerts` | Configuração e estado dos alertas críticos e notificações por e-mail (Resend) | `src/app/alerts/page.tsx`, `src/components/email-alerts-card.tsx` |
+| Assistente | `/assistant` | Chat em português, consumo/limites de tokens e configuração da IA | `ai/assistant-chat.tsx`, `ai/ai-usage-panel.tsx`, `ai/ai-settings-card.tsx` |
 | Ferramentas | `/tools` | ARP scan, port scan, SNMP, WoL, DHCP, DNS, ARP, rotas e auditoria | `src/components/tools/`, `src/lib/network/tools/` |
-| Configurações | `/settings` | Faixa e agenda do scan, regras e IPs ignorados, IA, e-mails de alerta, limpeza | `settings-form.tsx`, `ip-rules-card.tsx`, `ignored-ips-card.tsx`, `email-alerts-card.tsx` |
+| Configurações | `/settings` | Faixa e agenda do scan, regras e IPs ignorados, limpeza | `settings-form.tsx`, `ip-rules-card.tsx`, `ignored-ips-card.tsx` |
 | Usuários | `/users` | Criar, desativar, mudar perfil e redefinir senha | `src/components/users/users-manager.tsx` |
 | Minha conta | `/account` | Troca da própria senha | `account/change-password-card.tsx` |
 
 ## A IA trabalhando na administração da rede
 
-A IA é opcional e configurada pela interface, em **Configurações**. Provedores suportados ([`src/lib/ai/providers.ts`](src/lib/ai/providers.ts)):
+Com um provedor de IA configurado (opcional), o NetInventory ganha um analista de rede. Provedores suportados ([`src/lib/ai/providers.ts`](src/lib/ai/providers.ts)):
 
 | Provedor | Observação |
 |---|---|
@@ -298,7 +301,7 @@ A IA é opcional e configurada pela interface, em **Configurações**. Provedore
 | OpenAI | GPT-4o Mini, GPT-4o e família GPT-5 |
 | Personalizado | Qualquer servidor compatível com a API da OpenAI (LM Studio, LocalAI, vLLM…) |
 
-Com ela, o NetInventory ganha um analista de rede:
+Recursos:
 
 - **Assistente em português**: "o que entrou na rede nas últimas 24 horas?", "quais dispositivos têm portas arriscadas?". Ele consulta inventário, histórico e ligações (function calling) antes de responder.
 - **Identificação de dispositivos**: sugere nome e tipo para aparelhos desconhecidos a partir de fabricante, portas e tipo de MAC, com o nível de confiança.
@@ -309,15 +312,21 @@ Com ela, o NetInventory ganha um analista de rede:
 |---|---|
 | ![Assistente IA](site/screens/ai-assistant.webp) | ![Identificação com IA](site/screens/ai-identify.webp) |
 
-**Privacidade:** IPs, MACs, hostnames e apelidos são substituídos por marcadores (`ip-1`, `dispositivo-1`…) **antes** de qualquer envio e restaurados na resposta ([`src/lib/ai/redact.ts`](src/lib/ai/redact.ts)). As chamadas só acontecem quando você clica e as respostas ficam em cache por 24 h ([`src/lib/ai/client.ts`](src/lib/ai/client.ts)). A chave fica criptografada (AES-256-GCM) no banco e nunca volta ao navegador.
+O menu **Assistente** reúne três submenus:
+
+- **Configuração da IA:** provedor, chave, modelo e URL para endpoints locais ou personalizados. Somente administradores alteram essas opções.
+- **Uso e limites:** consumo local por período, tokens de entrada/saída, chamadas, falhas, custo informado, tempo médio, cache e consumo por recurso/modelo. Administradores também consultam créditos e limites disponíveis no OpenRouter ([`docs/assistente-ia.md`](docs/assistente-ia.md)).
+- **Chat:** conversa sobre a rede, mantida na memória do navegador ao alternar entre os submenus.
+
+**Privacidade:** IPs, MACs, hostnames e apelidos são substituídos por marcadores (`ip-1`, `dispositivo-1`…) **antes** de qualquer envio e restaurados na resposta ([`src/lib/ai/redact.ts`](src/lib/ai/redact.ts)). As chamadas de análise e chat são iniciadas pelo usuário; análises ficam em cache por 24 h ([`src/lib/ai/client.ts`](src/lib/ai/client.ts)). A chave fica criptografada (AES-256-GCM) no banco e nunca volta ao navegador. A coleta de consumo guarda somente metadados, sem perguntas, respostas ou credenciais.
 
 ## Instalação (Windows)
 
 1. Baixe o instalador em **[Releases](https://github.com/CFSJCODE/net-inventory-ia/releases/latest)** e confira o SHA-256 publicado.
 2. Execute num computador que fique ligado e esteja na rede que será monitorada. Sem assinatura digital, o Windows mostra o aviso do SmartScreen: **Mais informações → Executar assim mesmo**.
 3. Abra `http://localhost:3000` (ou `http://IP-do-computador:3000` de outra máquina) e crie o administrador.
-4. Em **Configurações → Scan da rede**, informe a faixa da sua rede. Descubra com `ipconfig`: IPv4 `192.168.0.25` e máscara `255.255.255.0` resultam em `192.168.0.0/24`.
-5. Opcional: configure um provedor de IA quando o app pedir (ou em Configurações).
+4. Em **Configurações → Scan da rede**, informe a faixa da sua rede (`ipconfig`: IPv4 `192.168.0.25` e máscara `255.255.255.0` → `192.168.0.0/24`).
+5. Opcional: configure um provedor de IA quando o app pedir (ou em **Assistente → Configuração da IA**).
 
 O instalador traz tudo embutido (Node.js, banco SQLite, migrações), registra o serviço **NetInventory** (inicia com o Windows e reinicia sozinho), cria atalhos no menu Iniciar e libera a porta 3000 no firewall para redes privadas e de domínio. Os dados ficam em `C:\ProgramData\NetInventory` (banco `netinventory.db`, `config.json` e logs) e são mantidos em atualizações.
 
@@ -349,7 +358,7 @@ flowchart LR
       AM["alert-monitor"] --> R["Resend (e-mail)"]
     end
     SC -->|ping, ARP, DNS, NetBIOS, mDNS, portas| LAN["Rede local"]
-    N -->|SNMP| EQ["Switches, roteadores, impressoras"]
+    N -->|SNMP / HTTP| EQ["Switches, roteadores, impressoras, Nest"]
     N -->|dados anonimizados| IA["Provedor de IA"]
     B["Navegadores da rede"] --> N
 ```
@@ -359,33 +368,33 @@ flowchart LR
 Módulo em `src/lib/network/`:
 
 1. **`subnet.ts`**: expande o CIDR configurado na lista de IPs (limite de 4096 endereços por scan).
-2. **`ping.ts`**: ping sweep concorrente para descobrir hosts ativos.
+2. **`ping.ts`**: ping sweep concorrente e sondagem TCP para descobrir hosts ativos (mesmo os que bloqueiam ICMP).
 3. **`arp.ts`**: lê a tabela ARP do sistema para obter os MACs.
 4. **`dns.ts`** e **`mdns.ts`**: hostname por DNS reverso, NetBIOS (`nbtstat`, no Windows) e mDNS.
 5. **`oui-data.ts`** + **`vendor-lookup.ts`**: fabricante pelo MAC, com tabela local primeiro e, se faltar, a API gratuita [macvendors.com](https://macvendors.com) (uma requisição por vez, com cache).
 6. **`port-scan.ts`**: portas TCP comuns (22, 80, 443, 445, 3389, 631, 9100…).
-7. **`classify.ts`** + **`ip-rules.ts`**: tipo pela heurística de fabricante, hostname e portas, ou pela regra de IP que você definiu.
+7. **`classify.ts`** + **`ip-rules.ts`**: tipo pela heurística de fabricante, hostname e portas, ou pela regra de IP definida.
 8. **`ignored-ips.ts`**: descarta os IPs ignorados antes de gravar.
 
-O resultado é persistido por `src/lib/scan-service.ts`, que compara com o estado anterior e registra em `DeviceEvent` cada novo dispositivo, mudança de IP/hostname ou transição online/offline.
+O resultado é persistido por [`src/lib/scan-service.ts`](src/lib/scan-service.ts), que identifica o aparelho pelo MAC (atualizando o IP no mesmo cadastro e mesclando duplicados), compara com o estado anterior e registra em `DeviceEvent` cada novo dispositivo, mudança de IP/hostname ou transição online/offline.
 
-### Equipamentos SNMP e alertas
+### Equipamentos SNMP/HTTP e alertas
 
-- `src/lib/network/equipment-status.ts` lê MIBs padrão (IF-MIB, Printer-MIB) e a HH3C (CPU, memória, temperatura, ventoinhas e fontes, testada no HP V1910-24G). A tabela de MACs do switch (`switch-fdb.ts`) alimenta a topologia real.
-- Usuário e senha SNMPv3 ficam criptografados no banco.
-- `src/lib/alerts/rules.ts` é uma máquina de estados pura: só alerta depois de algumas checagens seguidas com problema e respeita um intervalo mínimo entre e-mails, para um pico isolado não virar alerta. Os e-mails passam por uma fila guardada no banco (`alert-monitor.ts`).
+- `src/lib/network/equipment-status.ts`, `endpoint-monitoring.ts` e `nest-telemetry.ts` leem MIBs padrão (IF-MIB, Printer-MIB), HH3C (CPU, memória, temperatura, ventoinhas e fontes) e endpoints HTTP/JSON (incluindo Google Nest). A tabela de MACs do switch (`switch-fdb.ts`) alimenta a topologia real.
+- Credenciais SNMPv3 (autenticação MD5/SHA e privacidade DES/AES) ficam criptografadas no banco.
+- `src/lib/alerts/rules.ts` é uma máquina de estados pura: só alerta depois de checagens seguidas com problema e respeita o intervalo mínimo entre e-mails. Os e-mails passam por uma fila guardada no banco (`alert-monitor.ts`).
 
 ### Banco de dados
 
-Prisma com SQLite ([`prisma/schema.prisma`](prisma/schema.prisma)). Modelos: `Device`, `DeviceEvent`, `ScanConfig`, `ScanRun`, `TopologyLink`, `MapPosition`, `User`, `AiCache`, `AiSummary`, `AppSetting` e `Equipment`. No app instalado, o `launcher.cjs` aplica as migrações com `node:sqlite`, compatível com a tabela `_prisma_migrations` do Prisma.
+Prisma com SQLite ([`prisma/schema.prisma`](prisma/schema.prisma)). Modelos: `Device`, `DeviceEvent`, `ScanConfig`, `ScanRun`, `TopologyLink`, `MapPosition`, `User`, `AiCache`, `AiSummary`, `AiUsage`, `AppSetting` e `Equipment`. No app instalado, o `launcher.cjs` aplica as migrações com `node:sqlite`, compatível com a tabela `_prisma_migrations` do Prisma.
 
 ## Desenvolvimento
 
-Requisitos: Node.js 22 ou mais novo (testado no 24) e Windows (os scans usam `ping`, `arp` e `nbtstat` do sistema; partes funcionam em Linux).
+Requisitos: Node.js 22 ou mais novo (testado no 24), SDK .NET 10 (para o host/agente em `dotnet/`) e Windows (os scans usam `ping`, `arp` e `nbtstat` do sistema; o modo servidor roda em Ubuntu Server).
 
 ```bash
 npm install
-cp config/env.example .env          # Bash/Git Bash; no PowerShell use: Copy-Item config/env.example .env
+cp config/env.example .env          # no PowerShell: Copy-Item config/env.example .env
 # preencha AUTH_SECRET (o comando para gerar está no arquivo)
 npx prisma migrate dev        # cria o banco SQLite local (prisma/dev.db)
 npm run dev                   # http://localhost:3000
@@ -402,6 +411,7 @@ npm run dev                   # http://localhost:3000
 ### Stack
 
 - **Next.js 15** (App Router, Server Actions), **React 19**, **TypeScript**, **Tailwind CSS v4**, shadcn/ui, TanStack Query, Zustand
+- **.NET 10** (ASP.NET Core Host, Blazor, Windows Worker Service Agent e WinUI 3 Desktop em [`dotnet/`](dotnet/))
 - **Prisma** + **SQLite**
 - **net-snmp** para SNMP v1/v2c/v3
 - SDK `openai` usado com qualquer provedor compatível (Structured Outputs e function calling)
@@ -419,47 +429,44 @@ npx prisma generate
 npm run build:installer
 ```
 
-O [`installer/build.mjs`](installer/build.mjs) faz o build *standalone* do Next numa pasta separada (`.next-installer`, sem conflitar com o `next dev`), embute o `node.exe` (com hash conferido) e o WinSW para o serviço, e compila [`installer/netinventory.iss`](installer/netinventory.iss). A versão vem do `package.json`.
+Para gerar o instalador do **Agente Windows** (`NetInventory-Agente-Setup.exe`):
+
+```powershell
+cd dotnet
+.\scripts\Build-AgentSetup.ps1
+```
 
 ### Pelo GitHub Actions
 
 1. Atualize `version` no `package.json` e faça o merge no `main`.
-2. Crie e envie a tag: `git tag v0.2.11 && git push origin v0.2.11`.
-3. O workflow [`release.yml`](.github/workflows/release.yml) roda em `windows-latest`: instala o Inno Setup, executa os testes, gera o `.exe` e o anexa à Release com notas automáticas. Também pode ser disparado manualmente (`workflow_dispatch`).
+2. Crie e envie a tag (ex.: `git tag v0.2.23 && git push origin v0.2.23`).
+3. O workflow [`release.yml`](.github/workflows/release.yml) roda em `windows-latest`: executa os testes e publica o instalador na Release correspondente (ou mantém os artefatos já anexados na Release).
 
-Também é possível criar um workflow semelhante para o host .NET e o agente: compilar o `NetInventory-Agente-Setup.exe` (e o pacote `linux-x64` do host) num runner do GitHub e anexar a pasta gerada em `.zip` à Release, para que o guia acima comece direto pelo download.
-
-Para atualizar um serviço já instalado com um build local, sem gerar instalador, há os scripts em [`scripts/windows/`](scripts/windows/) (`update.bat` pede privilégio de administrador e chama `update-service.ps1`).
+Para atualizar um serviço já instalado com um build local, sem gerar instalador, use os scripts em [`scripts/windows/`](scripts/windows/) (`update.bat` pede privilégio de administrador e chama `update-service.ps1`).
 
 ## Limitações conhecidas
 
-- O instalador original é só para Windows; o host em Linux usa o [modo servidor](#modo-servidor-instalar-o-host-no-ubuntu-server). O painel é servido em HTTP na rede local (não exponha a porta 3000 para a internet).
-- O instalador não tem assinatura digital, por isso o aviso do SmartScreen.
-- Alertas no navegador e por e-mail; ainda sem Telegram ou WhatsApp e sem exportação do inventário.
-- No painel original, sistema operacional e usuário logado só aparecem para os PCs com o [agente Windows](#agente-windows).
+- O instalador original é para Windows; o host em Linux usa o [modo servidor](#modo-servidor-instalar-o-host-no-ubuntu-server). O painel é servido em HTTP na rede local (não exponha a porta 3000 para a internet).
+- Os instaladores não têm assinatura digital, por isso o aviso do SmartScreen.
+- Alertas no navegador e por e-mail (Resend); ainda sem Telegram ou WhatsApp e sem exportação do inventário.
+- Sistema operacional e usuário logado aparecem nos PCs com o [agente Windows](#agente-windows) instalado.
 - A classificação de tipo é heurística; a topologia sem SNMP mostra ligações presumidas ao gateway.
 
 Sugestões e contribuições são bem-vindas: abra uma [issue](https://github.com/CFSJCODE/net-inventory-ia/issues). Para falhas de segurança, veja o [SECURITY.md](.github/SECURITY.md).
 
 ## Licença e autor
 
-Distribuído sob a licença **[MIT](LICENSE)**, mantendo integralmente a licença e os avisos obrigatórios de direitos autorais exigidos pelo autor original:
+Distribuído sob a licença **[MIT](LICENSE)**, mantendo os créditos e avisos obrigatórios do projeto original:
 
-- **Projeto e base original ([`douglaspiero/net-inventory-ia`](https://github.com/douglaspiero/net-inventory-ia)):** [MIT](LICENSE) © 2026 **[Douglas Piero](https://www.linkedin.com/in/douglaspiero/)**, criador e desenvolvedor original do NetInventory.
-- **Amplas modificações, expansões e implementação de novos recursos ([`CFSJCODE/net-inventory-ia`](https://github.com/CFSJCODE/net-inventory-ia)):** [MIT](LICENSE) © 2026 **[Cláudio Francisco Dos Santos Júnior (@CFSJCODE)](https://github.com/CFSJCODE)** — responsável por todas as adições, evoluções arquiteturais e implementações de novos recursos neste repositório.
-
-### Adições e novos recursos implementados por Cláudio (@CFSJCODE)
-
-Sobre a base original do projeto, todas as ampliações e novas funcionalidades deste repositório foram desenvolvidas e implementadas por **[Cláudio Francisco Dos Santos Júnior (@CFSJCODE)](https://github.com/CFSJCODE)**, incluindo:
-
-- **Modo Servidor (Ubuntu Server) e Agente Windows (.NET 10):** host `ASP.NET Core` (`netinventory-dotnet.service` e CLI `netinventoryctl`) com suporte a Linux e Windows, e agente instalável para Windows (`NetInventoryDotNetAgent` + aplicativo desktop) com coleta contínua de SO, usuário logado, hardware, sensores, armazenamento, rede e sessões via convite de uso único.
-- **Módulo de Equipamentos SNMP (`/equipment` e `/equipment/[id]`):** cadastro e monitoramento de switches, roteadores e impressoras gerenciáveis com SNMP v1, v2c e v3 (`authNoPriv` MD5/SHA com credenciais criptografadas), leitura automática agendada, métricas de hardware (CPU, memória, temperatura, ventoinhas e fontes via MIBs padrão e HH3C), painel de portas em tempo real com detalhes por porta e níveis de suprimentos de impressoras (Printer-MIB).
-- **Topologia real via SNMP e mapeamento de portas:** posicionamento automático de dispositivos, switches e clientes Wi-Fi/APs pela tabela FDB/MAC do switch, exibição da porta do switch nos rótulos das ligações com dicas detalhadas, vínculo manual *"Conectado a"* e identificação de *"esta máquina"* por MAC em hosts com múltiplas interfaces.
-- **Alertas por e-mail (Resend):** monitoramento ativo com máquina de estados, confirmação por leituras seguidas, intervalo mínimo entre avisos (*cooldown*), fila persistente no banco, alertas de queda/degradação e limites de CPU, memória e temperatura, notificações de recuperação e envio de e-mail de teste.
-- **IA multi-provedor:** suporte a Google Gemini, OpenRouter, Groq, Ollama e servidores compatíveis com a API da OpenAI (além do suporte original à OpenAI), com melhorias nos prompts de classificação.
-- **Evoluções no Scan e no Inventário:** continuidade de cadastro pelo endereço MAC (preservando histórico, apelido e vínculos ao mudar de IP e mesclando duplicados), detecção de hosts que bloqueiam ping via sondagem TCP (*TCP liveness probe*), descoberta por mDNS e resolução aprimorada de hostnames no Windows, categorias `SMART_TV`, `IOT` e `DVR/NVR`, regras de classificação por IP, bloqueio de tipo individual/em lote, lista de IPs ignorados e prévia ao vivo da faixa CIDR.
-- **Automação de Build, Release e Atualização:** workflow de GitHub Actions ([`release.yml`](.github/workflows/release.yml)) para compilação e publicação automática do instalador `.exe` (Inno Setup) com hash SHA-256 nas Releases, encerramento automático de processos antigos durante o upgrade e scripts de atualização rápida do serviço local ([`scripts/windows/`](scripts/windows/)).
+- **Projeto original ([`douglaspiero/net-inventory-ia`](https://github.com/douglaspiero/net-inventory-ia)):** [MIT](LICENSE) © 2026 **[Douglas Piero](https://www.linkedin.com/in/douglaspiero/)**, criador e desenvolvedor original do NetInventory.
+- **Modificações e novos recursos ([`CFSJCODE/net-inventory-ia`](https://github.com/CFSJCODE/net-inventory-ia)):** [MIT](LICENSE) © 2026 **[Cláudio Francisco Dos Santos Júnior (@CFSJCODE)](https://github.com/CFSJCODE)** — autor de todas as adições, evoluções arquiteturais e implementações de novas funcionalidades deste repositório:
+  - **Host .NET 10 (Windows / Ubuntu Server) e Agente Windows** (`dotnet/`, `netinventoryctl`, coleta de SO, usuário logado, hardware, discos, sensores e sessões).
+  - **Equipamentos SNMP v1/v2c/v3 e monitoramento HTTP/Nest** (`/equipment`, métricas de hardware HH3C/IF-MIB, painel de portas em tempo real, suprimentos Printer-MIB e painel Google Nest).
+  - **Topologia automática via SNMP** (posicionamento por tabela FDB/MAC do switch, identificação de portas nas ligações e vínculo manual *"Conectado a"*).
+  - **Alertas por e-mail (Resend)** (`/alerts`, máquina de estados com confirmação, cooldown, fila persistente e avisos de recuperação).
+  - **IA multi-provedor e painel de uso/limites** (Gemini, OpenRouter, Groq, Ollama, endpoints compatíveis com OpenAI e métricas de consumo em `/assistant/usage`).
+  - **Evoluções de Scan e Inventário** (continuidade de cadastro por MAC, sondagem TCP, mDNS, categorias `SMART_TV`/`IOT`/`DVR/NVR`, regras de IP e IPs ignorados).
 
 ## Estrutura do projeto
 
-Consulte o [índice da documentação](docs/README.md), o [mapa da estrutura do repositório](docs/REPOSITORY-STRUCTURE.md), o [índice das configurações](config/README.md) e a pasta de [instruções para agentes de IA](agents_ia/README.md). Para a política de segurança, consulte `.github/SECURITY.md`.
+Consulte o [índice da documentação](docs/README.md), o [mapa da estrutura do repositório](docs/REPOSITORY-STRUCTURE.md), a documentação da [arquitetura .NET e Agente](dotnet/README.md), o [índice das configurações](config/README.md) e a pasta de [instruções para agentes de IA](agents_ia/README.md). Para a política de segurança, consulte [`.github/SECURITY.md`](.github/SECURITY.md).

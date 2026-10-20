@@ -43,8 +43,8 @@ export function AiNotConfigured({ compact = false }: { compact?: boolean }) {
   return (
     <p className="text-xs text-muted-foreground">
       {compact ? "IA desativada." : "Recursos de IA desativados."} Configure um provedor de IA (Google Gemini, OpenRouter, etc.) em{" "}
-      <Link href="/settings" className="underline underline-offset-2">
-        Configurações
+      <Link href="/assistant/settings" className="underline underline-offset-2">
+        Assistente → Configuração da IA
       </Link>
       .
     </p>

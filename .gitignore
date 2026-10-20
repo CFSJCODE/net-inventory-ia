@@ -50,4 +50,9 @@ next-env.d.ts
 /installer/.cache/
 /installer/dist/
 /installer/output/
+/installer/mac-update-*/
 /site/downloads/
+
+# Prévia isolada do painel de monitoramento (sem dados de produção)
+/installer/nest-monitoring-panel/
+/installer/nest-update-*/

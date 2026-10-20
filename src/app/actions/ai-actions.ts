@@ -6,6 +6,7 @@ import { testAiConnection } from "@/lib/ai/client";
 import { can } from "@/lib/auth/permissions";
 import { dismissAiOnboarding, getAiConfig, isAiOnboardingDismissed, removeAiKey, saveAiConfig } from "@/lib/ai/settings";
 import { PROVIDERS, type AiProvider } from "@/lib/ai/providers";
+import { getLocalAiUsage, getProviderAiUsage, USAGE_PERIODS, type UsagePeriod } from "@/lib/ai/usage";
 import {
   askAssistant,
   explainDeviceSecurity,
@@ -189,5 +190,20 @@ export async function aiAsk(messages: ChatMessage[]): Promise<ToolResult<string>
       .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }));
     if (!clean.length || clean[clean.length - 1].role !== "user") throw new Error("Envie uma pergunta.");
     return askAssistant(clean);
+  });
+}
+
+export async function getAiUsage(period: UsagePeriod) {
+  return run(async () => {
+    await requirePermission("ai.use");
+    if (!Object.hasOwn(USAGE_PERIODS, period)) throw new Error("Período inválido.");
+    return getLocalAiUsage(period);
+  });
+}
+
+export async function getAiProviderUsage() {
+  return run(async () => {
+    await requirePermission("settings.manage");
+    return getProviderAiUsage(await getAiConfig());
   });
 }

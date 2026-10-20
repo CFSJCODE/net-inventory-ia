@@ -54,8 +54,14 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
     // Limpa duplicados antigos antes de casar o scan com o inventário.
     await mergeDuplicateDevices().catch((err) => console.error("[device-merge] falha ao fundir duplicados:", err));
 
-    const known = await prisma.device.findMany({ select: { ip: true, mac: true } });
-    const knownIpByMac = new Map(known.flatMap((d) => (d.mac ? [[d.mac, d.ip] as const] : [])));
+    const known = await prisma.device.findMany({ select: { id: true, ip: true, mac: true } });
+    // Compara o MAC canônico também nos cadastros antigos (minúsculas, hífens ou pontos).
+    // A busca pelo id mantém a identidade mesmo antes de padronizar o MAC gravado.
+    const knownByMac = new Map(known.flatMap((d) => {
+      const mac = normalizeMac(d.mac);
+      return mac ? [[mac, d] as const] : [];
+    }));
+    const knownIpByMac = new Map(Array.from(knownByMac, ([mac, d]) => [mac, d.ip]));
     // O MAC identifica o aparelho: um host por MAC, e quem tem MAC é casado antes de quem não tem,
     // para que a associação por IP (mais fraca) não "roube" um registro que o MAC vai reivindicar.
     const discovered = dedupeHostsByMac(
@@ -64,7 +70,7 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
     ).sort((a, b) => Number(!a.mac) - Number(!b.mac));
 
     for (const host of discovered) {
-      const existing = await findExistingDevice(host, seenDeviceIds);
+      const existing = await findExistingDevice(host, seenDeviceIds, knownByMac);
 
       const matchedRule = findMatchingRule(host.ip, ipRules);
 
@@ -101,8 +107,8 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
 
       seenDeviceIds.add(existing.id);
       const updates: Prisma.DeviceUpdateInput = { lastSeenAt: now };
-      // Registro visto antes sem MAC: passa a ser identificado por ele.
-      if (host.mac && !existing.mac) updates.mac = host.mac;
+      // Aprende o MAC quando faltava e padroniza a grafia dos cadastros antigos.
+      if (host.mac && existing.mac !== host.mac) updates.mac = host.mac;
       const events: Array<{ type: "IP_CHANGED" | "HOSTNAME_CHANGED" | "WENT_ONLINE"; message: string; previousValue?: string | null; newValue?: string | null }> = [];
 
       if (existing.ip !== host.ip) {
@@ -115,7 +121,10 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
         updates.ip = host.ip;
       }
 
-      if (host.hostname && existing.hostname !== host.hostname) {
+      // O nome aprendido pertence ao cadastro, não ao IP. DNS/NetBIOS podem retornar
+      // outro nome (ex: gateway.docker.internal) depois de uma troca de endereço.
+      // Só preenche um nome ausente; o apelido definido pelo usuário fica intacto.
+      if (host.hostname && !existing.hostname?.trim()) {
         events.push({
           type: "HOSTNAME_CHANGED",
           message: `Hostname mudou de "${existing.hostname ?? "desconhecido"}" para "${host.hostname}"`,
@@ -145,7 +154,7 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
       } else {
         let type = classifyDevice({
           ip: host.ip,
-          hostname: host.hostname ?? existing.hostname,
+          hostname: existing.hostname || host.hostname,
           vendor: host.vendor ?? existing.vendor,
           openPorts: host.openPorts,
         });
@@ -204,9 +213,11 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
 async function findExistingDevice(
   host: { ip: string; mac: string | null; hostname: string | null },
   seenDeviceIds: Set<string>,
+  knownByMac: Map<string, { id: string }>,
 ) {
   if (host.mac) {
-    const byMac = await prisma.device.findUnique({ where: { mac: host.mac } });
+    const known = knownByMac.get(host.mac);
+    const byMac = await prisma.device.findUnique({ where: known ? { id: known.id } : { mac: host.mac } });
     if (byMac) return byMac;
   }
 

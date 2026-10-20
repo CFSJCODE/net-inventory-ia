@@ -142,7 +142,7 @@ export function SimpleSelect<V extends string>({
 }) {
   return (
     <Select value={value} onValueChange={(v) => onChange(v as V)} items={options}>
-      <SelectTrigger id={id} className={cn("w-full sm:w-44", className)}>
+      <SelectTrigger id={id} className={cn("w-full min-w-0", className)}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

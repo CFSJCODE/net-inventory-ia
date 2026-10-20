@@ -21,12 +21,27 @@ describe("evaluate", () => {
     expect(run([true, true]).events).toEqual([null, "alert"]);
   });
 
+  it("permite configurar alerta na primeira leitura fora do limite", () => {
+    const immediate = { ...opts, badToFire: 1 };
+    expect(evaluate(EMPTY_STATE, true, 0, immediate).event).toBe("alert");
+  });
+
   it("um ponto bom no meio zera a contagem", () => {
     expect(run([true, false, true, false]).events).toEqual([null, null, null, null]);
   });
 
   it("não repete o alerta enquanto o problema continua", () => {
     expect(run([true, true, true, true, true]).events).toEqual([null, "alert", null, null, null]);
+  });
+
+  it("repete problema persistente quando termina o intervalo configurado", () => {
+    let state = EMPTY_STATE;
+    const events = [0, 1, 15, 16].map((minute) => {
+      const result = evaluate(state, true, minute * MIN, { ...opts, badToFire: 1 });
+      state = result.state;
+      return result.event;
+    });
+    expect(events).toEqual(["alert", null, "alert", null]);
   });
 
   it("manda a recuperação depois de checagens boas seguidas", () => {

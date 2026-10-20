@@ -1,0 +1,55 @@
+@page "/console/agents"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inherits InventoryPageBase
+<PageTitle>Agentes · NetInventory</PageTitle>
+<div class="page-heading"><div><div class="eyebrow">Cadastro e comunicação</div><h1>Agentes Windows</h1><p class="muted">Cada agente coleta apenas a máquina em que foi instalado e envia ao host configurado.</p></div><button class="button" @onclick="RefreshAsync" disabled="@Loading">Atualizar</button></div>
+@if (Error is not null) { <div class="notice warning" role="alert">@Error</div> }
+@if (ActionMessage is not null) { <div class="notice info" role="status">@ActionMessage</div> }
+<AuthorizeView Roles="admin"><Authorized>
+    <section class="panel"><h2>Cadastrar um novo agente</h2><p class="muted">Crie um convite de uso único e informe-o ao controlador do agente no computador a monitorar. O convite não é uma credencial de administração.</p><div class="field-grid"><label>Nome para identificar o cadastro<input @bind="label" maxlength="255" placeholder="Ex.: notebook financeiro" /></label><label>Validade do convite<select @bind="expiresMinutes"><option value="15">15 minutos</option><option value="30">30 minutos</option><option value="60">1 hora</option></select></label></div><div class="actions spaced-small"><button class="button primary" @onclick="CreateInvitationAsync" disabled="@Creating">@(Creating ? "Gerando…" : "Gerar convite")</button>@if (Invitation is not null) { <button class="button quiet" @onclick="ClearInvitation">Ocultar convite</button> }</div>
+    @if (Invitation is not null) { <div class="notice info spaced"><strong>Convite criado. Copie antes de sair desta página.</strong><p>Válido até @ConsoleDisplay.Date(Invitation.ExpiresAt, Configuration). Pode ser utilizado uma única vez.@if (InvitationFor is not null) { <text> Serve somente para recadastrar o agente @InvitationFor.</text> }</p><div class="code-box" aria-label="Código de cadastro do agente">@Invitation.Token</div><p class="footnote">O código é exibido somente nesta sessão do painel. Não compartilhe em canais públicos.</p></div> }
+    </section>
+</Authorized><NotAuthorized><div class="notice info">Seu perfil permite consultar os agentes. O cadastro e a revogação são feitos por administradores.</div></NotAuthorized></AuthorizeView>
+<section class="panel inventory-panel"><div class="section-heading"><h2>Agentes cadastrados</h2><span class="muted">@Devices.Length agente(s)</span></div>@if(Devices.Length == 0) { <div class="empty-state"><p>Nenhum agente cadastrado neste host.</p></div> } else { <div class="table-scroll"><table class="data-table"><thead><tr><th>Agente</th><th>Identidade</th><th>Recebimento da coleta atual</th><th>Coleta</th><AuthorizeView Roles="admin"><Authorized><th>Ação</th></Authorized></AuthorizeView></tr></thead><tbody>@foreach(var agent in Devices) { <tr><td><a class="device-link" href="@($"/console/devices/{agent.AgentId}")">@agent.Label</a><span class="table-detail">@agent.Latest?.Hostname</span></td><td class="mono">@agent.AgentId</td><td class="timestamp">@ConsoleDisplay.Date(agent.ReceivedAt, Configuration)</td><td><span class="badge @ConsoleDisplay.RecencyClass(agent, Now)">@ConsoleDisplay.Recency(agent, Now)</span></td><AuthorizeView Roles="admin" Context="agentAuth"><Authorized><td>@if(ConfirmRevoke == agent.AgentId) { <div class="actions"><button class="button danger small" @onclick="() => RevokeAsync(agent.AgentId)">Confirmar revogação</button><button class="button quiet small" @onclick="() => ConfirmRevoke = null">Cancelar</button></div><span class="table-detail">Novos envios serão recusados.</span> } else { <div class="actions"><button class="button quiet small" @onclick="() => CreateReenrollmentAsync(agent)" disabled="@Creating">Recadastrar</button><button class="button quiet small" @onclick="() => ConfirmRevoke = agent.AgentId">Revogar</button></div> }</td></Authorized></AuthorizeView></tr> }</tbody></table></div> }</section>
+<article class="panel"><h2>Status local do agente</h2><p class="muted">O diagnóstico da máquina monitorada informa última coleta, último envio confirmado, destino configurado, fila pendente e falha de comunicação. O serviço funciona independentemente do WinUI ou deste painel.</p><p class="footnote">Trocar o IP do computador não cria automaticamente outro dispositivo. A identidade persistente do agente mantém o vínculo com o cadastro.</p></article>
+@code {
+    private string label = "";
+    private int expiresMinutes = 30;
+    private bool Creating;
+    private EnrollmentInvitation? Invitation;
+    private string? InvitationFor;
+    private string? ActionMessage;
+    private Guid? ConfirmRevoke;
+    private async Task<bool> IsAdminAsync() => (await Authentication.GetAuthenticationStateAsync()).User.IsInRole("admin");
+    private async Task CreateInvitationAsync()
+    {
+        if (!await IsAdminAsync()) return;
+        if (string.IsNullOrWhiteSpace(label) || label.Trim().Length > 255 || label.Any(char.IsControl)) { ActionMessage = "Informe um nome de cadastro válido."; return; }
+        Creating = true; Invitation = null; InvitationFor = null; ActionMessage = null;
+        try { Invitation = await Store.CreateInvitationAsync(label.Trim(), Math.Clamp(expiresMinutes, 5, 60)); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { ActionMessage = "Não foi possível gerar o convite."; }
+        finally { Creating = false; }
+    }
+    // For an agent that already exists here (e.g. after moving the database to another host): only this agent can use it.
+    private async Task CreateReenrollmentAsync(DeviceSnapshot agent)
+    {
+        if (!await IsAdminAsync()) return;
+        Creating = true; Invitation = null; InvitationFor = null; ActionMessage = null;
+        try { Invitation = await Store.CreateInvitationAsync(agent.Label, Math.Clamp(expiresMinutes, 5, 60), agent.AgentId); InvitationFor = agent.Label; ActionMessage = $"Convite de recadastro para {agent.Label} gerado em Cadastrar um novo agente."; }
+        catch (ArgumentException) { ActionMessage = "Agente inexistente ou revogado; gere um convite comum."; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { ActionMessage = "Não foi possível gerar o convite."; }
+        finally { Creating = false; }
+    }
+    private void ClearInvitation() { Invitation = null; InvitationFor = null; }
+    private async Task RevokeAsync(Guid id)
+    {
+        if (!await IsAdminAsync() || ConfirmRevoke != id) return;
+        try { ActionMessage = await Store.RevokeAsync(id) ? "Agente revogado. Novos envios com sua credencial serão recusados." : "Agente não encontrado."; ConfirmRevoke = null; await RefreshAsync(); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { ActionMessage = "Não foi possível revogar o agente."; }
+    }
+}
+
+
+
+

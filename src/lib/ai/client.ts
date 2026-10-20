@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { prisma } from "@/lib/prisma";
 import { getAiConfig } from "./settings";
 import { PROVIDERS, type AiProvider } from "./providers";
+import { measuredCompletion, recordCacheHit } from "./usage";
 
 /**
  * Cliente de IA unificado (somente no servidor).
@@ -19,6 +20,8 @@ import { PROVIDERS, type AiProvider } from "./providers";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_TOOL_ROUNDS = 6;
+
+const usageOptions = (provider: AiProvider) => provider === "openrouter" ? { usage: { include: true } } : {};
 
 export interface ToolHandler {
   definition: {
@@ -210,7 +213,10 @@ async function cacheKey(feature: string, payload: unknown): Promise<string> {
 async function cached<T>(feature: string, payload: unknown, compute: () => Promise<T>): Promise<T> {
   const key = await cacheKey(feature, payload);
   const hit = await prisma.aiCache.findUnique({ where: { key } });
-  if (hit && Date.now() - hit.createdAt.getTime() < CACHE_TTL_MS) return JSON.parse(hit.response) as T;
+  if (hit && Date.now() - hit.createdAt.getTime() < CACHE_TTL_MS) {
+    await recordCacheHit({ feature, provider: await aiProvider(), model: await aiModel() });
+    return JSON.parse(hit.response) as T;
+  }
   const value = await compute();
   await prisma.aiCache.upsert({
     where: { key },
@@ -234,6 +240,8 @@ export async function structuredResponse<T>(opts: {
 }): Promise<T> {
   return cached(opts.feature, [opts.instructions, opts.input, opts.schema], async () => {
     const { client: ai, model, provider, baseUrl } = await getAiClient();
+    const measure = (request: () => Promise<OpenAI.Chat.ChatCompletion>) =>
+      measuredCompletion({ provider, model, feature: opts.feature }, request);
     const systemPrompt = `${opts.instructions}\n\nResponda ESTRITAMENTE em formato JSON válido seguindo a estrutura solicitada. Não inclua blocos markdown como \`\`\`json no início ou no fim, retorne apenas o JSON bruto puro.`;
     const userPrompt = typeof opts.input === "string" ? opts.input : JSON.stringify(opts.input);
 
@@ -242,7 +250,8 @@ export async function structuredResponse<T>(opts: {
 
       // Tentativa 1: tentar com json_schema
       try {
-        const completion = await ai.chat.completions.create({
+        const completion = await measure(() => ai.chat.completions.create({
+          ...usageOptions(provider),
           model,
           messages: [
             { role: "system", content: systemPrompt },
@@ -256,29 +265,31 @@ export async function structuredResponse<T>(opts: {
               strict: true,
             },
           },
-        });
+        }));
         content = completion.choices[0]?.message?.content;
       } catch {
         // Se json_schema não for aceito pelo provedor/modelo, tenta com json_object
         try {
-          const completion = await ai.chat.completions.create({
+          const completion = await measure(() => ai.chat.completions.create({
+            ...usageOptions(provider),
             model,
             messages: [
               { role: "system", content: systemPrompt },
               { role: "user", content: userPrompt },
             ],
             response_format: { type: "json_object" },
-          });
+          }));
           content = completion.choices[0]?.message?.content;
         } catch {
           // Fallback final: requisição normal confiando nas instruções do prompt
-          const completion = await ai.chat.completions.create({
+          const completion = await measure(() => ai.chat.completions.create({
+            ...usageOptions(provider),
             model,
             messages: [
               { role: "system", content: systemPrompt },
               { role: "user", content: userPrompt },
             ],
-          });
+          }));
           content = completion.choices[0]?.message?.content;
         }
       }
@@ -327,11 +338,12 @@ export async function chatWithTools(opts: {
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const completion = await ai.chat.completions.create({
+      const completion = await measuredCompletion({ provider, model, feature: "assistant" }, () => ai.chat.completions.create({
+        ...usageOptions(provider),
         model,
         messages: conversationMessages,
         tools: formattedTools.length ? formattedTools : undefined,
-      });
+      }));
 
       const choice = completion.choices[0];
       const message = choice?.message;
@@ -396,21 +408,23 @@ export async function testAiConnection(opts: {
 
   try {
     // Teste com completion de 1 token: valida autenticação, conectividade e disponibilidade do modelo
-    await testClient.chat.completions.create({
+    await measuredCompletion({ provider: opts.provider, model: opts.model, feature: "connection-test" }, () => testClient.chat.completions.create({
+      ...usageOptions(opts.provider),
       model: opts.model,
       messages: [{ role: "user", content: "ping" }],
       max_tokens: 1,
-    });
+    }));
   } catch (err: unknown) {
     const errObj = err as { message?: string; code?: string; status?: number } | null;
     // Modelos que usam max_completion_tokens (como o1/o3)
     if (errObj?.message?.includes("max_completion_tokens") || errObj?.code === "unsupported_parameter") {
       try {
-        await testClient.chat.completions.create({
+        await measuredCompletion({ provider: opts.provider, model: opts.model, feature: "connection-test" }, () => testClient.chat.completions.create({
+          ...usageOptions(opts.provider),
           model: opts.model,
           messages: [{ role: "user", content: "ping" }],
           max_completion_tokens: 1,
-        });
+        }));
         return;
       } catch (err2) {
         throw friendlyError(err2, opts.model, opts.provider, baseUrl);

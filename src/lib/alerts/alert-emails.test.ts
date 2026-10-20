@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "./email-defaults";
-import { buildAlertEmail, buildRecoveryEmail, buildTestEmail, observe, targetName, type HostReading, type Observation } from "./alert-emails";
+import { buildAlertEmail, buildRecoveryEmail, buildTestEmail, observe, selectAlertObservations, targetName, type HostReading, type Observation } from "./alert-emails";
 
 const MIN = 60_000;
 const T0 = Date.UTC(2026, 9, 11, 15, 0);
@@ -36,6 +36,7 @@ describe("observe", () => {
     expect(observe(online, thresholds, true).map((o) => [o.kind, o.bad])).toEqual([
       ["offline", false],
       ["degraded", false],
+      ["criticalLatency", false],
     ]);
     expect(observe(offline, thresholds, true).map((o) => [o.kind, o.bad])).toEqual([["offline", true]]);
     expect(observe(snmp, thresholds, false).map((o) => [o.kind, o.bad])).toEqual([
@@ -50,6 +51,13 @@ describe("observe", () => {
     const lossy = { ...online, pingsReceived: 3, lossPct: 25 };
     expect(observe(slow, thresholds, true)[1]).toMatchObject({ kind: "degraded", bad: true, value: 230 });
     expect(observe(lossy, thresholds, true)[1]).toMatchObject({ kind: "degraded", bad: true });
+    expect(observe({ ...online, latencyMs: 700 }, thresholds, true).find((o) => o.kind === "criticalLatency")).toMatchObject({ bad: true, value: 700 });
+  });
+
+  it("filtra apenas métricas críticas no perfil crítico e todas no perfil completo", () => {
+    const readings = observe({ ...snmp, latencyMs: 700 }, thresholds, true);
+    expect(selectAlertObservations(readings, "critical").map((o) => o.kind)).toEqual(["offline", "criticalLatency"]);
+    expect(selectAlertObservations(readings, "all").map((o) => o.kind)).toEqual(["offline", "degraded", "cpu", "mem", "temp"]);
   });
 });
 
@@ -66,7 +74,8 @@ describe("buildAlertEmail", () => {
     expect(e.text).toContain("- Ping: 0 de 4 respondidos");
     expect(e.text).toContain("- Endereço IP: 192.168.0.1");
     expect(e.text).toContain("LIMITES CONFIGURADOS");
-    expect(e.text).toContain("- CPU: alerta a partir de 90%");
+    expect(e.text).not.toContain("- CPU: alerta a partir de 90%");
+    expect(e.text).not.toContain("CPU, memória e temperatura");
     expect(e.text).toContain("- Latência média: alerta acima de 100 ms");
     expect(e.text).toContain("- Intervalo mínimo entre alertas: 15 min para o mesmo problema");
     expect(e.text).toContain("Você receberá outro e-mail quando o problema passar.");
@@ -95,12 +104,30 @@ describe("buildAlertEmail", () => {
     expect(e.html).toContain("#ea580c");
   });
 
+  it("agrupa as métricas anormais no mesmo e-mail e inclui as demais leituras", () => {
+    const r = { ...snmp, cpuPct: 97, tempC: 84 };
+    const e = buildAlertEmail({
+      ...common,
+      target: sw,
+      observation: obs(r, "cpu", false),
+      additionalObservations: [obs(r, "temp", false)],
+      reading: r,
+      checks: 1,
+    });
+    expect(e.subject).toContain("CPU alta (97%) + Temperatura alta (84 °C)");
+    expect(e.text).toContain("- CPU: 97% (limite ≥ 90%) [ACIMA DO LIMITE]");
+    expect(e.text).toContain("- Temperatura: 84 °C (limite ≥ 80 °C) [ACIMA DO LIMITE]");
+    expect(e.text).toContain("- Memória: 41% (limite ≥ 90%)");
+    expect(e.text).toContain("Métrica anormal: CPU alta");
+    expect(e.text).toContain("Métrica anormal: Temperatura alta");
+  });
+
   it("degradado: latência e perda no assunto e no resumo", () => {
     const r = { ...online, pingsReceived: 3, latencyMs: 230, lossPct: 25 };
     const e = buildAlertEmail({ ...common, target: modem, observation: obs(r, "degraded"), reading: r, checks: 3 });
     expect(e.subject).toBe("🟠 Desempenho degradado (230 ms, 25% de perda): Modem (192.168.0.1)");
     expect(e.text).toContain("lenta ou instável nas últimas 3 verificações seguidas: latência média de 230 ms (limite 100 ms) e perda de 25% dos pacotes (limite 25%).");
-    expect(e.text).toContain("- Respondendo ao NetInventory: há 1h 30min, desde ");
+    expect(e.text).toContain("- Tempo respondendo: há 1h 30min, desde ");
     expect(e.text).not.toContain("Tempo de atividade");
   });
 
@@ -177,9 +204,9 @@ describe("buildTestEmail", () => {
     const e = buildTestEmail({
       settings,
       equipment: [
-        { target: modem, reading: online, snmp: false },
-        { target: { host: "192.168.0.2", label: null }, reading: null, snmp: false },
-        { target: sw, reading: snmp, snmp: true },
+        { target: modem, reading: online, snmpConfigured: false },
+        { target: { host: "192.168.0.2", label: null }, reading: null, snmpConfigured: false },
+        { target: sw, reading: snmp, snmpConfigured: true },
       ],
       activeProblems: 1,
       intervalMs: MIN,
@@ -195,7 +222,7 @@ describe("buildTestEmail", () => {
     expect(e.text).toContain("LEITURAS ATUAIS: HP V1910-24G (192.168.0.3)");
     expect(e.text).toContain("- CPU: 93% (limite ≥ 90%) [ACIMA DO LIMITE]");
     expect(e.text).toContain("- Temperatura: alerta a partir de 80 °C");
-    expect(e.text).toContain("🟢 Recuperação");
+    expect(e.text).toContain("Aviso de recuperação");
     expect(e.text).not.toContain("desativados");
     expect(e.html).toContain(">TESTE<");
   });
@@ -212,7 +239,7 @@ describe("buildTestEmail", () => {
     const equipment = Array.from({ length: 60 }, (_, n) => ({
       target: { host: `192.168.0.${10 + n}`, label: `Aparelho com nome bem comprido número ${n + 1} (sala de equipamentos)` },
       reading: n === 59 ? null : { ...snmp, cpuPct: 20 + n, lossPct: n === 7 ? 25 : 0, pingsReceived: n === 7 ? 3 : 4 },
-      snmp: true,
+      snmpConfigured: true,
     }));
     const e = buildTestEmail({ settings, equipment, activeProblems: 0, intervalMs: MIN, at: T0 });
     expect(e.text).toContain("LEITURAS ATUAIS: APARELHO COM NOME BEM COMPRIDO NÚMERO 6 ");
@@ -230,6 +257,24 @@ describe("buildTestEmail", () => {
     expect(few.text).toContain("(192.168.0.17): ainda sem leitura");
     expect(few.text).not.toContain("Mais ");
   });
+
+  it("omite leituras e limites SNMP quando só há medição por ping", () => {
+    const e = buildTestEmail({
+      settings,
+      equipment: [{ target: modem, reading: online, snmpConfigured: false }],
+      activeProblems: 0,
+      intervalMs: MIN,
+      at: T0,
+    });
+    expect(e.text).toContain("- Ping: 4 de 4 respondidos, média 3 ms");
+    expect(e.text).toContain("- Latência média: 3 ms");
+    expect(e.text).not.toContain("CPU, memória e temperatura");
+    expect(e.text).not.toContain("- CPU:");
+    expect(e.text).not.toContain("- Memória:");
+    expect(e.text).not.toContain("- Temperatura:");
+    expect(e.text).not.toContain("não lidos (sem SNMP");
+  });
+
 });
 
 describe("targetName", () => {

@@ -1,0 +1,28 @@
+@inject IConfiguration Configuration
+@if (Devices.Length == 0)
+{
+    <div class="empty-state"><h3>Nenhum dispositivo encontrado</h3><p>Ajuste o filtro ou consulte a descoberta de rede e o cadastro dos agentes.</p></div>
+}
+else
+{
+    <div class="table-scroll"><table class="data-table">
+        <thead><tr><th scope="col">Dispositivo</th><th scope="col">Rede</th><th scope="col">Endereço IP / MAC</th><th scope="col">Sistema / usuários</th><th scope="col">Agente Windows</th><th scope="col">Última observação</th></tr></thead>
+        <tbody>
+        @foreach (var device in Devices)
+        {
+            <tr>
+                <td><a class="device-link" href="@UnifiedDisplay.DetailUrl(device)">@device.Name<span class="table-detail">@InventoryPresentation.TypeLabel(device.Type) @(device.TypeLocked ? "· tipo fixado" : "")</span></a><span class="table-detail">@UnifiedDisplay.Source(device)</span></td>
+                <td><span class="badge @UnifiedDisplay.NetworkClass(device)">@UnifiedDisplay.NetworkStatus(device)</span></td>
+                <td class="mono">@ConsoleDisplay.Value(device.Ip)<span class="table-detail mono">@ConsoleDisplay.Value(device.Mac)</span></td>
+                <td>@UnifiedDisplay.OperatingSystem(device)<span class="table-detail">@UnifiedDisplay.Users(device)</span></td>
+                <td>@if(device.AgentId is not null) { var snapshot = UnifiedDisplay.Snapshot(device); <span class="badge @ConsoleDisplay.RecencyClass(snapshot, Now)">@ConsoleDisplay.Recency(snapshot, Now)</span><span class="table-detail">@UnifiedDisplay.LinkState(device)</span> } else { <span class="muted">Sem agente</span> }</td>
+                <td><span class="timestamp">@ConsoleDisplay.Date(device.LastSeenAt, Configuration)</span>@if(device.Latest is not null) { <span class="table-detail">Agente: @ConsoleDisplay.Date(device.Latest.CollectedAt, Configuration)</span> }</td>
+            </tr>
+        }
+        </tbody>
+    </table></div>
+}
+@code {
+    [Parameter] public UnifiedDevice[] Devices { get; set; } = [];
+    [Parameter] public DateTimeOffset Now { get; set; }
+}

@@ -10,6 +10,12 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
+if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 13)) {
+  console.error(`Node.js ${process.versions.node} não é compatível com o NetInventory. O serviço requer Node.js 22.13 ou superior.`);
+  process.exit(1);
+}
+
 const APP_DIR = path.join(__dirname, "app");
 const DATA_DIR = process.env.NETINVENTORY_DATA || path.join(process.env.ProgramData || "C:\\ProgramData", "NetInventory");
 const CONFIG_FILE = path.join(DATA_DIR, "config.json");

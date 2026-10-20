@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+.data/
+.artifacts/
+artifacts/
+*.user
+*.db
+*.db-shm
+*.db-wal
+*.local.json
+*.log

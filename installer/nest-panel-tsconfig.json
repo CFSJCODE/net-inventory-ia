@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "incremental": false },
+  "include": [
+    "../src/components/equipment/nest-monitoring-panel.tsx",
+    "../src/lib/network/nest-monitoring.ts",
+    "../src/lib/network/nest-monitoring.test.ts",
+    "../src/lib/network/nest-telemetry.ts",
+    "../src/lib/network/nest-telemetry.test.ts",
+    "../src/lib/network/endpoint-monitoring.ts",
+    "../src/lib/network/endpoint-monitoring.test.ts"
+  ],
+  "exclude": ["../node_modules", "../.next", "../.next-installer"]
+}

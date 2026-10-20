@@ -1,0 +1,54 @@
+/** Authenticated create/edit/read/delete integration tests against synthetic QA only. */
+import {createHmac} from 'node:crypto';
+import {createServer} from 'node:http';
+import {readFileSync,writeFileSync} from 'node:fs';
+import {parse} from 'acorn';
+import {collect} from './nest-monitoring-panel-lib.mjs';
+const origin=process.env.NETINVENTORY_QA_ORIGIN||'http://127.0.0.1:3344';
+const NEXT=process.env.NETINVENTORY_QA_NEXT||'installer/nest-monitoring-panel/qa/app/.next-installer';
+if(!/^http:\/\/127\.0\.0\.1:33\d\d$/.test(origin))throw new Error('Somente QA loopback');
+const cookie=user=>{const value=Buffer.from(JSON.stringify({userId:user,username:user,sv:0,exp:Math.floor(Date.now()/1000)+3600})).toString('base64url');return `ni_session=${value}.${createHmac('sha256','synthetic-nest-panel-auth-key-over-thirty-two-characters').update(value).digest('base64url')}`};
+const html=await(await fetch(origin+'/equipment',{headers:{cookie:cookie('qa-nest-admin')}})).text();
+const asset=html.match(/static\/chunks\/1625-[a-f\d]+\.js/)?.[0];
+if(!asset)throw new Error('Asset ativo ausente');
+const source=readFileSync(`${NEXT}/${asset}`,'utf8');
+const calls=collect(parse(source,{ecmaVersion:'latest'}),n=>n.type==='CallExpression'&&n.arguments?.at(-1)?.type==='Literal'&&n.arguments[0]?.type==='Literal');
+const ids=Object.fromEntries(calls.filter(n=>['createEquipment','updateEquipment','readEquipmentDetail','deleteEquipment'].includes(n.arguments.at(-1).value)).map(n=>[n.arguments.at(-1).value,n.arguments[0].value]));
+const action=async(name,args,user='qa-nest-admin')=>{
+  const response=await fetch(origin+'/equipment',{method:'POST',headers:{cookie:cookie(user),origin,'next-action':ids[name],'content-type':'text/plain;charset=UTF-8'},body:JSON.stringify(args)});
+  const body=await response.text();
+  return body.split('\n').map(line=>{try{return JSON.parse(line.replace(/^[\da-f]+:/,''))}catch{return null}}).find(item=>item?.ok!==undefined);
+};
+let fixtureMode='text',requests=0;
+const fixture=createServer((req,res)=>{requests++;if(fixtureMode==='text'){res.writeHead(204);res.end();}else if(fixtureMode==='array'){res.writeHead(200,{'content-type':'application/json'});res.end('[1,false,null]');}else if(fixtureMode==='invalid'){res.writeHead(200);res.end('bad json');}else {res.writeHead(302,{location:'http://127.0.0.1:3345/setup/eureka_info'});res.end();}});
+await new Promise(resolve=>fixture.listen(3347,'127.0.0.2',resolve));
+const check=(label,condition)=>{if(!condition)throw new Error(label);checks.push(label)};
+const checks=[],created=[];
+const input={name:'Dispositivo sintético',ip:'127.0.0.2',kind:'IOT',monitorMode:'http',snmpVersion:'none',community:'',snmpUsername:'',snmpAuthPassword:'',snmpAuthProtocol:'',snmpPrivPassword:'',snmpPrivProtocol:'none',notes:'',endpoints:[{id:'qa-endpoint',name:'Disponibilidade',url:'http://127.0.0.2:3347/health',purpose:'availability',format:'http',enabled:true}]};
+try{
+  check('VIEWER não cadastra',!(await action('createEquipment',[input],'qa-nest-viewer'))?.ok);
+  let response=await action('createEquipment',[input]);
+  check('IoT HTTP sem credenciais cadastrado',response?.ok===true);
+  let id=response.data.id;created.push(id);
+  check('Categoria, formato e ausência de SNMP preservados',response.data.kind==='IOT'&&response.data.snmpVersion==='none'&&response.data.endpoints[0].format==='http');
+  let reading=await action('readEquipmentDetail',[id]);
+  check('HTTP 204 sem JSON disponível',reading?.ok&&reading.data.monitoring.endpoints[0].ok&&reading.data.monitoring.endpoints[0].httpStatus===204&&!reading.data.monitoring.snmp.enabled);
+  fixtureMode='array';
+  response=await action('updateEquipment',[id,{...input,kind:'SMART_TV',endpoints:[{...input.endpoints[0],format:'json'}]}]);
+  check('Edição preserva categoria e formato JSON',response?.ok&&response.data.kind==='SMART_TV'&&response.data.endpoints[0].format==='json');
+  reading=await action('readEquipmentDetail',[id]);
+  check('JSON em array aceito',reading?.ok&&reading.data.monitoring.endpoints[0].ok);
+  fixtureMode='invalid';reading=await action('readEquipmentDetail',[id]);
+  check('JSON inválido sinaliza falha',reading?.ok&&!reading.data.monitoring.endpoints[0].ok);
+  fixtureMode='redirect';reading=await action('readEquipmentDetail',[id]);
+  check('Redirecionamento não seguido',reading?.ok&&!reading.data.monitoring.endpoints[0].ok&&reading.data.monitoring.endpoints[0].httpStatus===302);
+  response=await action('updateEquipment',[id,{...input,monitorMode:'none',endpoints:[]}]);
+  check('Cadastro sem SNMP e sem HTTP aceito',response?.ok&&response.data.monitorMode==='none'&&response.data.snmpVersion==='none');
+  const before=requests;reading=await action('readEquipmentDetail',[id]);
+  check('Modo sem monitoramento não consulta transportes',reading?.ok&&!reading.data.monitoring.snmp.enabled&&reading.data.monitoring.endpoints.length===0&&requests===before);
+  check('URL para outro host rejeitada',!(await action('updateEquipment',[id,{...input,endpoints:[{...input.endpoints[0],url:'http://127.0.0.1:3347/health'}]}]))?.ok);
+  check('SNMP com community ausente rejeitado',!(await action('updateEquipment',[id,{...input,monitorMode:'snmp',snmpVersion:'2c',endpoints:[]}]))?.ok);
+  check('SNMPv3 com credenciais ausentes rejeitado',!(await action('updateEquipment',[id,{...input,monitorMode:'both',snmpVersion:'3',snmpAuthProtocol:'sha'}]))?.ok);
+  writeFileSync('installer/nest-monitoring-panel/registration-validation.json',JSON.stringify({ok:true,checks:checks.length,names:checks,syntheticOnly:true,origin},null,2));
+  console.log(JSON.stringify({ok:true,checks:checks.length,syntheticOnly:true}));
+}finally{for(const id of created){const result=await action('deleteEquipment',[id]);if(!result?.ok)console.error('Limpeza sintética pendente');}fixture.close();}

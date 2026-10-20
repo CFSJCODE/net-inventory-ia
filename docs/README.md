@@ -1,5 +1,12 @@
 # Documentação do repositório
 
+- [Arquitetura .NET 10 (Host Windows/Linux e Agente Windows)](../dotnet/README.md)
+- [Implantação do Host no Ubuntu Server (`netinventoryctl`)](../dotnet/deploy/README.md)
+- [Assistente de IA, submenus e limites de uso](assistente-ia.md)
+- [Painel de monitoramento Google Nest e endpoints HTTP/HTTPS (v0.2.23)](painel-monitoramento-nest.md)
+- [Continuidade de cadastro pelo MAC e instalador (v0.2.22)](MAC-IP-INSTALADOR-0.2.22.md)
+- [Notas da versão 0.2.18](RELEASE-0.2.18.md)
+- [Recuperação e consolidação 0.2.17](RECUPERACAO-0.2.17.md)
 - [Pasta de instruções e contexto para agentes de IA](../agents_ia/README.md)
 - [Política de segurança](../.github/SECURITY.md)
 - [Exemplo de variáveis de ambiente](../config/env.example)

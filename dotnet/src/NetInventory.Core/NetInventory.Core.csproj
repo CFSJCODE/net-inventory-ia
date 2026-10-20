@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup><ProjectReference Include="../NetInventory.Contracts/NetInventory.Contracts.csproj" /></ItemGroup>
+</Project>

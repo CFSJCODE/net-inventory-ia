@@ -1,0 +1,85 @@
+@inherits LayoutComponentBase
+@inject IConfiguration Configuration
+@inject NavigationManager Navigation
+<AuthorizeView>
+    <Authorized>
+        <div class="app-shell">
+            <a href="#main" class="skip-link">Ir ao conteúdo</a>
+            <input id="sidebar-toggle" class="sidebar-toggle" type="checkbox" aria-label="Recolher ou expandir menu" />
+            <aside class="app-sidebar" aria-label="Menu do NetInventory">
+                <a class="brand sidebar-brand" href="/" aria-label="NetInventory, visão geral"><img class="brand-icon" src="logo.png" alt="" width="24" height="24" /><span class="brand-name">NetInventory</span></a>
+                <nav class="app-nav" aria-label="Navegação principal">
+                    @if (HasNetworkEngine)
+                    {
+                        <a href="/" data-enhance-nav="false" title="Inventário"><NavIcon Name="overview" /><span>Inventário</span></a>
+                        <a href="/topology" data-enhance-nav="false" title="Topologia"><NavIcon Name="connection" /><span>Topologia</span></a>
+                        <div class="nav-submenu"><a href="/topology" data-enhance-nav="false">Mapa</a><a href="/topology/links" data-enhance-nav="false">Ligações monitoradas</a></div>
+                        <a href="/history" data-enhance-nav="false" title="Histórico"><NavIcon Name="history" /><span>Histórico</span></a>
+                        <AuthorizeView Roles="admin,operator" Context="operatorState"><Authorized>
+                            <a href="/assistant" data-enhance-nav="false" title="Assistente"><NavIcon Name="assistant" /><span>Assistente</span><span class="scope-badge">IA</span></a>
+                            <div class="nav-submenu"><a href="/assistant/settings" data-enhance-nav="false">Configuração da IA</a><a href="/assistant/usage" data-enhance-nav="false">Uso e limites</a><a href="/assistant" data-enhance-nav="false">Chat</a></div>
+                        </Authorized></AuthorizeView>
+                        <a href="/tools" data-enhance-nav="false" title="Ferramentas"><NavIcon Name="tools" /><span>Ferramentas</span></a>
+                        <a href="/equipment" data-enhance-nav="false" title="Equipamentos"><NavIcon Name="host" /><span>Equipamentos</span></a>
+                        <AuthorizeView Roles="admin" Context="legacyAdminState"><Authorized>
+                            <a href="/alerts" data-enhance-nav="false" title="Alertas"><NavIcon Name="alerts" /><span>Alertas</span></a>
+                            <a href="/users" data-enhance-nav="false" title="Usuários"><NavIcon Name="security" /><span>Usuários</span></a>
+                        </Authorized></AuthorizeView>
+                        <a href="/settings" data-enhance-nav="false" title="Configurações"><NavIcon Name="settings" /><span>Configurações</span></a>
+                    }
+                    else { <NavLink href="/console/windows" Match="NavLinkMatch.All" title="Computadores Windows"><NavIcon Name="overview" /><span>Computadores Windows</span></NavLink><NavLink href="/console/devices" title="Dispositivos"><NavIcon Name="devices" /><span>Dispositivos</span></NavLink> }
+                    @if (HasNetworkEngine)
+                    {
+                        @* Same "Servidor" group the original sidebar receives from legacy-navigation.js. *@
+                        <a href="/console/agents" title="Servidor"><NavIcon Name="host" /><span>Servidor</span></a>
+                        <div class="nav-submenu"><NavLink href="/console/agents">Agentes</NavLink><NavLink href="/console/connection">Conexão</NavLink><AuthorizeView Roles="admin" Context="serverAdminState"><Authorized><NavLink href="/console/host">Host</NavLink><NavLink href="/console/security">Segurança</NavLink></Authorized></AuthorizeView></div>
+                    }
+                    else
+                    {
+                    <NavLink href="/console/agents" title="Agentes"><NavIcon Name="agents" /><span>Agentes</span></NavLink>
+                    <NavLink href="/console/connection" title="Conexão"><NavIcon Name="connection" /><span>Conexão</span></NavLink>
+                    <AuthorizeView Roles="admin" Context="adminState"><Authorized>
+                        <NavLink href="/console/host" title="Host"><NavIcon Name="host" /><span>Host</span></NavLink>
+                        <NavLink href="/console/security" title="Segurança"><NavIcon Name="security" /><span>Segurança</span></NavLink>
+                    </Authorized></AuthorizeView>
+                    }
+                </nav>
+                <div class="sidebar-footer">
+                    @if(HasNetworkEngine) { <a class="account" href="/account" data-enhance-nav="false" title="Minha conta"><NavIcon Name="user" /><span class="account-name">@context.User.Identity?.Name</span></a> } else { <div class="account" title="@context.User.Identity?.Name"><NavIcon Name="user" /><span class="account-name">@context.User.Identity?.Name</span></div> }
+                    <form method="post" action="/console/logout" data-enhance="false"><AntiforgeryToken /><button type="submit" class="sidebar-action" title="Sair"><NavIcon Name="logout" /><span>Sair</span></button></form>
+                </div>
+                <label for="sidebar-toggle" class="sidebar-rail" title="Recolher ou expandir menu" aria-hidden="true"></label>
+            </aside>
+            <label for="sidebar-toggle" class="sidebar-backdrop" aria-label="Fechar menu"></label>
+            <div class="app-workspace">
+                <header class="app-header"><div class="workspace-heading"><label for="sidebar-toggle" class="sidebar-trigger" title="Recolher ou expandir menu"><NavIcon Name="panel" /></label><span class="header-separator"></span><div class="workspace-section"><NavIcon Name="@SectionIcon" /><span class="workspace-title">@SectionTitle</span></div></div>@if(!HasNetworkEngine) { <span class="scope-badge">.NET</span> }</header>
+                <main id="main" class="main-content">@Body</main>
+                <footer class="app-footer"><span>NetInventory · host .NET @if (HasNetworkEngine) { <span> · rede e agentes no mesmo inventário</span> }</span><span>Status de rede e idade da coleta apresentados separadamente.</span></footer>
+            </div>
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        <div class="app-shell login-shell">
+            <a href="#main" class="skip-link">Ir ao conteúdo</a>
+            <main id="main" class="auth-shell">@Body</main>
+        </div>
+    </NotAuthorized>
+</AuthorizeView>
+@code {
+    private bool HasNetworkEngine => !string.IsNullOrWhiteSpace(Configuration["Inventory:LegacyOrigin"]);
+    private string SectionIcon => new Uri(Navigation.Uri).AbsolutePath.StartsWith("/console/devices/", StringComparison.Ordinal) ? "agents" : "overview";
+    private string SectionTitle
+    {
+        get
+        {
+            var path = new Uri(Navigation.Uri).AbsolutePath;
+            return path.StartsWith("/console/devices/", StringComparison.Ordinal) ? "Detalhes do dispositivo"
+                : path.StartsWith("/console/devices", StringComparison.Ordinal) ? "Inventário de rede"
+                : path.StartsWith("/console/agents", StringComparison.Ordinal) ? "Agentes Windows"
+                : path.StartsWith("/console/connection", StringComparison.Ordinal) ? "Conexão"
+                : path.StartsWith("/console/host", StringComparison.Ordinal) ? "Host"
+                : path.StartsWith("/console/security", StringComparison.Ordinal) ? "Segurança"
+                : "Computadores Windows";
+        }
+    }
+}

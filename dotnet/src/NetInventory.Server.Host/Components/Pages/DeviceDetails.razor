@@ -1,0 +1,72 @@
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inherits InventoryPageBase
+@if(ShowHeading) { <PageTitle>@(Device?.Latest?.Hostname ?? Device?.Label ?? "Dispositivo") · NetInventory</PageTitle><a class="back-link" href="/console/devices">← Dispositivos</a> }
+@if (Error is not null) { <div class="notice warning" role="alert">@Error</div> }
+@if (Device is not { } device)
+{
+    <div class="panel empty-state"><h1>Dispositivo não encontrado</h1><p>O cadastro pode ter sido revogado ou ainda não existe neste host.</p></div>
+}
+else
+{
+    @if(ShowHeading) { <div class="page-heading"><div><div class="eyebrow">Detalhes do computador</div><h1>@(device.Latest?.Hostname ?? device.Label)</h1><div class="device-meta"><span class="badge @ConsoleDisplay.RecencyClass(device, Now)">@ConsoleDisplay.Recency(device, Now)</span><span class="muted">@InventoryPresentation.TypeLabel(device.Classification?.Type)</span><span class="muted">@Contact(device)</span></div></div><button class="button" @onclick="RefreshAllAsync" disabled="@Loading">Atualizar</button></div> }
+    <div class="collection-caption"><span>Coletado: @ConsoleDisplay.Date(device.Latest?.CollectedAt, Configuration)</span><span>Recebido: @ConsoleDisplay.Date(device.ReceivedAt, Configuration)</span><span>Origem: agente Windows</span></div>
+    @if (device.Latest is not { } sample)
+    { <div class="panel empty-state"><h2>Aguardando primeira coleta</h2><p>O agente está cadastrado. Os dados serão exibidos após o primeiro envio confirmado pelo host.</p></div> }
+    else
+    {
+        var telemetry = sample.Telemetry;
+        <section class="metric-grid" aria-label="Últimas métricas">
+            <article class="metric"><span class="metric-label">CPU em uso</span><strong class="metric-value">@CpuUsage(telemetry)</strong><small>@(telemetry?.Cpu is { } cpu ? $"{cpu.LogicalProcessors} processadores lógicos" : "Sem métrica nesta amostra")</small>@if (telemetry?.Cpu is { State: CollectionState.Observed, UsagePercent: not null } observedCpu) { <progress class="meter" value="@observedCpu.UsagePercent" max="100" aria-label="Uso de CPU"></progress> }</article>
+            <article class="metric"><span class="metric-label">RAM em uso</span><strong class="metric-value">@MemoryUsage(telemetry)</strong><small>@(telemetry?.Memory is { State: CollectionState.Observed } memory ? $"{ConsoleDisplay.Bytes(memory.UsedBytes)} de {ConsoleDisplay.Bytes(memory.TotalBytes)}" : "Sem métrica nesta amostra")</small>@if (telemetry?.Memory is { State: CollectionState.Observed } observedMemory) { <progress class="meter" value="@observedMemory.UsagePercent" max="100" aria-label="Uso de RAM"></progress> }</article>
+            <article class="metric"><span class="metric-label">Volumes</span><strong class="metric-value">@(telemetry is null ? "—" : telemetry.Volumes.Length)</strong><small>Capacidade e espaço disponível abaixo</small></article>
+            <article class="metric"><span class="metric-label">Tempo ligado</span><strong class="metric-value">@ConsoleDisplay.Uptime(sample.UptimeSeconds)</strong><small>Desde a inicialização do Windows</small></article>
+        </section>
+        @if (telemetry is null) { <div class="notice info">Esta amostra foi enviada por uma versão anterior do agente. Atualize o agente para coletar utilização de CPU/RAM, discos, taxas de rede e sensores disponíveis.</div> }
+        <section class="detail-grid">
+            <article class="panel"><h2>Sistema operacional</h2><dl class="definition-grid"><dt>Windows</dt><dd>@ConsoleDisplay.Value(sample.OperatingSystem?.Caption)</dd><dt>Versão / build</dt><dd>@ConsoleDisplay.Value(sample.OperatingSystem?.Version) / @ConsoleDisplay.Value(sample.OperatingSystem?.Build)</dd><dt>Arquitetura</dt><dd>@ConsoleDisplay.Value(sample.OperatingSystem?.Architecture)</dd><dt>Domínio</dt><dd>@ConsoleDisplay.Value(telemetry?.Domain)</dd><dt>Versão do agente</dt><dd>@ConsoleDisplay.Value(telemetry?.AgentVersion)</dd><dt>Identidade do agente</dt><dd class="mono">@sample.AgentId</dd></dl></article>
+            <article class="panel"><h2>Hardware</h2><dl class="definition-grid"><dt>Fabricante</dt><dd>@ConsoleDisplay.Value(sample.Hardware?.Manufacturer)</dd><dt>Modelo</dt><dd>@ConsoleDisplay.Value(sample.Hardware?.Model)</dd><dt>CPU</dt><dd>@ConsoleDisplay.Value(sample.Hardware?.Cpu)</dd><dt>Núcleos / threads</dt><dd>@(telemetry?.Cpu?.PhysicalCores?.ToString() ?? "Indisponível") / @(telemetry?.Cpu?.LogicalProcessors.ToString() ?? "Indisponível")</dd><dt>RAM instalada</dt><dd>@ConsoleDisplay.Bytes(sample.Hardware?.MemoryBytes)</dd><dt>RAM utilizável</dt><dd>@(telemetry?.Memory is { State: CollectionState.Observed } usable ? ConsoleDisplay.Bytes(usable.TotalBytes) : "Indisponível")</dd><dt>RAM disponível</dt><dd>@(telemetry?.Memory is { State: CollectionState.Observed } available ? ConsoleDisplay.Bytes(available.AvailableBytes) : "Indisponível")</dd></dl></article>
+        </section>
+        <article class="panel"><div class="section-heading"><h2>Armazenamento</h2><span class="muted">Volumes e discos físicos</span></div>
+            @if (telemetry?.Volumes is not { Length: > 0 } volumes) { <p class="muted">Nenhum volume disponível nesta amostra.</p> }
+            else { <div class="table-scroll"><table class="data-table"><thead><tr><th>Volume</th><th>Sistema</th><th>Total</th><th>Usado</th><th>Livre</th><th>Utilização</th></tr></thead><tbody>@foreach (var volume in volumes) { <tr><td><strong>@volume.Name</strong><span class="table-detail">@volume.Label</span></td><td>@volume.FileSystem</td><td>@VolumeBytes(volume, volume.TotalBytes)</td><td>@VolumeBytes(volume, volume.TotalBytes - Math.Min(volume.FreeBytes, volume.TotalBytes))</td><td>@VolumeBytes(volume, volume.FreeBytes)</td><td>@if(volume.State == CollectionState.Observed && volume.TotalBytes > 0) { <span>@ConsoleDisplay.Percent(VolumeUsage(volume))</span><progress class="meter" value="@VolumeUsage(volume)" max="100" aria-label="@($"Espaço usado em {volume.Name}")"></progress> } else { @ConsoleDisplay.Collection(volume.State) }</td></tr> }</tbody></table></div> }
+            @if (telemetry?.Disks is { Length: > 0 } disks) { <h3 class="spaced">Discos físicos</h3><div class="table-scroll"><table class="data-table"><thead><tr><th>Modelo</th><th>Interface</th><th>Capacidade</th></tr></thead><tbody>@foreach (var disk in disks) { <tr><td>@disk.Model</td><td>@ConsoleDisplay.Value(disk.InterfaceType)</td><td>@ConsoleDisplay.Bytes(disk.SizeBytes)</td></tr> }</tbody></table></div> }
+        </article>
+        <section class="detail-grid">
+            <article class="panel"><div class="section-heading"><h2>Temperaturas</h2><span class="badge neutral">@(telemetry is null ? "Não coletado" : ConsoleDisplay.Collection(telemetry.TemperatureState))</span></div>@if (telemetry?.Temperatures is not { Length: > 0 } temperatures) { <p class="muted">Nenhum sensor compatível foi informado. A disponibilidade depende do hardware, do coletor e das permissões.</p> } else { <div class="sensor-list">@foreach (var sensor in temperatures) { <div class="sensor-row"><div><strong>@sensor.Name</strong><small>@sensor.Hardware · @sensor.Source</small></div><div class="sensor-reading">@(sensor.State == CollectionState.Observed && sensor.Celsius is not null ? $"{sensor.Celsius.Value.ToString("0.0", CultureInfo.GetCultureInfo("pt-BR"))} °C" : ConsoleDisplay.Collection(sensor.State))</div></div> }</div> }</article>
+            <article class="panel"><div class="section-heading"><h2>Sessões de usuários</h2><span class="badge neutral">@ConsoleDisplay.Collection(sample.SessionState)</span></div>@if(sample.SessionState != CollectionState.Observed) { <p class="muted">O agente não conseguiu consultar as sessões. Isso não significa que não há usuário logado.</p> } else if(sample.Sessions.Length == 0) { <p class="muted">Nenhuma sessão de usuário informada nesta coleta.</p> } else { <div class="table-scroll"><table class="data-table"><thead><tr><th>Usuário</th><th>Sessão</th><th>Estado</th></tr></thead><tbody>@foreach(var session in sample.Sessions) { <tr><td>@session.User<span class="table-detail">@session.Domain</span></td><td>@session.Transport · @session.Id</td><td>@InventoryPresentation.SessionLabel(session.State)</td></tr> }</tbody></table></div> }</article>
+        </section>
+        @if (telemetry?.Fans is { Length: > 0 } || telemetry?.Voltages is { Length: > 0 })
+        {
+            <section class="detail-grid">
+                <article class="panel"><div class="section-heading"><h2>Ventoinhas</h2><span class="muted">Rotação informada pela placa</span></div>@if (telemetry?.Fans is not { Length: > 0 } fans) { <p class="muted">Nenhuma ventoinha em rotação foi informada.</p> } else { <div class="sensor-list">@foreach (var fan in fans) { <div class="sensor-row"><div><strong>@fan.Name</strong><small>@fan.Hardware · @fan.Source</small></div><div class="sensor-reading">@(fan.State == CollectionState.Observed && fan.Rpm is not null ? $"{fan.Rpm.Value.ToString("N0", CultureInfo.GetCultureInfo("pt-BR"))} RPM" : ConsoleDisplay.Collection(fan.State))</div></div> }</div> }</article>
+                <article class="panel"><div class="section-heading"><h2>Tensões</h2><span class="muted">Entradas calibradas pelo próprio chip</span></div>@if (telemetry?.Voltages is not { Length: > 0 } voltages) { <p class="muted">Nenhuma tensão foi informada.</p> } else { <div class="sensor-list">@foreach (var rail in voltages) { <div class="sensor-row"><div><strong>@rail.Name</strong><small>@rail.Hardware · @rail.Source</small></div><div class="sensor-reading">@(rail.State == CollectionState.Observed && rail.Volts is not null ? $"{rail.Volts.Value.ToString("0.000", CultureInfo.GetCultureInfo("pt-BR"))} V" : ConsoleDisplay.Collection(rail.State))</div></div> }</div> }</article>
+            </section>
+        }
+        <article class="panel"><h2>Classificação e proveniência</h2><dl class="definition-grid"><dt>Tipo</dt><dd>@InventoryPresentation.TypeLabel(device.Classification?.Type)</dd><dt>Origem</dt><dd>@ConsoleDisplay.Value(device.Classification?.Source)</dd><dt>Confiança</dt><dd>@InventoryPresentation.ConfidenceLabel(device.Classification?.Confidence)</dd><dt>Evidência</dt><dd>@(device.Classification is null ? "Indisponível" : string.Join(" · ", device.Classification.Evidence))</dd></dl><p class="footnote">IPs e gateway não provam a conexão física entre switches. A topologia exige coleta de equipamentos de rede ou confirmação manual.</p></article>
+        <article class="panel"><div class="section-heading"><div><h2>Histórico de coletas</h2><p class="muted">Até 120 amostras mais recentes, dentro da retenção do host.</p></div><button class="button small" @onclick="LoadHistoryAsync">Atualizar histórico</button></div>@if(HistoryError is not null) { <div class="notice warning">@HistoryError</div> } else if(History.Length == 0) { <p class="muted">Nenhuma amostra histórica disponível.</p> } else { <div class="table-scroll"><table class="data-table"><thead><tr><th>Horário da coleta</th><th>CPU</th><th>RAM</th><th>Tempo ligado</th><th>Sensores</th></tr></thead><tbody>@foreach(var item in History) { <tr><td class="timestamp">@ConsoleDisplay.Date(item.CollectedAt, Configuration)</td><td>@CpuUsage(item.Telemetry)</td><td>@MemoryUsage(item.Telemetry)</td><td>@ConsoleDisplay.Uptime(item.UptimeSeconds)</td><td>@(item.Telemetry?.Temperatures.Count(t => t.State == CollectionState.Observed && t.Celsius is not null) ?? 0)</td></tr> }</tbody></table></div> }</article>
+    }
+}
+@code {
+    [Parameter] public Guid AgentId { get; set; }
+    [Parameter] public bool ShowHeading { get; set; } = true;
+    private DeviceSnapshot? Device => Devices.FirstOrDefault(d => d.AgentId == AgentId);
+    private InventorySample[] History = [];
+    private string? HistoryError;
+    protected override async Task OnParametersSetAsync() => await LoadHistoryAsync();
+    private async Task RefreshAllAsync() { await RefreshAsync(); await LoadHistoryAsync(); }
+    private async Task LoadHistoryAsync()
+    {
+        if ((await Authentication.GetAuthenticationStateAsync()).User.Identity?.IsAuthenticated != true) return;
+        try { History = await Store.HistoryAsync(AgentId, 120); HistoryError = null; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { HistoryError = "Não foi possível consultar o histórico."; }
+    }
+    private string Contact(DeviceSnapshot device) => device.ReceivedAt is null ? "Amostra ainda não recebida" : $"Recebimento da amostra · {ConsoleDisplay.Age(device.ReceivedAt, Now)}";
+    private static string CpuUsage(HostTelemetry? telemetry) => telemetry?.Cpu is { State: CollectionState.Observed } cpu ? ConsoleDisplay.Percent(cpu.UsagePercent) : telemetry?.Cpu is null ? "Não coletado" : ConsoleDisplay.Collection(telemetry.Cpu.State);
+    private static string MemoryUsage(HostTelemetry? telemetry) => telemetry?.Memory is { State: CollectionState.Observed } memory ? ConsoleDisplay.Percent(memory.UsagePercent) : telemetry?.Memory is null ? "Não coletado" : ConsoleDisplay.Collection(telemetry.Memory.State);
+    private static string VolumeBytes(VolumeTelemetry volume, ulong bytes) => volume.State == CollectionState.Observed ? ConsoleDisplay.Bytes(bytes) : ConsoleDisplay.Collection(volume.State);
+    private static double VolumeUsage(VolumeTelemetry volume) => volume.TotalBytes == 0 ? 0 : 100d * (volume.TotalBytes - Math.Min(volume.FreeBytes, volume.TotalBytes)) / volume.TotalBytes;
+}
+
+
+

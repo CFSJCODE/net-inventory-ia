@@ -1,0 +1,11 @@
+@page "/console/devices"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inherits UnifiedInventoryPageBase
+<PageTitle>Dispositivos · NetInventory</PageTitle>
+<div class="page-heading"><div><div class="eyebrow">Inventário central</div><h1>Dispositivos</h1><p class="muted">Consulte os dispositivos descobertos na rede e o hardware dos agentes Windows.</p></div><button class="button" @onclick="RefreshAsync" disabled="@Loading">Atualizar</button></div>
+@if (Error is not null) { <div class="notice warning" role="alert">@Error</div> }
+<HostProfileNotice />
+<section class="panel inventory-panel"><div class="filter-bar"><label class="search-label" for="device-search">Buscar no inventário<input id="device-search" type="search" @bind="query" @bind:event="oninput" placeholder="Nome, IP, MAC, tipo, sistema ou usuário" /></label><span class="muted">@Filtered.Length de @Devices.Length dispositivo(s)</span></div><UnifiedDeviceTable Devices="Filtered" Now="Now" /></section>
+<p class="footnote">Consulta em @ConsoleDisplay.Date(RefreshedAt, Configuration). Os nomes e tipos fixados do inventário são preservados.</p>
+@code { private string query = ""; private UnifiedDevice[] Filtered => Devices.Where(d => UnifiedDisplay.Matches(d, query)).ToArray(); }
