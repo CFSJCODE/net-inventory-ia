@@ -36,8 +36,11 @@
 
 ## Sumário
 
-- [Download do agente para Windows (.exe)](#download-do-agente-para-windows-exe)
+- [Download do instalador para Windows (.exe)](#download-do-instalador-para-windows-exe)
 - [O que ele faz](#o-que-ele-faz)
+- [Modos de uso: local ou servidor](#modos-de-uso-local-ou-servidor)
+- [Modo servidor: instalar o host no Ubuntu Server](#modo-servidor-instalar-o-host-no-ubuntu-server)
+- [Agente Windows](#agente-windows)
 - [Telas e funcionalidades](#telas-e-funcionalidades)
 - [A IA trabalhando na administração da rede](#a-ia-trabalhando-na-administração-da-rede)
 - [Instalação (Windows)](#instalação-windows)
@@ -48,7 +51,7 @@
 - [Limitações conhecidas](#limitações-conhecidas)
 - [Licença e autor](#licença-e-autor)
 
-## Download do agente para Windows (.exe)
+## Download do instalador para Windows (.exe)
 
 O instalador **não fica versionado no Git** (as pastas `installer/output/` e `installer/dist/` estão no `.gitignore`). Ele é gerado pelo workflow [`release.yml`](.github/workflows/release.yml) a cada tag `v*` e publicado como anexo da Release no GitHub.
 
@@ -80,6 +83,188 @@ O NetInventory roda como serviço em um computador da sua rede e mostra, num pai
 | Topologia | Histórico com resumo da IA |
 |---|---|
 | ![Mapa da topologia](site/screens/topologia.webp) | ![Histórico](site/screens/historico.webp) |
+
+## Modos de uso: local ou servidor
+
+O NetInventory pode funcionar de dois jeitos. Nos dois, o painel web é o mesmo e cada computador Windows que você quer acompanhar recebe o **agente**, um serviço que coleta sistema operacional, usuário logado, CPU, memória, discos, rede e sensores daquela máquina e envia ao **host**.
+
+| | Modo local (Windows) | Modo servidor (Ubuntu Server) |
+|---|---|---|
+| Onde roda o host | No próprio PC Windows, junto com o agente | Num Ubuntu Server da rede (máquina física ou VM) |
+| Serviços | `NetInventoryDotNetHost` + `NetInventoryDotNetAgent` no Windows | `netinventory-dotnet.service` (systemd) no Ubuntu; `NetInventoryDotNetAgent` em cada Windows |
+| Endereço do painel | `http://localhost:3000` | `http://<ip-do-servidor>:3000` (ex.: `http://192.168.0.50:3000`) |
+| Destino do agente | `localhost`, porta 3000 | IP do servidor, porta 3000 |
+| Indicado para | Uso individual, acompanhar a própria máquina e a rede dela | Vários computadores enviando dados para um ponto central, com o painel aberto em qualquer PC da LAN |
+| Configuração do host | Pela página **Servidor › Host** do painel | No terminal do Ubuntu, com `sudo netinventoryctl` |
+
+Como as peças se encaixam no modo servidor:
+
+```text
+ PC Windows (agente) ─┐
+ PC Windows (agente) ─┼─ HTTP na LAN, porta 3000 ──▶ Ubuntu Server
+ PC Windows (agente) ─┘                              ├─ host ASP.NET Core (.NET 10): API dos agentes, contas, páginas "Servidor"
+                                                     ├─ motor original Next.js (filho do host, só em 127.0.0.1:3001)
+ Navegador de qualquer PC da LAN ──────────────────▶ └─ SQLite em /var/lib/netinventory-dotnet
+```
+
+O host .NET serve o painel original (o mesmo visual e as mesmas telas descritas abaixo) e acrescenta o grupo **Servidor** no menu lateral (Agentes, Conexão, Host e Segurança). O motor Node.js do painel roda como processo filho do host, escutando somente em `127.0.0.1:3001`, e os dois usam um único banco SQLite. O scan da rede é feito pelo host, então no modo servidor ele enxerga a rede onde o Ubuntu está.
+
+> **Situação do código:** o host .NET, o agente Windows e os scripts de implantação citados abaixo (pasta `dotnet/`) foram desenvolvidos e testados no PC do autor (Ubuntu Server 24.04 numa VM VirtualBox, IP fixo `192.168.0.50`) e ainda serão enviados a este repositório. Até lá, o instalador publicado em Releases é o do NetInventory original (seção [Instalação (Windows)](#instalação-windows)).
+
+## Modo servidor: instalar o host no Ubuntu Server
+
+### Pré-requisitos
+
+- **Servidor:** Ubuntu Server 24.04 LTS (ou 22.04) x64 com systemd, na mesma rede dos PCs. 2 vCPU, 4 GB de RAM e 25 GB de disco bastam. Numa VM, use a placa de rede em modo **Bridge** para o servidor ter IP próprio na LAN.
+- **Pacotes no Ubuntu:** `iputils-ping` e `net-tools` (o scan usa `ping` e `arp`), `openssl`, `curl`, `xz-utils`, `npm`, `sqlite3` e `ufw`.
+- **Runtimes:** o host é publicado *self-contained* (traz o runtime .NET 10 junto), então o Ubuntu **não precisa do .NET instalado**. O Node.js 24 do motor também é baixado e conferido pelo script de empacotamento. O **SDK .NET 10** só é necessário no Windows onde o pacote é compilado.
+
+### 1. IP fixo no servidor
+
+Confira o nome da placa com `ip a` e edite o arquivo em `/etc/netplan/` (exemplo para `192.168.0.50`, gateway `192.168.0.1`):
+
+```yaml
+network:
+  version: 2
+  ethernets:
+    enp0s3:
+      dhcp4: false
+      addresses: [192.168.0.50/24]
+      routes:
+        - to: default
+          via: 192.168.0.1
+      nameservers:
+        addresses: [192.168.0.1, 1.1.1.1]
+```
+
+```bash
+sudo netplan apply
+sudo apt update
+sudo apt install -y iputils-ping net-tools sqlite3 curl xz-utils npm openssl ufw
+```
+
+### 2. No Windows: preparar os arquivos
+
+Na pasta `dotnet` do repositório, publique o host para Linux:
+
+```powershell
+dotnet publish .\src\NetInventory.Server.Host\NetInventory.Server.Host.csproj -c Release -r linux-x64 --self-contained true -o D:\migracao\linux-x64-host
+Copy-Item .\deploy D:\migracao\deploy -Recurse
+New-Item -ItemType Directory D:\migracao\NetInventory-windows, D:\migracao\dados
+tar -cf D:\migracao\NetInventory-windows\motor.tar -C "C:\Program Files\NetInventory" app prisma
+```
+
+O `motor.tar` leva o painel original já instalado no Windows. Para levar também o inventário existente, copie o banco e o `config.json` **com o host parado** (PowerShell como administrador; não pode haver `netinventory.db-wal` ao lado do banco):
+
+```powershell
+Copy-Item C:\ProgramData\NetInventoryDotNet\data\server\netinventory.db D:\migracao\dados\
+Copy-Item C:\ProgramData\NetInventoryDotNet\data\server\config.json D:\migracao\dados\
+scp -r D:\migracao usuario@192.168.0.50:~/
+```
+
+### 3. No Ubuntu: empacotar o motor e instalar
+
+```bash
+cd ~/migracao
+mkdir -p NetInventory-windows/extraido && tar -xf NetInventory-windows/motor.tar -C NetInventory-windows/extraido
+bash deploy/package-linux-engine.sh --source NetInventory-windows/extraido --output ~/netinventory-engine
+sudo bash deploy/install-linux.sh --package ~/migracao/linux-x64-host --engine ~/netinventory-engine --import-data ~/migracao/dados --port 3000 --start
+```
+
+O `package-linux-engine.sh` mantém o JavaScript do painel intacto e acrescenta as bibliotecas nativas Linux (engine Prisma da mesma versão, `sharp`) e o Node.js oficial com SHA-256 conferido. Ele precisa de internet só durante essa etapa.
+
+Opções do `install-linux.sh`:
+
+| Opção | O que faz |
+|---|---|
+| `--package <pasta>` | Pacote `linux-x64` publicado no passo 2 (obrigatório) |
+| `--engine <pasta>` | Motor preparado pelo `package-linux-engine.sh`; sem ele o host sobe só com as páginas .NET |
+| `--import-data <pasta>` | Pasta com `netinventory.db` e `config.json`; copiados só se o servidor ainda não tiver banco |
+| `--port <número>` | Porta do painel e dos agentes (padrão 3000; aceita 1024–65535, exceto 3001) |
+| `--start` | Habilita e inicia o serviço ao final |
+| `--https-proxy` | Prende o host em `127.0.0.1:7444` para ficar atrás de um Nginx com HTTPS |
+
+O instalador cria o usuário de serviço `netinventory-dotnet` e o serviço `netinventory-dotnet.service` (`Type=notify`, reinício automático em falha), e instala o comando `netinventoryctl`. Os caminhos ficam assim:
+
+| Caminho | Conteúdo |
+|---|---|
+| `/opt/netinventory-dotnet` | Host .NET |
+| `/opt/netinventory-engine` | Motor do painel original |
+| `/var/lib/netinventory-dotnet` | Banco, `config.json` e chaves |
+| `/etc/netinventory-dotnet/backend.env` | Configuração do serviço (modo 0600) |
+| `/var/backups/netinventory-dotnet` | Backups gerados pelo `netinventoryctl backup` |
+
+Sem banco importado, a conta inicial é `admin` e a senha fica em `/etc/netinventory-dotnet/console-bootstrap-password.txt`. Com banco importado, as contas mantêm as senhas.
+
+### 4. Configurar com `netinventoryctl`
+
+Toda a configuração do host é feita no terminal do próprio servidor. O painel só mostra a configuração em vigor (em **Servidor › Host**) e não altera o servidor.
+
+```bash
+sudo netinventoryctl set address 192.168.0.50     # IP que a página Host mostra aos agentes
+sudo netinventoryctl firewall 192.168.0.0/24      # libera a porta no ufw só para a sua rede
+sudo netinventoryctl apply                        # reinicia o serviço e espera o /health
+sudo netinventoryctl status
+```
+
+O `status` deve mostrar `Porta: 3000`, `Exposicao: lan`, `Agentes na LAN: http://192.168.0.50:3000/` e `Health: respondendo`.
+
+| Comando | O que faz |
+|---|---|
+| `status` | Estado do serviço, endereços para os agentes e resposta do `/health` |
+| `show` | Configuração de rede atual (sem credenciais) |
+| `set port <1024-65535>` | Porta do painel e dos agentes |
+| `set exposure lan\|proxy` | `lan`: todas as interfaces; `proxy`: só `127.0.0.1`, atrás do Nginx |
+| `set lan-http on\|off` | Aceita HTTP vindo de IPs privados da LAN |
+| `set address <ip\|->` | IPv4 privado anunciado aos agentes (`-` remove) |
+| `set public-url <https://...\|->` | URL pública HTTPS do proxy reverso |
+| `apply` | Aplica as mudanças de `set` (reinicia e aguarda o `/health`) |
+| `invite [rótulo] [minutos] [id-do-agente]` | Gera um convite de uso único para cadastrar um agente |
+| `logs [-f]` | Log do serviço (`journalctl`) |
+| `backup [pasta]` | Cópia consistente dos bancos, `config.json` e chaves |
+| `firewall [rede/cidr]` | Libera a porta no `ufw` para a rede (padrão `192.168.0.0/16`) |
+
+Para backup diário às 2h: `sudo crontab -e` e acrescente `0 2 * * * /usr/local/sbin/netinventoryctl backup`.
+
+### 5. Abrir o painel e gerar convites
+
+De qualquer PC da rede, abra `http://192.168.0.50:3000/` (troque pelo IP do seu servidor).
+
+Cada agente se cadastra com um **convite** de uso único e prazo curto; a senha do administrador nunca vai para os agentes. Gere o convite de um destes jeitos:
+
+```bash
+sudo netinventoryctl invite pc-financeiro 30          # PC novo, convite válido por 30 minutos
+sudo netinventoryctl invite 4600G 30 <id-do-agente>   # recadastro de um agente que veio no banco migrado
+```
+
+Ou pelo painel, em **Servidor › Agentes**: gere um convite para um PC novo, ou **Recadastrar** na linha de um agente que já existia no banco importado (o convite comum é recusado para um agente já existente, para que um PC não assuma a identidade de outro).
+
+## Agente Windows
+
+### Instalar
+
+1. Baixe o `NetInventory-Agente-Setup.exe` (cerca de 160 MB, *self-contained*: não precisa instalar .NET). Enquanto ele não estiver anexado às Releases, gere-o na pasta `dotnet` com `.\scripts\Build-AgentSetup.ps1` (saída em `dotnet\.artifacts\setup\`).
+2. Execute e aceite o pedido de administrador. A tela **Instalar o NetInventory Agente** pede o destino das coletas:
+
+| Campo | Modo local | Modo servidor |
+|---|---|---|
+| Destino | Host neste computador · `http://localhost:3000` | Host em outro computador da rede |
+| Endereço do host | — | IP do servidor, ex.: `192.168.0.50` |
+| Porta | 3000 | 3000 |
+| Usar HTTPS | Não | Não na LAN; obrigatório fora dela |
+| Convite de cadastro | Gerado no painel local | Gerado no servidor (`netinventoryctl invite` ou Servidor › Agentes) |
+
+3. Use **Testar conexão** para confirmar que o host responde e clique em **Instalar**.
+
+O instalador registra o serviço `NetInventoryDotNetAgent` com início automático, instala o aplicativo em `C:\Program Files\NetInventoryDotNet\desktop` e cria atalhos na Área de Trabalho e no Menu Iniciar. A coleta começa na hora, a cada 30 segundos, e em até 30 segundos o PC aparece em **Servidor › Agentes** no painel.
+
+### Depois de instalado
+
+- O aplicativo **NetInventory Agente** mostra o que está sendo coletado neste PC (visão geral, hardware e sensores, armazenamento, rede, sessões, comunicação com o host e configurações). Fechar a janela não para a coleta: quem coleta e envia é o serviço.
+- Para trocar o host ou recadastrar, execute o instalador de novo e escolha **Manter o destino atual** ou outro destino, com um convite novo.
+- Se o host ficar fora do ar, o agente guarda as coletas numa fila e reenvia quando ele voltar; ele não cria um inventário local paralelo.
+- HTTP só é aceito para IPv4 privado (10.x, 172.16–31.x, 192.168.x). Fora da rede local, use HTTPS com certificado válido ou uma VPN; nunca abra a porta 3000 no roteador.
+- Para remover: **Configurações › Aplicativos › NetInventory Agente**. A identidade e a fila ficam em `C:\ProgramData\NetInventoryDotNet` para uma reinstalação manter o mesmo cadastro.
 
 ## Telas e funcionalidades
 
@@ -240,14 +425,16 @@ O [`installer/build.mjs`](installer/build.mjs) faz o build *standalone* do Next 
 2. Crie e envie a tag: `git tag v0.2.11 && git push origin v0.2.11`.
 3. O workflow [`release.yml`](.github/workflows/release.yml) roda em `windows-latest`: instala o Inno Setup, executa os testes, gera o `.exe` e o anexa à Release com notas automáticas. Também pode ser disparado manualmente (`workflow_dispatch`).
 
+Também é possível criar um workflow semelhante para o host .NET e o agente: compilar o `NetInventory-Agente-Setup.exe` (e o pacote `linux-x64` do host) num runner do GitHub e anexar a pasta gerada em `.zip` à Release, para que o guia acima comece direto pelo download.
+
 Para atualizar um serviço já instalado com um build local, sem gerar instalador, há os scripts em [`scripts/windows/`](scripts/windows/) (`update.bat` pede privilégio de administrador e chama `update-service.ps1`).
 
 ## Limitações conhecidas
 
-- Só Windows no instalador; o painel é servido em HTTP na rede local (não exponha a porta 3000 para a internet).
+- O instalador original é só para Windows; o host em Linux usa o [modo servidor](#modo-servidor-instalar-o-host-no-ubuntu-server). O painel é servido em HTTP na rede local (não exponha a porta 3000 para a internet).
 - O instalador não tem assinatura digital, por isso o aviso do SmartScreen.
 - Alertas no navegador e por e-mail; ainda sem Telegram ou WhatsApp e sem exportação do inventário.
-- Sistema operacional e usuário logado não são detectados (exigiriam agente ou credenciais).
+- No painel original, sistema operacional e usuário logado só aparecem para os PCs com o [agente Windows](#agente-windows).
 - A classificação de tipo é heurística; a topologia sem SNMP mostra ligações presumidas ao gateway.
 
 Sugestões e contribuições são bem-vindas: abra uma [issue](https://github.com/CFSJCODE/net-inventory-ia/issues). Para falhas de segurança, veja o [SECURITY.md](.github/SECURITY.md).
