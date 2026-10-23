@@ -1,0 +1,5 @@
+{
+  "prompt": "No Net-Inventory, o painel salva regras de classificação por IP sem conferir se o padrão é válido (src/lib/network/ip-rules.ts). Crie e exporte em ip-rules.ts a função `isValidRulePattern(pattern: string): boolean`, que devolve true somente para os formatos que matchesIpPattern entende: IP único (\"192.168.0.50\"), faixa com hífen entre dois IPs válidos (\"192.168.0.10-192.168.0.20\", com ou sem espaços em volta do hífen), CIDR com prefixo de 0 a 32 (\"192.168.0.0/24\") e curinga no final (\"192.168.0.*\"). Texto vazio, octetos acima de 255, prefixo fora de 0..32, letras e padrões incompletos (\"192.168.0\") e asterisco colado a dígitos (\"1*\") são inválidos. Além disso, `findMatchingRule` deve ignorar regras com padrão inválido, mesmo que estejam ativas. Adicione testes e mantenha os existentes passando.",
+  "hidden_tests": ["src/lib/network/ip-rules-validation.harness2.test.ts"],
+  "regression_tests": ["src/lib/network/ip-rules.test.ts"]
+}

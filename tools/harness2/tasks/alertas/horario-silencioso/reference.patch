@@ -1,0 +1,29 @@
+diff --git a/src/lib/alerts/rules.ts b/src/lib/alerts/rules.ts
+index 1286707..ff0dcd5 100644
+--- a/src/lib/alerts/rules.ts
++++ b/src/lib/alerts/rules.ts
+@@ -70,6 +70,24 @@ export function formatDuration(ms: number): string {
+   return `${Math.floor(h / 24)}d ${h % 24}h`;
+ }
+ 
++function minutesOfDay(hhmm: string): number | null {
++  const m = /^(\d{2}):(\d{2})$/.exec(hhmm.trim());
++  if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) return null;
++  return Number(m[1]) * 60 + Number(m[2]);
++}
++
++/**
++ * Horário silencioso: true quando o horário local de `now` está em [start, end). A janela pode
++ * atravessar a meia-noite ("22:00" a "06:00"); start igual a end ou horário inválido não silencia.
++ */
++export function isQuietTime(now: Date, start: string, end: string): boolean {
++  const from = minutesOfDay(start);
++  const to = minutesOfDay(end);
++  if (from === null || to === null || from === to) return false;
++  const cur = now.getHours() * 60 + now.getMinutes();
++  return from < to ? cur >= from && cur < to : cur >= from || cur < to;
++}
++
+ /** Resultado de uma rodada de ping: respostas recebidas e latência média das respostas. */
+ export interface PingStats {
+   sent: number;

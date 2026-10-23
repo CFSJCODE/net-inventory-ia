@@ -1,0 +1,6 @@
+.vendor/
+.venv/
+runs/
+.env
+*.egg-info/
+__pycache__/

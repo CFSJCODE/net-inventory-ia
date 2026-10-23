@@ -1,0 +1,15 @@
+diff --git a/src/lib/alerts/rules.ts b/src/lib/alerts/rules.ts
+index 1286707..f674801 100644
+--- a/src/lib/alerts/rules.ts
++++ b/src/lib/alerts/rules.ts
+@@ -66,8 +66,8 @@ export function formatDuration(ms: number): string {
+   if (min < 1) return "menos de 1 min";
+   if (min < 60) return `${min} min`;
+   const h = Math.floor(min / 60);
+-  if (h < 24) return `${h}h ${min % 60}min`;
+-  return `${Math.floor(h / 24)}d ${h % 24}h`;
++  if (h < 24) return min % 60 ? `${h}h ${min % 60}min` : `${h}h`;
++  return h % 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : `${Math.floor(h / 24)}d`;
+ }
+ 
+ /** Resultado de uma rodada de ping: respostas recebidas e latência média das respostas. */

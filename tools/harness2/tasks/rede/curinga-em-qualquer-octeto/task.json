@@ -1,0 +1,5 @@
+{
+  "prompt": "No Net-Inventory, as regras de classificação por IP (src/lib/network/ip-rules.ts, função matchesIpPattern) só aceitam o curinga `*` no final do padrão, como \"192.168.0.*\". Quero poder usar o curinga em qualquer octeto, por exemplo \"192.168.*.10\" (o host .10 de todas as sub-redes 192.168.x) ou \"10.*.*.1\". Regras: cada `*` vale exatamente um octeto inteiro (0 a 255); um padrão com menos de quatro octetos que termina em `*` continua cobrindo todos os octetos restantes (\"192.168.*\" casa com 192.168.5.20), como hoje; um asterisco colado a dígitos (\"192.168.1*\") não é um padrão válido e não casa com nada. Faixas, CIDR e IP único devem continuar funcionando como antes. Adicione testes para o novo comportamento e mantenha os testes existentes passando.",
+  "hidden_tests": ["src/lib/network/ip-rules.harness2.test.ts"],
+  "regression_tests": ["src/lib/network/ip-rules.test.ts"]
+}

@@ -7,6 +7,7 @@
 - `prisma/`: schema e migrações do banco SQLite.
 - `installer/`: configuração, scripts e runtime do instalador Windows (Inno Setup + WinSW).
 - `site/`: site de download e imagens de apresentação.
+- `tools/harness2/`: integração opcional com o Harness² para refinar o harness dos agentes de código (adaptador Python, tarefas com testes ocultos e harness base).
 - `public/`: ícones e recursos estáticos da aplicação.
 - `docs/`: documentação técnica, notas de versão e relatórios de análise.
 - `agents_ia/`: instruções e contexto para Antigravity, Claude Code e outros agentes de IA.

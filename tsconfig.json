@@ -14,5 +14,5 @@
     "next-env.d.ts",
     ".next-installer/types/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "tools"]
 }

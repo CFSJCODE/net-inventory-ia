@@ -408,6 +408,8 @@ npm run dev                   # http://localhost:3000
 | `npm run build:installer` | Gera `installer/output/NetInventory-Setup-<versão>.exe` |
 | `npm run site` | Serve o site de apresentação (`site/`) em `http://localhost:8080` |
 
+Para refinar as instruções dos agentes de IA que trabalham no código com o [Harness²](https://github.com/google-research/harness2), veja [`tools/harness2/`](tools/harness2/README.md) (Linux/WSL, opcional, não afeta o app).
+
 ### Stack
 
 - **Next.js 15** (App Router, Server Actions), **React 19**, **TypeScript**, **Tailwind CSS v4**, shadcn/ui, TanStack Query, Zustand
