@@ -1,0 +1,5 @@
+{
+  "prompt": "No Net-Inventory, os e-mails de alerta mostram a duração de um problema com `formatDuration` (src/lib/alerts/rules.ts). Hoje ela escreve \"1h 0min\" e \"2d 0h\", o que fica estranho. Ajuste para omitir a parte zerada: 60 min vira \"1h\", 2 dias exatos viram \"2d\", 1 dia e 3 horas continua \"1d 3h\" e 1h05 continua \"1h 5min\". Menos de 1 minuto continua \"menos de 1 min\" e de 1 a 59 minutos continua \"N min\". Arredonde para o minuto mais próximo como hoje. Adicione testes e mantenha os existentes passando.",
+  "hidden_tests": ["src/lib/alerts/duration.harness2.test.ts"],
+  "regression_tests": ["src/lib/alerts/rules.test.ts", "src/lib/alerts/email-template.test.ts", "src/lib/alerts/alert-emails.test.ts"]
+}

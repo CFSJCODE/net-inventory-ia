@@ -1,0 +1,5 @@
+{
+  "prompt": "No Net-Inventory, quero preparar um \"horário silencioso\" para os alertas por e-mail. Em src/lib/alerts/rules.ts (que é puro, sem banco nem rede), crie e exporte `isQuietTime(now: Date, start: string, end: string): boolean`. `start` e `end` vêm no formato \"HH:MM\" (24 horas) e usam o horário local de `now`. Devolve true quando o horário de `now` está dentro da janela: o início é inclusivo e o fim é exclusivo. A janela pode atravessar a meia-noite (\"22:00\" até \"06:00\" cobre 23:30 e 05:59, mas não 06:00 nem 21:59). Se `start` for igual a `end`, não há janela (sempre false). Se algum dos horários for inválido (\"25:00\", \"7h\", \"\"), devolva false em vez de lançar erro. Adicione testes e mantenha os existentes passando.",
+  "hidden_tests": ["src/lib/alerts/quiet-time.harness2.test.ts"],
+  "regression_tests": ["src/lib/alerts/rules.test.ts"]
+}

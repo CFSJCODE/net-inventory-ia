@@ -1,0 +1,42 @@
+diff --git a/src/lib/network/ip-rules.ts b/src/lib/network/ip-rules.ts
+index 5de4ef6..0ec2128 100644
+--- a/src/lib/network/ip-rules.ts
++++ b/src/lib/network/ip-rules.ts
+@@ -79,14 +79,35 @@ export function matchesIpPattern(ip: string, pattern: string): boolean {
+ }
+ 
+ /**
+- * Encontra a primeira regra ativa que corresponda ao IP informado.
++ * Indica se o padrão está em um dos formatos que `matchesIpPattern` entende: IP único, faixa,
++ * CIDR (/0 a /32) ou curinga no final (ex: 192.168.0.*).
++ */
++export function isValidRulePattern(pattern: string): boolean {
++  const clean = pattern.trim();
++  if (!clean) return false;
++  if (clean.includes("-")) {
++    const parts = clean.split("-").map((s) => s.trim());
++    return parts.length === 2 && parts.every(isValidIp);
++  }
++  if (clean.includes("/")) {
++    const [base, prefix] = clean.split("/").map((s) => s.trim());
++    return isValidIp(base) && /^\d{1,2}$/.test(prefix) && Number(prefix) <= 32;
++  }
++  if (clean.includes("*")) {
++    return /^(\d{1,3}\.){1,3}\*$/.test(clean) && clean.split(".").slice(0, -1).every((o) => Number(o) <= 255);
++  }
++  return /^\d{1,3}(\.\d{1,3}){3}$/.test(clean) && isValidIp(clean);
++}
++
++/**
++ * Encontra a primeira regra ativa, com padrão válido, que corresponda ao IP informado.
+  */
+ export function findMatchingRule(
+   ip: string,
+   rules: IpClassificationRule[],
+ ): IpClassificationRule | null {
+   for (const rule of rules) {
+-    if (rule.enabled && matchesIpPattern(ip, rule.pattern)) {
++    if (rule.enabled && isValidRulePattern(rule.pattern) && matchesIpPattern(ip, rule.pattern)) {
+       return rule;
+     }
+   }

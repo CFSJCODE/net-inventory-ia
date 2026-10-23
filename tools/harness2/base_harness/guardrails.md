@@ -1,0 +1,5 @@
+- Não instale, remova nem atualize dependências; `node_modules` é compartilhado e somente leitura.
+- Não rode `npm run build`, `next dev` nem migrações do Prisma; não há banco nesta cópia.
+- Não altere arquivos fora do escopo da tarefa nem reformate arquivos inteiros.
+- Não use dados reais de rede (IPs, MACs, nomes de aparelhos); use exemplos fictícios.
+- Não quebre testes existentes: rode também o arquivo de teste que já existia para o módulo.
