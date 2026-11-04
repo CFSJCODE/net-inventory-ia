@@ -441,6 +441,8 @@
       event.preventDefault();
       serverOpen = !serverOpen;
       applyServerOpen(group);
+      // The panel's top loading bar starts on any link click; this one only toggles the group, nothing loads.
+      window.dispatchEvent(new Event("top-loading-bar:cancel"));
     });
     const list = plainClone(subList, false);
     for (const [href, text] of pages) {
