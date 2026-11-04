@@ -148,8 +148,10 @@ export function AppSidebar({ username }: { username: string }) {
   const pathname = usePathname();
   const { data: ai } = useAiStatus();
   const role = useCurrentUser()?.role;
-  // Só ícones (sidebar recolhida): o submenu some, então o item do grupo volta a ser um link.
-  const iconOnly = useSidebar().state === "collapsed";
+  // Só ícones (sidebar recolhida no desktop): o submenu some, então o item do grupo volta a ser um link.
+  // No celular a gaveta é sempre larga, mesmo com o desktop recolhido, então os grupos continuam abrindo.
+  const { state, isMobile } = useSidebar();
+  const iconOnly = state === "collapsed" && !isMobile;
 
   // Grupos com submenu começam recolhidos; o grupo da página atual abre sozinho ao entrar nele.
   const [open, setOpen] = useState<Record<string, boolean>>(() =>
