@@ -172,7 +172,7 @@ export function AppSidebar({ username }: { username: string }) {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <Link href="/inventory" className="flex items-center gap-2 px-2 py-1.5 font-semibold">
+        <Link href="/" aria-label="NetInventory, página inicial" className="flex items-center gap-2 px-2 py-1.5 font-semibold">
           <Image src="/logo.png" alt="NetInventory" width={20} height={20} className="shrink-0" />
           <span className="truncate group-data-[collapsible=icon]:hidden">NetInventory</span>
         </Link>
