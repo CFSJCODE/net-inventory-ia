@@ -131,6 +131,17 @@ sudo netinventoryctl firewall 192.168.0.0/24   # libera a porta no ufw para a LA
 
 A pagina **Servidor > Host** do painel mostra a configuracao em vigor, o endereco que os agentes Windows devem usar e os comandos acima; ela nao altera o servidor. No painel original, o grupo **Servidor** (Agentes, Conexao, Host, Seguranca) aparece no fim do menu lateral com o mesmo estilo dos demais itens; Host e Seguranca so aparecem para administradores.
 
+## Instalador unico do servidor (offline)
+
+Para implantar em qualquer rede sem preparar nada a mao, gere o pacote auto-extraivel. Ele embute o host self-contained, o motor do painel ja compilado para Linux (Prisma e sharp nativos), o Node.js oficial, o script que cria o banco vazio e os pacotes `.deb` que podem faltar no Ubuntu (ICU, net-tools, sqlite3 de 22.04 e 24.04). No servidor nao ha downloads nem `apt`.
+
+```bash
+bash dotnet/deploy/pacote/build-pacote.sh --saida ./saida      # Linux x64 com .NET SDK 10, Node 22.13+ e internet
+sudo bash NetInventory-Servidor-Ubuntu.run                       # no Ubuntu Server 22.04/24.04
+```
+
+`pacote/instalar.sh` cria o banco e o `config.json` na propria maquina (pacote zerado), chama `install-linux.sh`, anuncia o IP privado aos agentes, configura a rede a escanear, troca o nome para `netinventory` e publica `netinventory.local` (mDNS do systemd-resolved, ou Avahi se existir), redireciona a porta 80 para a do painel (nftables, sem servidor web), libera o ufw para redes privadas quando ativo, inicia o servico e mostra endereco, usuario e senha inicial. Reexecutar atualiza preservando banco, contas e configuracoes. Opcoes: `--nome`, `--porta`, `--sem-porta80`, `--sem-mdns`, `--sem-firewall`. Remocao: `pacote/desinstalar.sh [--apagar-dados]`.
+
 ## Acesso pela Internet
 
 O perfil publico exige dominio/IP publico por HTTPS com certificado valido. Recomendam-se uma VPN autenticada ou um servidor acessivel por HTTPS; os agentes iniciam conexoes de saida e nao precisam de uma porta de entrada propria.
