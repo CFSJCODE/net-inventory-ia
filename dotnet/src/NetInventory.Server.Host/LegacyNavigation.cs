@@ -8,24 +8,19 @@ namespace NetInventory.Server.Host;
 public static class LegacyNavigation
 {
     private const string ScriptTag = "<script src=\"/console/legacy-navigation.js\" defer data-ni-unified=\"true\"></script>";
-    // In the document head so the sidebar groups are already collapsed on first paint, before the script runs.
-    private const string StyleTag = "<style data-ni-unified=\"true\">ul[data-sidebar=\"menu-sub\"]:not([data-ni-open]){display:none}</style>";
 
     public static string RewriteHtml(string html)
     {
         if (html.Contains(ScriptTag, StringComparison.Ordinal)) return html;
         var end = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
-        if (end < 0) return html;
-        html = html.Insert(end, ScriptTag);
-        var head = html.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
-        return head < 0 ? html : html.Insert(head, StyleTag);
+        return end < 0 ? html : html.Insert(end, ScriptTag);
     }
 
     public static bool IsPageRequest(HttpRequest request)
     {
         if (!HttpMethods.IsGet(request.Method) || request.Query.ContainsKey("_rsc") || request.Headers.ContainsKey("RSC")) return false;
         var path = request.Path;
-        return path == "/" || path == "/legacy" || path == "/inventory" || path.StartsWithSegments("/devices") || path.StartsWithSegments("/topology")
+        return path == "/" || path == "/legacy" || path.StartsWithSegments("/inventory") || path.StartsWithSegments("/devices") || path.StartsWithSegments("/topology")
             || path.StartsWithSegments("/equipment") || path.StartsWithSegments("/history") || path.StartsWithSegments("/alerts")
             || path.StartsWithSegments("/tools") || path.StartsWithSegments("/assistant") || path.StartsWithSegments("/users")
             || path.StartsWithSegments("/settings") || path.StartsWithSegments("/account");

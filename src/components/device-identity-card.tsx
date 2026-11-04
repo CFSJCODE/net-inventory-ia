@@ -86,7 +86,7 @@ export function DeviceIdentityCard(props: Props) {
       await deleteDevice(props.id);
       queryClient.invalidateQueries({ queryKey: ["devices"] });
       toast.success("Dispositivo removido");
-      router.push("/");
+      router.push("/inventory");
     } catch {
       setDeleting(false);
       toast.error("Não foi possível remover o dispositivo");

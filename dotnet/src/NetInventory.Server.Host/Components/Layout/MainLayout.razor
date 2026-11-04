@@ -12,12 +12,10 @@
                     @if (HasNetworkEngine)
                     {
                         <a href="/inventory" data-enhance-nav="false" title="Inventário"><NavIcon Name="overview" /><span>Inventário</span></a>
-                        <a class="nav-parent" href="/topology" data-enhance-nav="false" title="Topologia"><NavIcon Name="connection" /><span>Topologia</span></a>
-                        <div class="nav-submenu"><a href="/topology" data-enhance-nav="false">Mapa</a><a href="/topology/links" data-enhance-nav="false">Ligações monitoradas</a></div>
+                        <details class="nav-group"><summary title="Topologia"><NavIcon Name="connection" /><span>Topologia</span><span class="nav-chevron" aria-hidden="true"></span></summary><div class="nav-submenu"><a href="/topology" data-enhance-nav="false">Mapa</a><a href="/topology/links" data-enhance-nav="false">Ligações monitoradas</a></div></details><a class="nav-group-link" href="/topology" data-enhance-nav="false" title="Topologia"><NavIcon Name="connection" /><span>Topologia</span></a>
                         <a href="/history" data-enhance-nav="false" title="Histórico"><NavIcon Name="history" /><span>Histórico</span></a>
                         <AuthorizeView Roles="admin,operator" Context="operatorState"><Authorized>
-                            <a class="nav-parent" href="/assistant" data-enhance-nav="false" title="Assistente"><NavIcon Name="assistant" /><span>Assistente</span><span class="scope-badge">IA</span></a>
-                            <div class="nav-submenu"><a href="/assistant/settings" data-enhance-nav="false">Configuração da IA</a><a href="/assistant/usage" data-enhance-nav="false">Uso e limites</a><a href="/assistant" data-enhance-nav="false">Chat</a></div>
+                            <details class="nav-group"><summary title="Assistente"><NavIcon Name="assistant" /><span>Assistente</span><span class="scope-badge">IA</span><span class="nav-chevron" aria-hidden="true"></span></summary><div class="nav-submenu"><a href="/assistant/settings" data-enhance-nav="false">Configuração da IA</a><a href="/assistant/usage" data-enhance-nav="false">Uso e limites</a><a href="/assistant" data-enhance-nav="false">Chat</a></div></details><a class="nav-group-link" href="/assistant" data-enhance-nav="false" title="Assistente"><NavIcon Name="assistant" /><span>Assistente</span></a>
                         </Authorized></AuthorizeView>
                         <a href="/tools" data-enhance-nav="false" title="Ferramentas"><NavIcon Name="tools" /><span>Ferramentas</span></a>
                         <a href="/equipment" data-enhance-nav="false" title="Equipamentos"><NavIcon Name="host" /><span>Equipamentos</span></a>
@@ -30,9 +28,8 @@
                     else { <NavLink href="/console/windows" Match="NavLinkMatch.All" title="Computadores Windows"><NavIcon Name="overview" /><span>Computadores Windows</span></NavLink><NavLink href="/console/devices" title="Dispositivos"><NavIcon Name="devices" /><span>Dispositivos</span></NavLink> }
                     @if (HasNetworkEngine)
                     {
-                        @* Same "Servidor" group the original sidebar receives from legacy-navigation.js. *@
-                        <a class="nav-parent" href="/console/agents" title="Servidor"><NavIcon Name="host" /><span>Servidor</span></a>
-                        <div class="nav-submenu"><NavLink href="/console/agents">Agentes</NavLink><NavLink href="/console/connection">Conexão</NavLink><AuthorizeView Roles="admin" Context="serverAdminState"><Authorized><NavLink href="/console/host">Host</NavLink><NavLink href="/console/security">Segurança</NavLink></Authorized></AuthorizeView></div>
+                        @* Same "Servidor" group the original sidebar receives from legacy-navigation.js; groups start collapsed and the current section opens. *@
+                        <details class="nav-group" open="@(InServerSection)"><summary title="Servidor"><NavIcon Name="host" /><span>Servidor</span><span class="nav-chevron" aria-hidden="true"></span></summary><div class="nav-submenu"><NavLink href="/console/agents">Agentes</NavLink><NavLink href="/console/connection">Conexão</NavLink><AuthorizeView Roles="admin" Context="serverAdminState"><Authorized><NavLink href="/console/host">Host</NavLink><NavLink href="/console/security">Segurança</NavLink></Authorized></AuthorizeView></div></details><a class="nav-group-link" href="/console/agents" title="Servidor"><NavIcon Name="host" /><span>Servidor</span></a>
                     }
                     else
                     {
@@ -66,6 +63,7 @@
     </NotAuthorized>
 </AuthorizeView>
 @code {
+    private bool InServerSection => new Uri(Navigation.Uri).AbsolutePath.StartsWith("/console/", StringComparison.Ordinal);
     private bool HasNetworkEngine => !string.IsNullOrWhiteSpace(Configuration["Inventory:LegacyOrigin"]);
     private string SectionIcon => new Uri(Navigation.Uri).AbsolutePath.StartsWith("/console/devices/", StringComparison.Ordinal) ? "agents" : "overview";
     private string SectionTitle

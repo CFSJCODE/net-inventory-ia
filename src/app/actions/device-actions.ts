@@ -81,7 +81,7 @@ export async function quickSetDeviceType(
         ...(lock !== undefined ? { typeLocked: lock } : {}),
       },
     });
-    revalidatePath("/");
+    revalidatePath("/inventory");
     revalidatePath(`/devices/${id}`);
     return { ok: true, data: null };
   } catch (err) {
@@ -96,7 +96,7 @@ export async function quickToggleDeviceLock(id: string, typeLocked: boolean): Pr
       where: { id },
       data: { typeLocked },
     });
-    revalidatePath("/");
+    revalidatePath("/inventory");
     revalidatePath(`/devices/${id}`);
     return { ok: true, data: null };
   } catch (err) {
@@ -117,7 +117,7 @@ export async function bulkSetDeviceType(
       where: { id: { in: ids } },
       data: { type, typeLocked: lock },
     });
-    revalidatePath("/");
+    revalidatePath("/inventory");
     return { ok: true, data: res.count };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -135,7 +135,7 @@ export async function bulkToggleDeviceLock(
       where: { id: { in: ids } },
       data: { typeLocked },
     });
-    revalidatePath("/");
+    revalidatePath("/inventory");
     return { ok: true, data: res.count };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -150,7 +150,7 @@ export async function bulkDeleteDevices(ids: string[]): Promise<ToolResult<numbe
       prisma.mapPosition.deleteMany({ where: { nodeId: { in: ids } } }),
       prisma.device.deleteMany({ where: { id: { in: ids } } }),
     ]);
-    revalidatePath("/");
+    revalidatePath("/inventory");
     return { ok: true, data: ids.length };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -164,7 +164,7 @@ export async function deleteDevice(id: string): Promise<void> {
     prisma.mapPosition.deleteMany({ where: { nodeId: id } }),
     prisma.device.delete({ where: { id } }),
   ]);
-  revalidatePath("/");
+  revalidatePath("/inventory");
 }
 
 /**
@@ -195,6 +195,6 @@ export async function cleanupEphemeralDevices(days: number): Promise<number> {
     prisma.mapPosition.deleteMany({ where: { nodeId: { in: ids } } }),
     prisma.device.deleteMany({ where: { id: { in: ids } } }),
   ]);
-  revalidatePath("/");
+  revalidatePath("/inventory");
   return ids.length;
 }

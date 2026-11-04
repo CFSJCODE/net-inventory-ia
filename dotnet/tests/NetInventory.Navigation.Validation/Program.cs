@@ -24,11 +24,6 @@ Check(LegacyNavigation.RewriteHtml(rewritten) == rewritten, "transformação ide
 Check(LegacyNavigation.RewriteHtml("sem HTML") == "sem HTML", "conteúdo sem body intacto");
 Check(LegacyNavigation.RewriteHtml("<BODY>fixture</BODY>").Contains("data-ni-unified", StringComparison.Ordinal), "fechamento HTML sem distinção de caixa");
 
-const string paged = "<!doctype html><html><head><title>x</title></head><body>y</body></html>";
-var pagedRewritten = LegacyNavigation.RewriteHtml(paged);
-Check(pagedRewritten.IndexOf("ul[data-sidebar", StringComparison.Ordinal) is > 0 and var styleAt && styleAt < pagedRewritten.IndexOf("</head>", StringComparison.Ordinal), "submenus recolhidos pelo estilo no head");
-Check(LegacyNavigation.RewriteHtml(pagedRewritten) == pagedRewritten, "estilo e script idempotentes");
-
 var upstreamBuilder = WebApplication.CreateBuilder();
 upstreamBuilder.Logging.ClearProviders();
 upstreamBuilder.WebHost.UseUrls("http://127.0.0.1:0");
@@ -50,7 +45,6 @@ proxyBuilder.Logging.ClearProviders();
 proxyBuilder.WebHost.UseUrls("http://127.0.0.1:0");
 proxyBuilder.Services.AddReverseProxy().LoadFromMemory(
     [new RouteConfig { RouteId="legacy-home", ClusterId="legacy", Order=0, Match=new RouteMatch { Path="/legacy" }, Transforms=[new Dictionary<string,string>{{"PathSet","/"}}] },
-     new RouteConfig { RouteId="legacy-inventory", ClusterId="legacy", Order=0, Match=new RouteMatch { Path="/inventory" }, Transforms=[new Dictionary<string,string>{{"PathSet","/"}}] },
      new RouteConfig { RouteId="legacy", ClusterId="legacy", Order=1000, Match=new RouteMatch { Path="/{**rest}" } }],
     [new ClusterConfig { ClusterId="legacy", Destinations=new Dictionary<string,DestinationConfig>{{"fixture",new(){Address=upstreamUrl}}} }])
     .AddTransforms(LegacyNavigation.Configure);
@@ -83,12 +77,6 @@ try
     Check(await sizedLarge.Content.ReadAsStringAsync() == large, "HTML com tamanho grande intacto");
     using var streamedLarge = await client.GetAsync("/history");
     Check(await streamedLarge.Content.ReadAsStringAsync() == large, "HTML grande sem Content-Length intacto");
-    using var inventory = await client.GetAsync("/inventory");
-    Check(inventory.StatusCode == HttpStatusCode.OK && await inventory.Content.ReadAsStringAsync() == rewritten, "/inventory serve a página do inventário com a navegação");
-    using var inventoryRscRequest = new HttpRequestMessage(HttpMethod.Get, "/inventory?_rsc=fixture");
-    inventoryRscRequest.Headers.Add("RSC", "1");
-    using var inventoryRsc = await client.SendAsync(inventoryRscRequest);
-    Check(await inventoryRsc.Content.ReadAsStringAsync() == "rsc-fixture", "Flight/RSC de /inventory chega à página do inventário");
     using var topology = await client.GetAsync("/topology");
     Check(await topology.Content.ReadAsStringAsync() == rewritten, "topologia recebe mesma navegação");
     Console.WriteLine($"{passed} verificações de navegação passaram; servidores somente de fixture encerrados.");

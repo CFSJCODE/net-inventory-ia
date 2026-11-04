@@ -52,7 +52,7 @@ export async function removeDevicesOnIgnoredIpsAction(): Promise<ToolResult<{ re
         prisma.device.deleteMany({ where: { id: { in: ids } } }),
       ]);
     }
-    revalidatePath("/");
+    revalidatePath("/inventory");
     revalidatePath("/topology");
     return { removed: ids.length };
   });

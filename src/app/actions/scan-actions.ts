@@ -20,7 +20,7 @@ export async function triggerScan(): Promise<ScanActionResult> {
       return { ok: false, code: "FORBIDDEN", error: "Seu perfil de acesso não permite esta ação." };
     }
     const result = await runConfiguredScan();
-    revalidatePath("/");
+    revalidatePath("/inventory");
     return { ok: true, data: result };
   } catch (error) {
     if (error instanceof ScanInProgressError) {

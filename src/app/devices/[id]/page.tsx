@@ -35,7 +35,7 @@ export default async function DeviceDetailPage({ params }: { params: Promise<{ i
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-3 py-8">
-      <Link href="/" className="flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+      <Link href="/inventory" className="flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeftIcon size={16} />
         Voltar ao inventário
       </Link>

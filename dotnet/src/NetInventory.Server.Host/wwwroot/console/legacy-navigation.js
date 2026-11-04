@@ -376,11 +376,20 @@
       element.removeAttribute("id");
       element.removeAttribute("data-active");
       element.removeAttribute("aria-current");
-      element.removeAttribute("aria-expanded");
-      element.removeAttribute("data-ni-open");
       element.removeAttribute("data-base-ui-tooltip-trigger");
     }
     return copy;
+  }
+  // Like the original groups, "Servidor" starts collapsed and opens on click (these pages never render the
+  // original sidebar, so the group is never the current section here). The state survives re-renders.
+  let serverOpen = false;
+  function applyServerOpen(group) {
+    const button = group.firstElementChild, list = group.querySelector('ul[data-sidebar="menu-sub"]');
+    if (!button || !list) return;
+    list.hidden = !serverOpen;
+    button.setAttribute("aria-expanded", String(serverOpen));
+    const chevron = button.querySelector("[data-nav-chevron]");
+    if (chevron) chevron.style.transform = serverOpen ? "rotate(90deg)" : "";
   }
   function ensureServerMenu() {
     // The original sidebar shows "Usuários" only to administrators; Host and Segurança follow the same rule.
@@ -418,6 +427,23 @@
       svg.parentElement?.removeAttribute("style");
     }
     labelOf(button).textContent = "Servidor";
+    // Chevron cloned from an original group (Topologia), so it matches their size, color and animation.
+    const chevron = document.querySelector('a[data-sidebar="menu-button"] [data-nav-chevron], button[data-sidebar="menu-button"] [data-nav-chevron]');
+    if (chevron) {
+      const copy = plainClone(chevron, true);
+      copy.classList.remove("rotate-90");
+      copy.classList.add("ml-auto");
+      button.append(copy);
+    }
+    button.addEventListener("click", (event) => {
+      // Icon-only sidebar hides submenus: the item then keeps working as a link to the first page.
+      if (button.closest('[data-state="collapsed"]')) return;
+      event.preventDefault();
+      serverOpen = !serverOpen;
+      applyServerOpen(group);
+      // The panel's top loading bar starts on any link click; this one only toggles the group, nothing loads.
+      window.dispatchEvent(new Event("top-loading-bar:cancel"));
+    });
     const list = plainClone(subList, false);
     for (const [href, text] of pages) {
       const entry = plainClone(subItem, false);
@@ -428,72 +454,15 @@
       list.append(entry);
     }
     group.append(button, list);
+    applyServerOpen(group);
     item.parentElement.append(group);
-  }
-
-  // Sidebar groups (Topologia, Assistente, Servidor) start collapsed; a click on the group toggles it and its
-  // links navigate. The group of the current page opens by itself until the user chooses otherwise. In the icon
-  // rail there is no submenu to open, so the click keeps navigating. Hidden state comes from the head style that
-  // LegacyNavigation injects, so nothing flashes open before this script runs.
-  const menuChoice = new Map();
-  function syncMenus() {
-    for (const list of document.querySelectorAll('li[data-sidebar="menu-item"] > ul[data-sidebar="menu-sub"]')) {
-      const button = list.parentElement.querySelector('a[data-sidebar="menu-button"]');
-      if (!button) continue;
-      const key = button.getAttribute("href");
-      const current = [...list.querySelectorAll("a[href]")].some((link) => link.getAttribute("href") === window.location.pathname);
-      const open = menuChoice.has(key) ? menuChoice.get(key) : current;
-      list.toggleAttribute("data-ni-open", open);
-      button.setAttribute("aria-expanded", String(open));
-      let chevron = button.querySelector(":scope > .ni-menu-chevron");
-      if (!chevron) {
-        chevron = icon("down", "ni-menu-chevron shrink-0 group-data-[collapsible=icon]:hidden");
-        const hasBadge = !!button.querySelector(":scope > span.ml-auto");
-        Object.assign(chevron.style, { width: "14px", height: "14px", marginLeft: hasBadge ? "8px" : "auto" });
-        button.append(chevron);
-      }
-      chevron.style.transform = open ? "rotate(180deg)" : "";
-    }
-  }
-  function onMenuClick(event) {
-    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-    const button = event.target.closest?.('a[data-sidebar="menu-button"]');
-    const item = button?.closest('li[data-sidebar="menu-item"]');
-    if (!item?.querySelector(':scope > ul[data-sidebar="menu-sub"]') || button.closest('[data-collapsible="icon"]')) return;
-    // Capture phase: runs before the Next link's own handler, which would navigate.
-    event.preventDefault();
-    event.stopPropagation();
-    menuChoice.set(button.getAttribute("href"), button.getAttribute("aria-expanded") !== "true");
-    syncMenus();
-  }
-
-  // The inventory lives at /inventory. The host serves the original "/" page there, and the Next router follows
-  // the URL through its history integration; the original build only knows "/", so its title and active mark are
-  // restored here.
-  const INVENTORY_PATH = "/inventory";
-  const INVENTORY_TITLE = "Inventário de rede";
-  function syncInventoryRoute() {
-    if (window.location.pathname === "/") {
-      window.history.replaceState(null, "", INVENTORY_PATH + window.location.search + window.location.hash);
-    }
-    const here = window.location.pathname === INVENTORY_PATH;
-    const link = document.querySelector('a[data-sidebar="menu-button"][href="/"]');
-    if (link && (here || link.dataset.niActive)) {
-      link.toggleAttribute("data-active", here);
-      link.firstElementChild?.classList.toggle("text-primary", here);
-      if (here) link.dataset.niActive = "1"; else delete link.dataset.niActive;
-    }
-    if (here) {
-      const title = document.querySelector("header h1");
-      if (title && title.textContent !== INVENTORY_TITLE) title.textContent = INVENTORY_TITLE;
-    }
   }
 
   function schedule() {
     if (scheduled) return;
     scheduled = true;
     // A short timer instead of requestAnimationFrame: it also runs while the tab is in the background.
-    setTimeout(() => { scheduled = false; syncInventoryRoute(); ensureServerMenu(); syncMenus(); render(false); }, 50);
+    setTimeout(() => { scheduled = false; ensureServerMenu(); render(false); }, 50);
   }
   async function refreshDevices() {
     try {
@@ -515,10 +484,7 @@
         || [...r.addedNodes, ...r.removedNodes].every((n) => n.id === GROUP_ID))) return;
       schedule();
     }).observe(document.body, { childList: true, subtree: true });
-    document.addEventListener("click", onMenuClick, true);
-    syncInventoryRoute();
     ensureServerMenu();
-    syncMenus();
     setInterval(() => { if (devicePageId()) { summaryAt = 0; schedule(); } }, REFRESH_MS);
     void refreshDevices();
   }
