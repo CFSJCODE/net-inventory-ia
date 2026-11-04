@@ -73,6 +73,7 @@ if(!string.IsNullOrWhiteSpace(legacy))
         new RouteConfig{RouteId="legacy",ClusterId="legacy",Order=1000,Match=new RouteMatch{Path="/{**rest}"}},
         new RouteConfig{RouteId="legacy-root",ClusterId="legacy",Order=-500,Match=new RouteMatch{Path="/"}},
         new RouteConfig{RouteId="legacy-home",ClusterId="legacy",Order=-500,Match=new RouteMatch{Path="/legacy"},Transforms=[new Dictionary<string,string>{{"PathSet","/"}}]},
+        new RouteConfig{RouteId="legacy-inventory",ClusterId="legacy",Order=-500,Match=new RouteMatch{Path="/inventory"},Transforms=[new Dictionary<string,string>{{"PathSet","/"}}]},
         new RouteConfig{RouteId="legacy-root-flight",ClusterId="legacy",Order=-1000,Match=new RouteMatch{Path="/",Methods=["GET"],Headers=[new RouteHeader{Name="RSC",Mode=HeaderMatchMode.Exists}]}},
         new RouteConfig{RouteId="legacy-root-actions",ClusterId="legacy",Order=-1000,Match=new RouteMatch{Path="/",Methods=["POST"],Headers=[new RouteHeader{Name="Next-Action",Mode=HeaderMatchMode.Exists}]}}
     ],[new ClusterConfig{ClusterId="legacy",Destinations=new Dictionary<string,DestinationConfig>{{"installed",new(){Address=old.AbsoluteUri}}}}]);
