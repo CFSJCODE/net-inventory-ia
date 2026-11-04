@@ -32,7 +32,7 @@ export async function saveIpRulesAction(
     await requirePermission("settings.manage");
     await saveIpRules(rules);
     revalidatePath("/settings");
-    revalidatePath("/");
+    revalidatePath("/inventory");
     return rules;
   });
 }
@@ -41,7 +41,7 @@ export async function applyIpRulesAction(): Promise<ToolResult<{ matchedCount: n
   return run(async () => {
     await requirePermission("settings.manage");
     const result = await applyIpRulesToExistingDevices();
-    revalidatePath("/");
+    revalidatePath("/inventory");
     revalidatePath("/settings");
     return result;
   });

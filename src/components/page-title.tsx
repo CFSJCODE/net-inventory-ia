@@ -28,7 +28,8 @@ interface PageMeta {
 }
 
 const PAGES: Record<string, PageMeta> = {
-  "/": { title: "Inventário de rede", icon: LayoutGridIcon },
+  "/": { title: "Início", icon: LayoutGridIcon },
+  "/inventory": { title: "Inventário de rede", icon: LayoutGridIcon },
   "/topology": { title: "Topologia da rede", icon: WaypointsIcon },
   "/topology/links": { title: "Ligações monitoradas", icon: ActivityIcon },
   "/history": { title: "Histórico", icon: HistoryIcon },

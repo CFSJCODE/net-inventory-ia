@@ -23,7 +23,7 @@ describe("triggerScan", () => {
   it("devolve contagens quando o scan termina", async () => {
     mocks.scan.mockResolvedValue({ devicesFound: 12, newDevices: 1 });
     expect(await triggerScan()).toEqual({ ok: true, data: { devicesFound: 12, newDevices: 1 } });
-    expect(mocks.revalidate).toHaveBeenCalledWith("/");
+    expect(mocks.revalidate).toHaveBeenCalledWith("/inventory");
   });
 
   it("devolve o aviso de concorrência como dado, sem erro de renderização", async () => {

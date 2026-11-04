@@ -380,6 +380,17 @@
     }
     return copy;
   }
+  // Like the original groups, "Servidor" starts collapsed and opens on click (these pages never render the
+  // original sidebar, so the group is never the current section here). The state survives re-renders.
+  let serverOpen = false;
+  function applyServerOpen(group) {
+    const button = group.firstElementChild, list = group.querySelector('ul[data-sidebar="menu-sub"]');
+    if (!button || !list) return;
+    list.hidden = !serverOpen;
+    button.setAttribute("aria-expanded", String(serverOpen));
+    const chevron = button.querySelector("[data-nav-chevron]");
+    if (chevron) chevron.style.transform = serverOpen ? "rotate(90deg)" : "";
+  }
   function ensureServerMenu() {
     // The original sidebar shows "Usuários" only to administrators; Host and Segurança follow the same rule.
     const admin = !!document.querySelector('a[data-sidebar="menu-button"][href="/users"]');
@@ -416,6 +427,21 @@
       svg.parentElement?.removeAttribute("style");
     }
     labelOf(button).textContent = "Servidor";
+    // Chevron cloned from an original group (Topologia), so it matches their size, color and animation.
+    const chevron = document.querySelector('a[data-sidebar="menu-button"] [data-nav-chevron], button[data-sidebar="menu-button"] [data-nav-chevron]');
+    if (chevron) {
+      const copy = plainClone(chevron, true);
+      copy.classList.remove("rotate-90");
+      copy.classList.add("ml-auto");
+      button.append(copy);
+    }
+    button.addEventListener("click", (event) => {
+      // Icon-only sidebar hides submenus: the item then keeps working as a link to the first page.
+      if (button.closest('[data-state="collapsed"]')) return;
+      event.preventDefault();
+      serverOpen = !serverOpen;
+      applyServerOpen(group);
+    });
     const list = plainClone(subList, false);
     for (const [href, text] of pages) {
       const entry = plainClone(subItem, false);
@@ -426,6 +452,7 @@
       list.append(entry);
     }
     group.append(button, list);
+    applyServerOpen(group);
     item.parentElement.append(group);
   }
 

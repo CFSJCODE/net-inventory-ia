@@ -20,7 +20,7 @@ public static class LegacyNavigation
     {
         if (!HttpMethods.IsGet(request.Method) || request.Query.ContainsKey("_rsc") || request.Headers.ContainsKey("RSC")) return false;
         var path = request.Path;
-        return path == "/" || path == "/legacy" || path.StartsWithSegments("/devices") || path.StartsWithSegments("/topology")
+        return path == "/" || path == "/legacy" || path.StartsWithSegments("/inventory") || path.StartsWithSegments("/devices") || path.StartsWithSegments("/topology")
             || path.StartsWithSegments("/equipment") || path.StartsWithSegments("/history") || path.StartsWithSegments("/alerts")
             || path.StartsWithSegments("/tools") || path.StartsWithSegments("/assistant") || path.StartsWithSegments("/users")
             || path.StartsWithSegments("/settings") || path.StartsWithSegments("/account");
