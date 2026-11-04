@@ -95,6 +95,12 @@ app.Use(async(context,next)=>
 {
     context.Response.Headers.CacheControl="no-store";context.Response.Headers.XContentTypeOptions="nosniff";context.Response.Headers["Referrer-Policy"]="same-origin";context.Response.Headers["X-Frame-Options"]="DENY";
     if(context.Request.Path=="/health"){await next();return;}
+    // Pages opened in a browser by IP (http://192.168.0.50:3000/...) go to the panel's name (Inventory:BrowserHost,
+    // e.g. netinventory.local). Only HTML page requests: agents and APIs keep using the IP and port unchanged.
+    var browserHost=app.Configuration["Inventory:BrowserHost"];
+    if(!string.IsNullOrWhiteSpace(browserHost)&&HttpMethods.IsGet(context.Request.Method)&&IPAddress.TryParse(context.Request.Host.Host,out _)
+        &&context.Request.Headers.Accept.ToString().Contains("text/html",StringComparison.OrdinalIgnoreCase)&&!context.Request.Path.StartsWithSegments("/api"))
+    { context.Response.Redirect($"{context.Request.Scheme}://{browserHost.Trim()}{context.Request.PathBase}{context.Request.Path}{context.Request.QueryString}");return; }
     var ip=context.Connection.RemoteIpAddress;
     var allowedHttp=IPAddress.IsLoopback(ip??IPAddress.None)&&app.Configuration.GetValue<bool>("Inventory:AllowLoopbackHttp")||NetworkPolicy.IsPrivate(ip)&&app.Configuration.GetValue<bool>("Inventory:AllowPrivateLanHttp");
     if(!context.Request.IsHttps&&!allowedHttp){context.Response.StatusCode=400;await context.Response.WriteAsync("HTTPS obrigatório fora da LAN autorizada.");return;}
