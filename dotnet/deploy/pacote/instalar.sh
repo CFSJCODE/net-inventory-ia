@@ -9,6 +9,7 @@
 # Uso: sudo bash instalar.sh [--nome netinventory] [--porta 3000] [--sem-porta80] [--sem-mdns] [--sem-firewall]
 set -euo pipefail
 umask 022
+argumentos=("$@")
 
 nome=netinventory
 porta=3000
@@ -44,7 +45,7 @@ aqui=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # Sem root, pede a senha uma unica vez e recomeca como administrador.
 if [[ $EUID -ne 0 ]]; then
     command -v sudo >/dev/null || { echo 'Execute como root.' >&2; exit 1; }
-    exec sudo -- bash "$aqui/instalar.sh" "$@"
+    exec sudo -- bash "$aqui/instalar.sh" "${argumentos[@]}"
 fi
 
 passo() { printf '\n\033[1;34m==> %s\033[0m\n' "$1"; }
@@ -53,6 +54,10 @@ aviso() { printf '    \033[33mAviso:\033[0m %s\n' "$1"; }
 falha() { printf '\n\033[1;31mERRO:\033[0m %s\n' "$1" >&2; exit 1; }
 
 log=/var/log/netinventory-instalacao.log
+# O resumo final mostra a senha inicial: o log fica legivel so pelo root.
+touch "$log"
+chown root:root "$log"
+chmod 0600 "$log"
 exec > >(tee -a "$log") 2>&1
 printf '\n===== Instalacao NetInventory %s =====\n' "$(date -Is)"
 trap 'falha "Falha inesperada na linha $LINENO do instalador. Detalhes em $log."' ERR
@@ -229,25 +234,30 @@ if $usar_porta80; then
     if ss -H -ltn 'sport = :80' | grep -q .; then
         aviso 'A porta 80 ja esta em uso por outro programa (ex.: nginx/apache). O painel continua em :'"$porta_real"'.'
     else
-        cat > /usr/local/sbin/netinventory-porta80 <<EOF
+        cat > /usr/local/sbin/netinventory-porta80 <<'EOF'
 #!/usr/bin/env bash
-# Redireciona a porta 80 (IPv4) para a porta do NetInventory ($porta_real), sem servidor web extra.
+# Redireciona a porta 80 (IPv4) para a porta atual do NetInventory, lida de backend.env a cada execucao
+# (acompanha "netinventoryctl set port" + "apply", que reinicia o host e, junto, esta unidade).
 set -e
+porta=$(sed -n 's/^ASPNETCORE_URLS=.*:\([0-9]*\)\/\{0,1\}$/\1/p' /etc/netinventory-dotnet/backend.env 2>/dev/null | tail -n1)
+[[ $porta =~ ^[0-9]+$ ]] || porta=3000
 if command -v nft >/dev/null; then
     nft delete table ip netinventory 2>/dev/null || true
-    [[ \${1:-on} == off ]] && exit 0
-    nft -f - <<'NFT'
+    [[ ${1:-on} == off ]] && exit 0
+    nft -f - <<NFT
 table ip netinventory {
     chain prerouting {
         type nat hook prerouting priority dstnat; policy accept;
-        tcp dport 80 fib daddr type local redirect to :$porta_real
+        tcp dport 80 fib daddr type local redirect to :$porta
     }
 }
 NFT
 else
-    while iptables -t nat -D PREROUTING -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-ports $porta_real 2>/dev/null; do :; done
-    [[ \${1:-on} == off ]] && exit 0
-    iptables -t nat -A PREROUTING -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-ports $porta_real
+    for antiga in $(iptables -t nat -S PREROUTING 2>/dev/null | sed -n 's/.*--dport 80 .*--to-ports \([0-9]*\).*/\1/p'); do
+        iptables -t nat -D PREROUTING -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-ports "$antiga" 2>/dev/null || true
+    done
+    [[ ${1:-on} == off ]] && exit 0
+    iptables -t nat -A PREROUTING -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-ports "$porta"
 fi
 EOF
         chmod 0755 /usr/local/sbin/netinventory-porta80
@@ -256,6 +266,8 @@ EOF
 Description=NetInventory - porta 80 leva ao painel
 After=network-pre.target ufw.service nftables.service
 Before=netinventory-dotnet.service
+# Reinicia junto com o host (ex.: netinventoryctl apply depois de trocar a porta) e rele a porta.
+PartOf=netinventory-dotnet.service
 
 [Service]
 Type=oneshot
@@ -264,7 +276,7 @@ ExecStop=/usr/local/sbin/netinventory-porta80 off
 RemainAfterExit=yes
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=multi-user.target netinventory-dotnet.service
 EOF
         systemctl daemon-reload
         systemctl enable netinventory-porta80.service >/dev/null 2>&1

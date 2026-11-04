@@ -47,14 +47,23 @@ tar -xJf "$trab/$n.tar.xz" -C "$trab"
 cp "$trab/$n/bin/node" "$stage/engine/node/bin/node"; cp "$trab/$n/LICENSE" "$stage/engine/node/LICENSE"
 
 echo '==> Pacotes do sistema para uso offline (ICU, net-tools, sqlite3)'
+# Versoes fixas, com SHA-256 conferido contra os indices Packages assinados do Ubuntu (InRelease, gpgv)
+# de jammy/jammy-updates/jammy-security e noble/noble-updates/noble-security. Um download alterado e recusado.
 pool=http://archive.ubuntu.com/ubuntu/pool/main
-for d in jammy:n/net-tools/net-tools_1.60+git20181103.0eebece-1ubuntu5.4_amd64.deb \
-         jammy:s/sqlite3/sqlite3_3.37.2-2ubuntu0.8_amd64.deb jammy:s/sqlite3/libsqlite3-0_3.37.2-2ubuntu0.8_amd64.deb \
-         jammy:i/icu/libicu70_70.1-2ubuntu1_amd64.deb noble:i/icu/libicu74_74.2-1ubuntu3.1_amd64.deb \
-         noble:n/net-tools/net-tools_2.10-0.1ubuntu4.4_amd64.deb \
-         noble:s/sqlite3/sqlite3_3.45.1-1ubuntu2.9_amd64.deb noble:s/sqlite3/libsqlite3-0_3.45.1-1ubuntu2.9_amd64.deb; do
-    curl -fsSLo "$stage/debs/${d%%:*}/$(basename -- "${d#*:}")" "$pool/${d#*:}"
-done
+while read -r serie caminho hash; do
+    destino="$stage/debs/$serie/$(basename -- "$caminho")"
+    curl -fsSLo "$destino" "$pool/$caminho"
+    printf '%s  %s\n' "$hash" "$destino" | sha256sum -c --quiet - || { echo "Hash incorreto: $caminho" >&2; exit 1; }
+done <<'LISTA'
+jammy i/icu/libicu70_70.1-2_amd64.deb 58a154f6307289813da2276f900498ef536ae7c0522d2cf31a3c3c5cf62dfd9a
+jammy n/net-tools/net-tools_1.60+git20181103.0eebece-1ubuntu5.4_amd64.deb c91b28875fad3ee9345cc2f3d6f9b24e19208571f34fae19b4097b92af9aef0c
+jammy s/sqlite3/libsqlite3-0_3.37.2-2ubuntu0.8_amd64.deb 6e22b1e8d375fed6a1d52cad5887e762b6cdeaba137595e726c95486968dfab5
+jammy s/sqlite3/sqlite3_3.37.2-2ubuntu0.8_amd64.deb 76626c2071bd7da459c04494e2f0d563661fa27b121d6f492266e2c9e993c930
+noble i/icu/libicu74_74.2-1ubuntu3.1_amd64.deb c9a70989678660eed9a1e904c74fa043da8bec8e2036856fc16e31ced79b04f8
+noble n/net-tools/net-tools_2.10-0.1ubuntu4.4_amd64.deb 548d7a207200d6712c9b8d0525d5eace23ef8b36415b0fe6522cfe890bc817e5
+noble s/sqlite3/libsqlite3-0_3.45.1-1ubuntu2.8_amd64.deb b1190bb72359f5fcc47406aa46065eaf4f1ca208085c51224a52b04bedc0b4bb
+noble s/sqlite3/sqlite3_3.45.1-1ubuntu2.8_amd64.deb 78493e56909614ec1d588c9fae1739a704d9e1a6ff65509b1f06c3e4d53ed0c3
+LISTA
 
 echo '==> Scripts'
 for f in install-linux.sh netinventoryctl netinventory-dotnet.service package-linux-engine.sh backend.env.example nginx-https.conf.example README.md; do

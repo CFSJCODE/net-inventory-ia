@@ -28,7 +28,11 @@ if (!fs.existsSync(configFile)) {
 }
 
 const { DatabaseSync } = require("node:sqlite");
-const db = new DatabaseSync(path.join(dataDir, "netinventory.db"));
+// Como no `prisma migrate deploy`: chaves estrangeiras desligadas durante as migracoes. Migracoes que
+// recriam tabelas (DROP/RENAME) apagariam em cascata o historico e as ligacoes; dentro de uma transacao
+// o PRAGMA foreign_keys=OFF da propria migracao nao tem efeito. A integridade e conferida depois de cada uma.
+const db = new DatabaseSync(path.join(dataDir, "netinventory.db"), { enableForeignKeyConstraints: false });
+db.exec("PRAGMA foreign_keys=OFF");
 db.exec(`CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
   "id" TEXT PRIMARY KEY NOT NULL,
   "checksum" TEXT NOT NULL,
@@ -63,6 +67,8 @@ for (const name of pending) {
   db.exec("BEGIN");
   try {
     db.exec(sql);
+    const violacoes = db.prepare("PRAGMA foreign_key_check").all();
+    if (violacoes.length) throw new Error(`${violacoes.length} referencia(s) invalida(s) apos a migracao`);
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
