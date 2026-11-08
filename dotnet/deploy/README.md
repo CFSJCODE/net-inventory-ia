@@ -107,6 +107,10 @@ O painel LAN fica disponivel em `http://192.168.0.72:3000/` quando esse e o IP r
 
 Limites conhecidos da migracao para o Linux: as chaves de protecao do Windows (DPAPI) nao sao portaveis, entao sessoes abertas expiram e o MFA cadastrado no console .NET precisa ser recadastrado; o ping usa ICMP sem privilegio (`net.ipv4.ping_group_range`, padrao do Ubuntu), e o instalador avisa se o grupo do servico estiver fora dessa faixa. O instalador preserva `backend.env`, banco e credenciais existentes; ao reaplicar com outra porta, a configuracao existente prevalece. Nenhuma implantacao Linux real e comprovada apenas pela geracao do pacote ou pela verificacao de sintaxe.
 
+### Painel na porta 80 (Nginx na LAN)
+
+O acesso padrao ao painel e pela porta 80: `http://netinventory.local/` ou `http://<ip-do-servidor>/`, sem digitar a porta. Um Nginx no servidor escuta na 80 e encaminha para o host em `127.0.0.1:3000`; os agentes continuam usando a porta 3000 diretamente. O modelo esta em `nginx-lan.conf.example`, com os comandos de instalacao no cabecalho. No `backend.env`, use `Inventory__BrowserHost=netinventory.local` sem porta (com `:3000` o painel redireciona de volta para a 3000) e `Inventory__TrustLoopbackProxy=true`, para o host aceitar o `X-Forwarded-For` apenas do proxy em loopback e registrar o IP real do navegador. Libere a 80 no ufw so para a rede local: `sudo ufw allow from 192.168.0.0/24 to any port 80 proto tcp`.
+
 ### Configurar no servidor
 
 O host e configurado no proprio Ubuntu Server, pelo terminal. O instalador coloca o comando `netinventoryctl` em `/usr/local/sbin`; ele altera somente as chaves de rede de `/etc/netinventory-dotnet/backend.env` e nunca imprime credenciais.

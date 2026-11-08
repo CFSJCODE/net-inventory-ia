@@ -98,7 +98,7 @@ O NetInventory pode funcionar de dois jeitos. Nos dois, o painel web é o mesmo 
 |---|---|---|
 | Onde roda o host | No próprio PC Windows, junto com o agente | Num Ubuntu Server da rede (máquina física ou VM) |
 | Serviços | `NetInventoryDotNetHost` + `NetInventoryDotNetAgent` no Windows | `netinventory-dotnet.service` (systemd) no Ubuntu; `NetInventoryDotNetAgent` em cada Windows |
-| Endereço do painel | `http://localhost:3000` | `http://<ip-do-servidor>:3000` (ex.: `http://192.168.0.50:3000`) |
+| Endereço do painel | `http://localhost:3000` | `http://<ip-do-servidor>` na porta 80, via Nginx (ex.: `http://netinventory.local` ou `http://192.168.0.50`) |
 | Destino do agente | `localhost`, porta 3000 | IP do servidor, porta 3000 |
 | Indicado para | Uso individual, acompanhar a própria máquina e a rede dela | Vários computadores enviando dados para um ponto central, com o painel aberto em qualquer PC da LAN |
 | Configuração do host | Pela página **Servidor › Host** do painel | No terminal do Ubuntu, com `sudo netinventoryctl` |
@@ -232,7 +232,9 @@ Para backup diário às 2h: `sudo crontab -e` e acrescente `0 2 * * * /usr/local
 
 ### 5. Abrir o painel e gerar convites
 
-De qualquer PC da rede, abra `http://192.168.0.50:3000/` (troque pelo IP do seu servidor).
+De qualquer PC da rede, abra `http://netinventory.local/` ou `http://192.168.0.50/` (troque pelo IP do seu servidor). A porta 80 é o acesso padrão ao painel: um Nginx no servidor encaminha para o host em `127.0.0.1:3000`, então não é preciso digitar a porta. Os agentes continuam enviando para a porta 3000, e `http://192.168.0.50:3000/` segue funcionando.
+
+Para montar esse proxy num servidor novo, use o modelo [`dotnet/deploy/nginx-lan.conf.example`](dotnet/deploy/nginx-lan.conf.example) e, no `backend.env`, deixe `Inventory__BrowserHost=netinventory.local` (sem porta, senão o painel redireciona para a 3000) e `Inventory__TrustLoopbackProxy=true` (para o painel registrar o IP real de quem acessa).
 
 Cada agente se cadastra com um **convite** de uso único e prazo curto; a senha do administrador nunca vai para os agentes. Gere o convite de um destes jeitos:
 
