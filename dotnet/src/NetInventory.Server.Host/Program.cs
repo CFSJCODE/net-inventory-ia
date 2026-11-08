@@ -100,7 +100,12 @@ app.Use(async(context,next)=>
     var browserHost=app.Configuration["Inventory:BrowserHost"];
     if(!string.IsNullOrWhiteSpace(browserHost)&&HttpMethods.IsGet(context.Request.Method)&&IPAddress.TryParse(context.Request.Host.Host,out _)
         &&context.Request.Headers.Accept.ToString().Contains("text/html",StringComparison.OrdinalIgnoreCase)&&!context.Request.Path.StartsWithSegments("/api"))
-    { context.Response.Redirect($"{context.Request.Scheme}://{browserHost.Trim()}{context.Request.PathBase}{context.Request.Path}{context.Request.QueryString}");return; }
+    {
+        // Keep the port the browser used (3000) unless BrowserHost names one; without it the redirect lands on port 80.
+        var target=browserHost.Trim();
+        if(!target.Contains(':')&&context.Request.Host.Port is int port)target=$"{target}:{port}";
+        context.Response.Redirect($"{context.Request.Scheme}://{target}{context.Request.PathBase}{context.Request.Path}{context.Request.QueryString}");return;
+    }
     var ip=context.Connection.RemoteIpAddress;
     var allowedHttp=IPAddress.IsLoopback(ip??IPAddress.None)&&app.Configuration.GetValue<bool>("Inventory:AllowLoopbackHttp")||NetworkPolicy.IsPrivate(ip)&&app.Configuration.GetValue<bool>("Inventory:AllowPrivateLanHttp");
     if(!context.Request.IsHttps&&!allowedHttp){context.Response.StatusCode=400;await context.Response.WriteAsync("HTTPS obrigatório fora da LAN autorizada.");return;}
