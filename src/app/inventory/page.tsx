@@ -1,6 +1,9 @@
 import { DeviceInventory } from "@/components/device-inventory";
+import { prisma } from "@/lib/prisma";
 
-export default function InventoryPage() {
+export default async function InventoryPage() {
+  const initialDevices = await prisma.device.findMany({ orderBy: { lastSeenAt: "desc" } });
+
   return (
     <div className="flex w-full flex-col gap-6 px-3 py-8 lg:px-6">
       <div>
@@ -8,7 +11,7 @@ export default function InventoryPage() {
           Dispositivos descobertos automaticamente na sua rede local.
         </p>
       </div>
-      <DeviceInventory />
+      <DeviceInventory initialDevices={initialDevices} />
     </div>
   );
 }
