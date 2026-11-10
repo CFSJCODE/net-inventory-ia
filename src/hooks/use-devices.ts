@@ -10,12 +10,18 @@ async function fetchJson<T>(url: string): Promise<T> {
   return res.json();
 }
 
-export function useDevices() {
-  return useQuery({
+export function devicesQueryOptions(initialData?: Device[]) {
+  return {
     queryKey: ["devices"],
     queryFn: () => fetchJson<Device[]>("/api/devices"),
+    initialData,
+    staleTime: 15_000,
     refetchInterval: 15_000,
-  });
+  };
+}
+
+export function useDevices(initialData?: Device[]) {
+  return useQuery(devicesQueryOptions(initialData));
 }
 
 export function useDevice(id: string | undefined) {

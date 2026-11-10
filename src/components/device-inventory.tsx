@@ -11,14 +11,15 @@ import { BulkIdentifyButton } from "@/components/ai/bulk-identify-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { sortDevices } from "@/lib/device-sort";
 import { isRandomizedMac } from "@/lib/mac";
+import type { Device } from "@prisma/client";
 
 /** Efêmero: offline, MAC aleatório e sem apelido (quem o usuário identificou nunca é escondido). */
 function isEphemeral(d: { status: string; mac: string | null; alias: string | null }): boolean {
   return d.status === "OFFLINE" && !d.alias && isRandomizedMac(d.mac);
 }
 
-export function DeviceInventory() {
-  const { data: devices, isLoading, isError } = useDevices();
+export function DeviceInventory({ initialDevices }: { initialDevices: Device[] }) {
+  const { data: devices, isLoading, isError } = useDevices(initialDevices);
   const { search, statusFilter, typeFilter, sortKey, sortDirection, page, setPage, hideEphemeral, setHideEphemeral } = useUiStore();
   const ephemeralCount = devices?.filter(isEphemeral).length ?? 0;
 
