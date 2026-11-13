@@ -8,6 +8,7 @@ import {
   getGlobalStatus,
   getGlobalStatusDetail,
   refreshGlobalStatusNow,
+  type StatusComponentRow,
   type StatusIncidentRow,
   type StatusServiceRow,
 } from "@/app/actions/global-status-actions";
@@ -182,6 +183,67 @@ function ServiceCard({ service, onOpen }: { service: StatusServiceRow; onOpen: (
   );
 }
 
+function IncidentList({ incidents }: { incidents: StatusIncidentRow[] }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium">Incidentes (últimos 30 dias)</h3>
+      {!incidents.length && <p className="text-xs text-muted-foreground">Nenhum incidente registrado.</p>}
+      {incidents.map((i) => (
+        <div key={i.id} className="rounded-lg border p-3 text-xs">
+          <div className="flex items-start justify-between gap-2">
+            <span className="font-medium text-foreground">{i.url ? <a href={i.url} target="_blank" rel="noreferrer" className="hover:underline">{i.title}</a> : i.title}</span>
+            <StatusPill status={i.resolvedAt ? "OK" : IMPACT_STATUS[i.impact] ?? "DEGRADED"} className="shrink-0" />
+          </div>
+          <div className="mt-1 text-muted-foreground">
+            {IMPACT_LABEL[i.impact] ?? i.impact} · {incidentStateLabel(i.state)} · início {formatDateTime(i.startedAt)}
+            {i.resolvedAt && <> · resolvido {formatDateTime(i.resolvedAt)}</>}
+          </div>
+          {i.affected && <div className="mt-1 line-clamp-2 text-muted-foreground">{i.affected}</div>}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/** Componentes agrupados; por padrão só os afetados (a Cloudflare tem centenas). */
+function ComponentList({ components }: { components: StatusComponentRow[] }) {
+  const [showAll, setShowAll] = useState(false);
+  const problems = components.filter((c) => c.status !== "OK");
+  const visible = showAll ? components : problems;
+  const groups = new Map<string, StatusComponentRow[]>();
+  for (const c of visible) {
+    const key = c.groupName ?? "";
+    groups.set(key, [...(groups.get(key) ?? []), c]);
+  }
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-medium">
+          Componentes {components.length ? `(${problems.length} de ${components.length} afetados)` : ""}
+        </h3>
+        {components.length > 0 && (
+          <Button variant="ghost" size="xs" onClick={() => setShowAll((v) => !v)}>
+            {showAll ? "Só os afetados" : "Mostrar todos"}
+          </Button>
+        )}
+      </div>
+      {!components.length && <p className="text-xs text-muted-foreground">Esta fonte não publica componentes.</p>}
+      {components.length > 0 && !visible.length && <p className="text-xs text-muted-foreground">Todos os componentes operando normalmente.</p>}
+      {Array.from(groups.entries()).map(([group, items]) => (
+        <div key={group} className="flex flex-col gap-1">
+          {group && <div className="text-xs font-medium text-muted-foreground">{group}</div>}
+          {items.map((c) => (
+            <div key={`${group}-${c.name}`} className="flex items-center justify-between gap-2 text-xs">
+              <span className="truncate">{c.name}</span>
+              <span className={cn("shrink-0", SERVICE_STATUS_STYLE[c.status].text)}>{SERVICE_STATUS_STYLE[c.status].label}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function ServiceDetailSheet({ service, onClose }: { service: StatusServiceRow | null; onClose: () => void }) {
   const { data, isLoading } = useQuery({
     queryKey: ["global-status-detail", service?.slug],
@@ -189,17 +251,6 @@ function ServiceDetailSheet({ service, onClose }: { service: StatusServiceRow | 
     enabled: !!service,
     refetchInterval: 30_000,
   });
-  const [showAll, setShowAll] = useState(false);
-  useEffect(() => setShowAll(false), [service?.slug]);
-
-  const components = data?.components ?? [];
-  const problems = components.filter((c) => c.status !== "OK");
-  const visible = showAll ? components : problems;
-  const groups = new Map<string, typeof components>();
-  for (const c of visible) {
-    const key = c.groupName ?? "";
-    groups.set(key, [...(groups.get(key) ?? []), c]);
-  }
 
   return (
     <Sheet open={!!service} onOpenChange={(open) => !open && onClose()}>
@@ -225,50 +276,13 @@ function ServiceDetailSheet({ service, onClose }: { service: StatusServiceRow | 
 
             <div className="flex flex-col gap-6 px-4 pb-6">
               {isLoading && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
-
-              <section className="flex flex-col gap-2">
-                <h3 className="text-sm font-medium">Incidentes (últimos 30 dias)</h3>
-                {data && !data.incidents.length && <p className="text-xs text-muted-foreground">Nenhum incidente registrado.</p>}
-                {data?.incidents.map((i) => (
-                  <div key={i.id} className="rounded-lg border p-3 text-xs">
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="font-medium text-foreground">{i.url ? <a href={i.url} target="_blank" rel="noreferrer" className="hover:underline">{i.title}</a> : i.title}</span>
-                      <StatusPill status={i.resolvedAt ? "OK" : IMPACT_STATUS[i.impact] ?? "DEGRADED"} className="shrink-0" />
-                    </div>
-                    <div className="mt-1 text-muted-foreground">
-                      {IMPACT_LABEL[i.impact] ?? i.impact} · {incidentStateLabel(i.state)} · início {formatDateTime(i.startedAt)}
-                      {i.resolvedAt && <> · resolvido {formatDateTime(i.resolvedAt)}</>}
-                    </div>
-                    {i.affected && <div className="mt-1 line-clamp-2 text-muted-foreground">{i.affected}</div>}
-                  </div>
-                ))}
-              </section>
-
-              <section className="flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-medium">
-                    Componentes {components.length ? `(${problems.length} de ${components.length} afetados)` : ""}
-                  </h3>
-                  {components.length > 0 && (
-                    <Button variant="ghost" size="xs" onClick={() => setShowAll((v) => !v)}>
-                      {showAll ? "Só os afetados" : "Mostrar todos"}
-                    </Button>
-                  )}
-                </div>
-                {data && !components.length && <p className="text-xs text-muted-foreground">Esta fonte não publica componentes.</p>}
-                {components.length > 0 && !visible.length && <p className="text-xs text-muted-foreground">Todos os componentes operando normalmente.</p>}
-                {Array.from(groups.entries()).map(([group, items]) => (
-                  <div key={group} className="flex flex-col gap-1">
-                    {group && <div className="text-xs font-medium text-muted-foreground">{group}</div>}
-                    {items.map((c) => (
-                      <div key={`${group}-${c.name}`} className="flex items-center justify-between gap-2 text-xs">
-                        <span className="truncate">{c.name}</span>
-                        <span className={cn("shrink-0", SERVICE_STATUS_STYLE[c.status].text)}>{SERVICE_STATUS_STYLE[c.status].label}</span>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </section>
+              {data && (
+                <>
+                  <IncidentList incidents={data.incidents} />
+                  {/* key: volta para "só os afetados" ao trocar de serviço. */}
+                  <ComponentList key={service.slug} components={data.components} />
+                </>
+              )}
             </div>
           </>
         )}

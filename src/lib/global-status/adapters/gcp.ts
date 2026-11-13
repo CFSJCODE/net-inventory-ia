@@ -23,11 +23,8 @@ function impactStatus(impact: string | undefined): ServiceStatus {
   return impact === "SERVICE_OUTAGE" ? "DOWN" : "DEGRADED";
 }
 
-export function parseGcpIncidents(data: GcpIncident[], now = new Date()): OfficialSnapshot {
-  const list = Array.isArray(data) ? data : [];
-  const active = list.filter((i) => !i.end);
-
-  // Componentes = produtos afetados agora (o Google não publica a lista de produtos com status).
+/** Componentes = produtos afetados agora (o Google não publica a lista de produtos com status). */
+function affectedProducts(active: GcpIncident[]): NormalizedComponent[] {
   const byProduct = new Map<string, NormalizedComponent>();
   for (const inc of active) {
     const status = impactStatus(inc.status_impact);
@@ -38,33 +35,40 @@ export function parseGcpIncidents(data: GcpIncident[], now = new Date()): Offici
         name: p.title,
         groupName: null,
         status: prev ? worstStatus([prev.status, status]) : status,
-        position: byProduct.size,
+        position: prev?.position ?? byProduct.size,
       });
     }
   }
+  return Array.from(byProduct.values());
+}
 
-  const incidents: NormalizedIncident[] = [];
-  for (const inc of list) {
-    const startedAt = toDate(inc.begin);
-    if (!inc.id || !startedAt) continue;
-    const resolvedAt = toDate(inc.end);
-    if (resolvedAt && now.getTime() - resolvedAt.getTime() > RECENT_MS) continue;
-    const products = (inc.affected_products ?? []).map((p) => p.title);
-    incidents.push({
-      externalId: inc.id,
-      title: (inc.external_desc ?? "Incidente no Google Cloud").trim().split("\n")[0].slice(0, 300),
-      impact: SEVERITY[inc.severity ?? ""] ?? "MINOR",
-      state: resolvedAt ? "resolved" : (inc.most_recent_update?.status ?? "investigating").toLowerCase(),
-      url: inc.uri ? `https://status.cloud.google.com/${inc.uri}` : null,
-      affected: products.length ? products.slice(0, 8).join(" · ") : null,
-      startedAt,
-      resolvedAt,
-    });
-  }
+/** Incidente normalizado, ou null quando é inválido ou foi resolvido há mais de 30 dias. */
+function toIncident(inc: GcpIncident, now: Date): NormalizedIncident | null {
+  const startedAt = toDate(inc.begin);
+  if (!inc.id || !startedAt) return null;
+  const resolvedAt = toDate(inc.end);
+  if (resolvedAt && now.getTime() - resolvedAt.getTime() > RECENT_MS) return null;
+  const products = (inc.affected_products ?? []).map((p) => p.title);
+  const state = resolvedAt ? "resolved" : (inc.most_recent_update?.status ?? "investigating").toLowerCase();
+  return {
+    externalId: inc.id,
+    title: (inc.external_desc ?? "Incidente no Google Cloud").trim().split("\n")[0].slice(0, 300),
+    impact: SEVERITY[inc.severity ?? ""] ?? "MINOR",
+    state,
+    url: inc.uri ? `https://status.cloud.google.com/${inc.uri}` : null,
+    affected: products.length ? products.slice(0, 8).join(" · ") : null,
+    startedAt,
+    resolvedAt,
+  };
+}
 
+export function parseGcpIncidents(data: GcpIncident[], now = new Date()): OfficialSnapshot {
+  const list = Array.isArray(data) ? data : [];
+  const active = list.filter((i) => !i.end);
+  const incidents = list.map((i) => toIncident(i, now)).filter((i): i is NormalizedIncident => i !== null);
   const status = active.length ? worstStatus(active.map((i) => impactStatus(i.status_impact))) : "OK";
   const description = active.length
     ? `${active.length} incidente${active.length > 1 ? "s" : ""} em andamento`
     : "Todos os serviços operando normalmente";
-  return { status, description, components: Array.from(byProduct.values()), incidents };
+  return { status, description, components: affectedProducts(active), incidents };
 }
