@@ -27,6 +27,8 @@ function tag(xml: string, name: string): string | null {
 const DOWN_WORDS = /\b(outage|unavailable|unable to access|down)\b/i;
 
 export function parseAzureRss(xml: string): OfficialSnapshot {
+  // Página de erro com HTTP 200 (proxy, manutenção do site) não pode virar "tudo normal".
+  if (!/<rss\b[\s\S]*<channel\b/i.test(xml)) throw new Error("Resposta do Azure não é um feed RSS válido");
   const items = Array.from(xml.matchAll(/<item\b[\s\S]*?<\/item>/gi), (m) => m[0]);
   const incidents: NormalizedIncident[] = [];
   const statuses: ServiceStatus[] = [];

@@ -56,6 +56,11 @@ describe("Statuspage", () => {
     });
     expect(snap.status).toBe("MAINTENANCE");
     expect(snap.incidents).toHaveLength(1);
+    const verifying = parseStatuspageSummary({
+      status: { indicator: "none" },
+      scheduled_maintenances: [{ id: "m4", name: "Verificação", status: "verifying", scheduled_for: "2026-11-13T20:00:00Z" }],
+    });
+    expect(verifying.status).toBe("MAINTENANCE");
     expect(snap.incidents[0]).toMatchObject({ externalId: "m1", impact: "MAINTENANCE" });
   });
 });
@@ -88,6 +93,10 @@ describe("Azure RSS", () => {
   it("feed vazio = tudo normal", () => {
     const snap = parseAzureRss(fixture("azure-empty.xml"));
     expect(snap).toMatchObject({ status: "OK", components: null, incidents: [] });
+  });
+
+  it("página de erro com HTTP 200 vira falha, não 'tudo normal'", () => {
+    expect(() => parseAzureRss("<html><body>Temporarily unavailable</body></html>")).toThrow(/RSS/);
   });
 
   it("cada item é um incidente ativo; 'outage' no título vira fora do ar", () => {

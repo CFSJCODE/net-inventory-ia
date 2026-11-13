@@ -76,7 +76,8 @@ type FetchResult = { kind: "snapshot"; snapshot: OfficialSnapshot; version: stri
 async function fetchStatuspage(service: StatusService, state: SourceState, force: boolean): Promise<FetchResult> {
   const base = service.sourceUrl!.replace(/\/$/, "");
   const fresh = Date.now() - state.lastFetchAt < SUMMARY_MAX_AGE_MS;
-  if (!force && fresh && service.sourceVersion) {
+  // Saindo de "Sem dados" sempre baixa o summary: a versão guardada pode ser igual e o status ficaria preso.
+  if (!force && fresh && service.sourceVersion && service.status !== "UNKNOWN") {
     const light = (await (await get(`${base}/api/v2/status.json`)).json()) as SpSummary;
     if (statuspageVersion(light) === service.sourceVersion) return { kind: "unchanged" };
   }

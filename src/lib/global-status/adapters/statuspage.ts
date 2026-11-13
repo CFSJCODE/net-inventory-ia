@@ -91,6 +91,11 @@ function incident(raw: SpIncident, maintenance: boolean): NormalizedIncident | n
   };
 }
 
+/** Manutenção acontecendo agora (em andamento ou em verificação final). */
+function isActiveMaintenance(m: SpIncident): boolean {
+  return m.status === "in_progress" || m.status === "verifying";
+}
+
 /** Traduz o summary.json para o formato normalizado. */
 export function parseStatuspageSummary(data: SpSummary): OfficialSnapshot {
   const all = data.components ?? [];
@@ -109,12 +114,12 @@ export function parseStatuspageSummary(data: SpSummary): OfficialSnapshot {
   const open = (data.incidents ?? []).map((i) => incident(i, false));
   // Só manutenção acontecendo agora: as agendadas (a Cloudflare tem dezenas por semana) lotariam o ticker.
   const maint = (data.scheduled_maintenances ?? [])
-    .filter((m) => m.status === "in_progress" || m.status === "verifying")
+    .filter(isActiveMaintenance)
     .map((m) => incident(m, true));
   const incidents = [...open, ...maint].filter((i): i is NormalizedIncident => i !== null);
 
   let status = INDICATOR_STATUS[data.status?.indicator ?? ""] ?? "UNKNOWN";
-  if (status === "OK" && (data.scheduled_maintenances ?? []).some((m) => m.status === "in_progress")) status = "MAINTENANCE";
+  if (status === "OK" && (data.scheduled_maintenances ?? []).some(isActiveMaintenance)) status = "MAINTENANCE";
 
   const raw = data.status?.description ?? "";
   return { status, description: DESCRIPTION_PT[raw.toLowerCase()] ?? raw, components, incidents };
