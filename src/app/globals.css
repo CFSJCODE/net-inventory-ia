@@ -128,3 +128,12 @@
     @apply font-sans;
   }
 }
+/* Faixa "ao vivo" do Status global: o conteúdo vem duplicado, então -50% emenda sem salto. */
+@keyframes status-ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}

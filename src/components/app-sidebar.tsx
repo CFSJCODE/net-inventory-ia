@@ -30,6 +30,7 @@ import { BellIcon } from "@/components/ui/bell";
 import { WaypointsIcon } from "@/components/ui/waypoints";
 import { WrenchIcon } from "@/components/ui/wrench";
 import { RouterIcon } from "@/components/ui/router";
+import { EarthIcon } from "@/components/ui/earth";
 import { BotMessageSquareIcon } from "@/components/ui/bot-message-square";
 import type { AnimatedIcon, AnimatedIconHandle } from "@/components/page-title";
 import { useAiStatus } from "@/components/ai/ai-common";
@@ -72,6 +73,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   { href: "/tools", label: "Ferramentas", icon: WrenchIcon },
   { href: "/equipment", label: "Equipamentos", icon: RouterIcon },
+  { href: "/status", label: "Status global", icon: EarthIcon },
   { href: "/alerts", label: "Alertas", icon: BellIcon, permission: "settings.manage" },
   { href: "/users", label: "Usuários", icon: ShieldCheckIcon, permission: "users.manage" },
   { href: "/settings", label: "Configurações", icon: SettingsIcon },

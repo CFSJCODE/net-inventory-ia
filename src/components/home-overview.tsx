@@ -13,6 +13,7 @@ import { BellIcon } from "@/components/ui/bell";
 import { WaypointsIcon } from "@/components/ui/waypoints";
 import { WrenchIcon } from "@/components/ui/wrench";
 import { RouterIcon } from "@/components/ui/router";
+import { EarthIcon } from "@/components/ui/earth";
 import { BotMessageSquareIcon } from "@/components/ui/bot-message-square";
 import { ShieldCheckIcon } from "@/components/ui/shield-check";
 import { ServerIcon } from "@/components/ui/server";
@@ -44,6 +45,7 @@ const SECTIONS: Section[] = [
   },
   { href: "/tools", title: "Ferramentas", icon: WrenchIcon, description: "ARP e port scan, SNMP, Wake-on-LAN, DNS, DHCP e tabela de rotas." },
   { href: "/equipment", title: "Equipamentos", icon: RouterIcon, description: "Switches e roteadores lidos por SNMP: portas, CPU, memória e temperatura." },
+  { href: "/status", title: "Status global", icon: EarthIcon, description: "Status oficial de nuvens, CDNs, IA e plataformas: Cloudflare, Azure, Google Cloud, GitHub, OpenAI e outros." },
   { href: "/alerts", title: "Alertas", icon: BellIcon, permission: "settings.manage", description: "Avisos por e-mail quando algo cai, volta ou passa dos limites." },
   { href: "/users", title: "Usuários", icon: ShieldCheckIcon, permission: "users.manage", description: "Contas de acesso ao painel e o perfil de cada uma." },
   { href: "/settings", title: "Configurações", icon: SettingsIcon, description: "Faixa e frequência do scan, regras de IP e preferências do painel." },
