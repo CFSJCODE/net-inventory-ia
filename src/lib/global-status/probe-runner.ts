@@ -6,12 +6,13 @@ import { ensureCatalogSeeded } from "./collector";
 import {
   BASELINE_REFRESH_MS,
   BASELINE_WINDOW_MS,
+  CLEARED_TARGET_DATA,
   SERVER_VANTAGE,
   TARGET_CACHE_MS,
   advanceAgenda,
   buildRollups,
   cleanupCutoffs,
-  closedWindows,
+  clearedServiceData,
   groupBaseline,
   hydrateTarget,
   isInternetTarget,
@@ -20,17 +21,19 @@ import {
   nextConnectivity,
   nextEvidenceStep,
   pauseServiceTargets,
+  pauseToWrite,
   pausedReason,
   pausedRoundDue,
   pausedRoundTargets,
   pausedServiceData,
   pausedTargetData,
+  planRollup,
   probesEnabled,
+  realignAgenda,
   reconcileTargets,
   recordTick,
   respreadServices,
   ringMaxAgeMs,
-  rollupStart,
   selectDue,
   serviceData,
   settlePausedRound,
@@ -83,6 +86,8 @@ interface RunnerState {
   baselines: Map<string, number[]>;
   baselinesAt: number;
   connectivity: LocalConnectivity;
+  /** Marcação de pausa que o banco ainda não aceitou: o passo seguinte tenta gravar de novo. */
+  pendingPause: PausedState | null;
   pausedRoundAt: number;
   /** Contador que troca os canários a cada rodada de evidência. */
   rotation: number;
@@ -105,6 +110,7 @@ function runner(): RunnerState {
     baselines: new Map(),
     baselinesAt: 0,
     connectivity: { state: "ok", since: null, reason: null },
+    pendingPause: null,
     pausedRoundAt: 0,
     rotation: 0,
     lastRolled: null,
@@ -121,7 +127,9 @@ const errorText = (err: unknown) => (err instanceof Error ? err.message : String
 /** Com passos de 5 s, um banco travado encheria o log: a mesma mensagem sai no máximo uma vez por minuto. */
 function report(r: RunnerState, message: string, log: () => void): void {
   const now = Date.now();
-  if (now - (r.logged.get(message) ?? 0) < LOG_EVERY_MS) return;
+  const age = now - (r.logged.get(message) ?? 0);
+  // Idade negativa: o relógio do sistema voltou, e a mensagem sai em vez de ficar calada até ele alcançar a hora antiga.
+  if (age >= 0 && age < LOG_EVERY_MS) return;
   if (r.logged.size > 50) r.logged.clear();
   r.logged.set(message, now);
   log();
@@ -220,6 +228,8 @@ async function tick(r: RunnerState, force: boolean): Promise<void> {
   const now = Date.now();
   await refreshTargets(r, now, force);
   await refreshBaselines(r, now);
+  // Se o relógio do sistema voltou, os vencimentos que ficaram longe no futuro voltam para dentro do intervalo.
+  r.targets = realignAgenda(r.targets, now);
 
   const all = Array.from(r.targets.values());
   let settled: { decision: ConnectivityDecision; record: Measurement[] } | null = null;
@@ -257,10 +267,8 @@ async function tick(r: RunnerState, force: boolean): Promise<void> {
     const decidedAt = Date.now();
     const { connectivity, change } = nextConnectivity(r.connectivity, settled.decision, decidedAt);
     r.connectivity = connectivity;
-    let pause: PausedState | null = null;
     if (connectivity.state !== "ok" && (change === "lost" || change === "moved")) {
-      pause = connectivity.state;
-      r.targets = pauseServiceTargets(r.targets, pausedReason(pause));
+      r.targets = pauseServiceTargets(r.targets, pausedReason(connectivity.state));
       if (change === "lost") r.pausedRoundAt = decidedAt;
       console.warn(`[global-status] conexão local fora: ${connectivity.reason}`);
     } else if (change === "restored") {
@@ -268,24 +276,32 @@ async function tick(r: RunnerState, force: boolean): Promise<void> {
       r.targets = respreadServices(r.targets, decidedAt);
       console.log("[global-status] conexão local restabelecida");
     }
-    await persist(r, outcome, pause);
+    // A marcação de pausa fica pendente até o banco aceitar: se a gravação falhar, a próxima rodada repete.
+    r.pendingPause = pauseToWrite(r.pendingPause, connectivity, change);
+    if (await persist(r, outcome, r.pendingPause)) r.pendingPause = null;
   }
   await maintain(r);
 }
 
-/** Grava o passo numa chamada só da fila de escrita. Falhou: tenta mais uma vez depois de 500 ms e, se falhar de novo, descarta. */
-async function persist(r: RunnerState, outcome: TickOutcome, pause: PausedState | null): Promise<void> {
-  if (!pause && !outcome.targetUpdates.length) return;
-  await serialized(async () => {
+/**
+ * Grava o passo numa chamada só da fila de escrita. Falhou: tenta mais uma vez depois de 500 ms e, se
+ * falhar de novo, descarta as medições do passo. Devolve se ficou gravado (ou se não havia o que gravar).
+ */
+async function persist(r: RunnerState, outcome: TickOutcome, pause: PausedState | null): Promise<boolean> {
+  if (!pause && !outcome.targetUpdates.length) return true;
+  return serialized(async () => {
     try {
       await writeTick(outcome, pause);
+      return true;
     } catch {
       await sleep(WRITE_RETRY_MS);
       try {
         await writeTick(outcome, pause);
+        return true;
       } catch (err) {
         const message = `[global-status] medições não gravadas (o estado em memória segue valendo): ${errorText(err)}`;
         report(r, message, () => console.warn(message));
+        return false;
       }
     }
   });
@@ -347,10 +363,13 @@ async function rollUp(r: RunnerState, now: number): Promise<void> {
     const oldest = newest ? null : await prisma.probeCheck.findFirst({ where: { vantage: SERVER_VANTAGE }, orderBy: { at: "asc" }, select: { at: true } });
     known = { lastRolled: null, newestRollup: newest?.bucket.getTime() ?? null, oldestCheck: oldest?.at.getTime() ?? null };
   }
-  const from = rollupStart(known, now);
-  if (from === null) return;
-  const windows = closedWindows(from, now);
-  if (!windows.length) return;
+  const plan = planRollup(known, now);
+  if (!plan) return;
+  const { windows } = plan;
+  if (!windows.length) {
+    r.lastRolled = plan.lastRolled;
+    return;
+  }
   const last = windows[windows.length - 1];
 
   await serialized(async () => {
@@ -366,7 +385,7 @@ async function rollUp(r: RunnerState, now: number): Promise<void> {
       ),
     );
   });
-  r.lastRolled = last;
+  r.lastRolled = plan.lastRolled;
 }
 
 /** Apaga as medições cruas com mais de 48 h e as janelas com mais de 30 dias. */
@@ -397,6 +416,34 @@ export function runProbeTick(options: { force?: boolean } = {}): Promise<void> {
   return r.running;
 }
 
+/**
+ * Com as medições desligadas, apaga o que elas deixaram nos serviços e nos alvos: ninguém mais atualiza
+ * o estado medido, e sem isso o último (um "fora do ar", por exemplo) ficaria nos cards para sempre. O
+ * histórico (medições e janelas) fica onde está e sai pela idade quando as medições forem religadas.
+ */
+async function clearMeasuredState(): Promise<void> {
+  await ensureCatalogSeeded();
+  const clear = async () => {
+    const now = new Date();
+    const services = await prisma.statusService.findMany({
+      where: { OR: [{ measuredStatus: { not: null } }, { measuredReason: { not: null } }, { latencyMs: { not: null } }] },
+      select: { id: true, officialState: true, status: true },
+    });
+    const writes: Prisma.PrismaPromise<unknown>[] = services.map((s) => prisma.statusService.updateMany({ where: { id: s.id }, data: clearedServiceData(s, now) }));
+    writes.push(prisma.probeTarget.updateMany({ where: { OR: [{ status: { not: "UNKNOWN" } }, { statusReason: { not: null } }, { lastLatencyMs: { not: null } }, { lastError: { not: null } }] }, data: CLEARED_TARGET_DATA }));
+    await prisma.$transaction(writes);
+  };
+  // Como as gravações de um passo: uma segunda tentativa depois de 500 ms (o banco pode estar ocupado ao subir).
+  await serialized(async () => {
+    try {
+      await clear();
+    } catch {
+      await sleep(WRITE_RETRY_MS);
+      await clear();
+    }
+  });
+}
+
 /** Inicia o agendador (uma vez por processo, via instrumentation). `GLOBAL_STATUS_PROBES=off` desliga. */
 export function startProbeRunner(): void {
   const r = runner();
@@ -404,6 +451,7 @@ export function startProbeRunner(): void {
   r.started = true;
   if (!probesEnabled(process.env.GLOBAL_STATUS_PROBES)) {
     console.log("[global-status] medições próprias desligadas (GLOBAL_STATUS_PROBES=off)");
+    void clearMeasuredState().catch((err) => console.warn(`[global-status] o estado medido antes de desligar as medições não foi apagado: ${errorText(err)}`));
     return;
   }
   // Os timers não seguram o processo aberto (unref): quem mantém o servidor de pé é o próprio Next.

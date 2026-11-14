@@ -403,7 +403,7 @@ O estado medido de cada alvo sai de `stats.ts`: 3 falhas seguidas é "fora do ar
 
 **Sua Internet.** Quando tudo falha ao mesmo tempo, a causa costuma ser local. Antes de culpar os serviços, o servidor mede o gateway e três resolvedores públicos (1.1.1.1, 8.8.8.8 e 9.9.9.9). Se nem eles respondem, o painel mostra "Sua Internet está fora", descarta as falhas daquele instante e pausa as medições dos serviços até a conexão voltar; os cards ficam só com o status oficial. Se os resolvedores respondem, as falhas são dos provedores e ficam registradas. Um DNS local que parou de resolver nomes tem estado próprio.
 
-As medições partem do servidor onde o NetInventory roda: mostram como os serviços respondem da sua rede, não o estado deles no resto do mundo. Para desligá-las e manter só o status oficial, defina a variável de ambiente `GLOBAL_STATUS_PROBES=off` no serviço.
+As medições partem do servidor onde o NetInventory roda: mostram como os serviços respondem da sua rede, não o estado deles no resto do mundo. Para desligá-las e manter só o status oficial, defina a variável de ambiente `GLOBAL_STATUS_PROBES=off` no serviço. Com elas desligadas a página mostra só o que os provedores publicam: saem a faixa "Sua Internet" e a latência, o gráfico e a disponibilidade dos cards, e os serviços sem fonte oficial (WhatsApp, Instagram, YouTube, Netflix e os outros de redes sociais e streaming) deixam de aparecer. O estado medido que estava gravado é apagado quando o servidor sobe; o histórico das medições fica no banco, para de crescer e volta a ser limpo pela idade quando elas forem religadas.
 
 ### Banco de dados
 

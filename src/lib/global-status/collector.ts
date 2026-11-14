@@ -1,9 +1,10 @@
 import type { Prisma, StatusService } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { DEFAULT_INTERVAL_SEC, STATUS_CATALOG } from "./catalog";
+import { DEFAULT_INTERVAL_SEC, STATUS_CATALOG, type CatalogEntry } from "./catalog";
 import { parseStatuspageSummary, statuspageVersion, type SpSummary } from "./adapters/statuspage";
 import { parseGcpIncidents } from "./adapters/gcp";
 import { parseAzureRss } from "./adapters/azure-rss";
+import { CLEARED_TARGET_DATA, endpointChanged, probesEnabled, unsourcedServiceData } from "./probe-logic";
 import { combineStatus, type OfficialSnapshot, type ServiceStatus } from "./types";
 import { serialized } from "./write-queue";
 
@@ -123,11 +124,13 @@ async function fetchService(service: StatusService, state: SourceState, force: b
 /**
  * Status do card: o pior entre o estado oficial e o medido pelas sondas próprias. O medido e o status
  * atual são lidos na hora de gravar, dentro da fila de escrita, porque as medições gravam em paralelo
- * com as consultas e a linha carregada no começo da rodada já pode estar velha.
+ * com as consultas e a linha carregada no começo da rodada já pode estar velha. Com as medições
+ * desligadas o medido não entra: o que estiver gravado é de antes, e ninguém mais o atualiza.
  */
 async function combinedStatus(db: Prisma.TransactionClient, serviceId: string, official: ServiceStatus): Promise<{ status: ServiceStatus; changed: boolean }> {
   const current = await db.statusService.findUnique({ where: { id: serviceId }, select: { measuredStatus: true, status: true } });
-  const status = combineStatus(official, current?.measuredStatus as ServiceStatus | null | undefined);
+  const measured = probesEnabled(process.env.GLOBAL_STATUS_PROBES) ? (current?.measuredStatus as ServiceStatus | null | undefined) : null;
+  const status = combineStatus(official, measured);
   return { status, changed: status !== current?.status };
 }
 
@@ -233,27 +236,79 @@ async function checkService(service: StatusService, force: boolean): Promise<voi
   }
 }
 
+/** O que a gravação do catálogo precisa saber de cada serviço já gravado, com os alvos dele. */
+const STORED_SERVICE = {
+  id: true,
+  slug: true,
+  sourceType: true,
+  officialState: true,
+  measuredStatus: true,
+  status: true,
+  targets: { select: { id: true, key: true, kind: true, host: true, url: true, port: true } },
+} satisfies Prisma.StatusServiceSelect;
+
+type StoredService = Prisma.StatusServiceGetPayload<{ select: typeof STORED_SERVICE }>;
+
+/**
+ * Grava os alvos de um serviço do catálogo. O alvo que manteve a chave mas trocou de endereço perde as
+ * medições e o estado, que eram do endereço antigo; a chave que saiu do catálogo é apagada, com o
+ * histórico em cascata.
+ */
+async function seedTargets(tx: Prisma.TransactionClient, serviceId: string, entry: CatalogEntry, stored: StoredService["targets"]): Promise<void> {
+  const known = new Map(stored.map((t) => [t.key, t]));
+  for (const target of entry.targets) {
+    const fields = { kind: target.kind, host: target.host, url: target.url ?? null, port: target.port ?? null, intervalSec: target.intervalSec ?? DEFAULT_INTERVAL_SEC[target.kind] };
+    const old = known.get(target.key);
+    const moved = old !== undefined && endpointChanged(old, fields);
+    if (moved) {
+      await tx.probeCheck.deleteMany({ where: { targetId: old.id } });
+      await tx.probeRollup.deleteMany({ where: { targetId: old.id } });
+    }
+    await tx.probeTarget.upsert({
+      where: { serviceId_key: { serviceId, key: target.key } },
+      create: { serviceId, key: target.key, ...fields },
+      update: moved ? { ...fields, ...CLEARED_TARGET_DATA, lastCheckAt: null } : fields,
+    });
+  }
+  await tx.probeTarget.deleteMany({ where: { serviceId, key: { notIn: entry.targets.map((t) => t.key) } } });
+}
+
+/**
+ * Grava um serviço do catálogo e os alvos dele. O serviço que deixou de ter fonte oficial perde o que a
+ * fonte antiga declarou: o estado, a frase, os componentes e os incidentes.
+ */
+async function seedService(tx: Prisma.TransactionClient, entry: CatalogEntry, position: number, before: StoredService | undefined, now: Date): Promise<void> {
+  const data = { name: entry.name, category: entry.category, sourceType: entry.sourceType, sourceUrl: entry.sourceUrl, pageUrl: entry.pageUrl, position };
+  const lostSource = entry.sourceType === "NONE" && before !== undefined && (before.sourceType !== "NONE" || before.officialState !== null);
+  const update = lostSource ? { ...data, ...unsourcedServiceData(before, now) } : data;
+  const service = await tx.statusService.upsert({ where: { slug: entry.slug }, create: { slug: entry.slug, ...data }, update, select: { id: true } });
+  if (lostSource) {
+    // Componentes e incidentes vieram da fonte que não existe mais.
+    await tx.statusComponent.deleteMany({ where: { serviceId: service.id } });
+    await tx.statusIncident.deleteMany({ where: { serviceId: service.id, origin: "OFFICIAL" } });
+  }
+  await seedTargets(tx, service.id, entry, before?.targets ?? []);
+}
+
 /**
  * Cria/atualiza os serviços do catálogo (nome, categoria, fonte e ordem) e os alvos de medição de cada
- * um, sem mexer em "enabled". Alvo cuja chave saiu do catálogo é apagado (e as medições dele, em
- * cascata). Tudo numa transação só, dentro da fila de escrita: no SQLite cada transação é uma ida ao
- * disco, e são mais de cem gravações pequenas.
+ * um, sem mexer em "enabled". O que saiu do catálogo é apagado, com o histórico em cascata: o alvo cuja
+ * chave saiu e o serviço cujo identificador saiu (senão ele seguiria sendo consultado e medido para
+ * sempre).
+ *
+ * Tudo numa transação só, dentro da fila de escrita: no SQLite cada transação é uma ida ao disco, e são
+ * mais de cem gravações pequenas.
  */
 export async function seedStatusCatalog(): Promise<void> {
   await serialized(() => prisma.$transaction(async (tx) => {
-    for (const [position, entry] of STATUS_CATALOG.entries()) {
-      const data = { name: entry.name, category: entry.category, sourceType: entry.sourceType, sourceUrl: entry.sourceUrl, pageUrl: entry.pageUrl, position };
-      const service = await tx.statusService.upsert({ where: { slug: entry.slug }, create: { slug: entry.slug, ...data }, update: data, select: { id: true } });
-      for (const target of entry.targets) {
-        const fields = { kind: target.kind, host: target.host, url: target.url ?? null, port: target.port ?? null, intervalSec: target.intervalSec ?? DEFAULT_INTERVAL_SEC[target.kind] };
-        await tx.probeTarget.upsert({
-          where: { serviceId_key: { serviceId: service.id, key: target.key } },
-          create: { serviceId: service.id, key: target.key, ...fields },
-          update: fields,
-        });
-      }
-      await tx.probeTarget.deleteMany({ where: { serviceId: service.id, key: { notIn: entry.targets.map((t) => t.key) } } });
-    }
+    const now = new Date();
+    const stored = await tx.statusService.findMany({ select: STORED_SERVICE });
+    const bySlug = new Map(stored.map((s) => [s.slug, s]));
+    for (const [position, entry] of STATUS_CATALOG.entries()) await seedService(tx, entry, position, bySlug.get(entry.slug), now);
+
+    const slugs = new Set(STATUS_CATALOG.map((entry) => entry.slug));
+    const removed = stored.filter((s) => !slugs.has(s.slug)).map((s) => s.id);
+    if (removed.length) await tx.statusService.deleteMany({ where: { id: { in: removed } } });
     // Roda ao subir, junto com os outros monitores: espera mais por uma conexão livre antes de desistir.
   }, { maxWait: 10_000, timeout: 30_000 }));
 }

@@ -216,8 +216,8 @@ interface FakeDns {
 
 const dnsSockets: dgram.Socket[] = [];
 
-/** Servidor DNS mínimo em UDP: responde um registro A (93.184.216.34), um código de erro ou nada. */
-function startDns(mode: DnsMode): Promise<FakeDns> {
+/** Servidor DNS mínimo em UDP: responde um registro A (93.184.216.34), um código de erro ou nada; `delayMs` atrasa a resposta. */
+function startDns(mode: DnsMode, delayMs = 0): Promise<FakeDns> {
   const rcode = { a: 0, vazio: 0, servfail: 2, nxdomain: 3, refused: 5, mudo: 0 }[mode];
   const socket = dgram.createSocket("udp4");
   const queries: string[] = [];
@@ -241,7 +241,17 @@ function startDns(mode: DnsMode): Promise<FakeDns> {
     header.writeUInt16BE(mode === "a" ? 1 : 0, 6); // respostas
     // Resposta: ponteiro para o nome da pergunta, tipo A, classe IN, TTL de 60 s e os 4 bytes do endereço.
     const answer = mode === "a" ? Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 93, 184, 216, 34]) : Buffer.alloc(0);
-    socket.send(Buffer.concat([header, query.subarray(12, end), answer]), client.port, client.address);
+    const reply = Buffer.concat([header, query.subarray(12, end), answer]);
+    const send = () => {
+      // O teste pode já ter fechado o socket quando a resposta atrasada sai.
+      try {
+        socket.send(reply, client.port, client.address);
+      } catch {
+        // socket fechado: a resposta não tem mais para quem ir
+      }
+    };
+    if (delayMs > 0) setTimeout(send, delayMs);
+    else send();
   });
   return new Promise((resolve) => socket.bind(0, "127.0.0.1", () => resolve({ address: `127.0.0.1:${socket.address().port}`, queries })));
 }
@@ -336,6 +346,32 @@ const IPUTILS_DUP = `PING 192.168.0.255 (192.168.0.255) 56(84) bytes of data.
 rtt min/avg/max/mdev = 0.500/0.616/0.900/0.146 ms
 `;
 
+// A resposta ao pacote 1 veio duas vezes e o pacote 3 se perdeu: 4 respostas de 5, 20% de perda.
+const IPUTILS_DUP_LOSS = `PING 192.168.0.1 (192.168.0.1) 56(84) bytes of data.
+64 bytes from 192.168.0.1: icmp_seq=1 ttl=64 time=0.5 ms
+64 bytes from 192.168.0.1: icmp_seq=1 ttl=64 time=0.9 ms (DUP!)
+64 bytes from 192.168.0.1: icmp_seq=2 ttl=64 time=0.6 ms
+64 bytes from 192.168.0.1: icmp_seq=4 ttl=64 time=0.7 ms
+64 bytes from 192.168.0.1: icmp_seq=5 ttl=64 time=0.5 ms
+
+--- 192.168.0.1 ping statistics ---
+5 packets transmitted, 4 received, +1 duplicates, 20% packet loss, time 811ms
+rtt min/avg/max/mdev = 0.500/0.640/0.900/0.149 ms
+`;
+
+// O mesmo no ping do busybox (Alpine, roteadores): "seq=" a partir de zero.
+const BUSYBOX_DUP_LOSS = `PING 192.168.0.1 (192.168.0.1): 56 data bytes
+64 bytes from 192.168.0.1: seq=0 ttl=64 time=0.512 ms
+64 bytes from 192.168.0.1: seq=0 ttl=64 time=0.934 ms (DUP!)
+64 bytes from 192.168.0.1: seq=1 ttl=64 time=0.601 ms
+64 bytes from 192.168.0.1: seq=3 ttl=64 time=0.702 ms
+64 bytes from 192.168.0.1: seq=4 ttl=64 time=0.498 ms
+
+--- 192.168.0.1 ping statistics ---
+5 packets transmitted, 4 packets received, 1 duplicates, 20% packet loss
+round-trip min/avg/max = 0.498/0.649/0.934 ms
+`;
+
 // O ping do Windows separa as linhas com CRLF.
 const WINDOWS_PT = [
   "",
@@ -412,11 +448,29 @@ describe("parsePingOutput", () => {
     }
   });
 
-  it("uma resposta duplicada (DUP!) não faz o recebido passar do enviado", () => {
+  it("uma resposta duplicada (DUP!) não conta: nem no recebido, nem nos tempos", () => {
     const stats = parsePingOutput(IPUTILS_DUP, 5);
     expect(stats.received).toBe(5);
-    expect(stats.rtts).toHaveLength(5);
+    // O 0,9 ms da resposta repetida fica de fora.
+    expect(stats.rtts).toEqual([0.5, 0.6, 0.5, 0.7, 0.5]);
     expect(stats.lossPct).toBe(0);
+  });
+
+  it("uma resposta duplicada não esconde a perda de outro pacote", () => {
+    const iputils = parsePingOutput(IPUTILS_DUP_LOSS, 5);
+    expect(iputils.received).toBe(4);
+    expect(iputils.rtts).toEqual([0.5, 0.6, 0.7, 0.5]);
+    expect(iputils.lossPct).toBe(20);
+
+    const busybox = parsePingOutput(BUSYBOX_DUP_LOSS, 5);
+    expect(busybox.received).toBe(4);
+    expect(busybox.rtts).toEqual([0.512, 0.601, 0.702, 0.498]);
+    expect(busybox.lossPct).toBe(20);
+  });
+
+  it("só duplicatas depois da única resposta: uma recebida, o resto é perda", () => {
+    const output = ["64 bytes from 10.0.0.1: icmp_seq=1 ttl=64 time=1.0 ms", "64 bytes from 10.0.0.1: icmp_seq=1 ttl=64 time=1.4 ms (DUP!)", "64 bytes from 10.0.0.1: icmp_seq=1 ttl=64 time=1.9 ms (DUP!)", ""].join("\n");
+    expect(parsePingOutput(output, 3)).toEqual({ received: 1, rtts: [1], lossPct: expect.closeTo(66.67, 1), avgMs: 1, jitterMs: null });
   });
 
   it("lê o Windows em português, contando tempo<1ms como 0,5 ms", () => {
@@ -636,7 +690,14 @@ describe("parseProcNetRoute", () => {
 });
 
 describe("defaultGateway", () => {
-  const route = (destination: string, nextHop: string, metric: number | null) => ({ destination, nextHop, interface: "eth0", metric, protocol: "dhcp" });
+  const route = (destination: string, nextHop: string, metric: number | null, interfaceMetric?: number | null) => ({
+    destination,
+    nextHop,
+    interface: "eth0",
+    metric,
+    ...(interfaceMetric === undefined ? {} : { interfaceMetric }),
+    protocol: "dhcp",
+  });
   // Cada teste começa um dia depois do anterior: o cache do módulo (5 min) nunca vaza de um teste para outro.
   let clock = Date.UTC(2031, 0, 1);
 
@@ -661,6 +722,23 @@ describe("defaultGateway", () => {
   it("métrica ausente conta como zero", async () => {
     mocks.readRouteTable.mockResolvedValue([route("0.0.0.0/0", "192.168.0.254", 50), route("0.0.0.0/0", "192.168.0.1", null)]);
     expect(await defaultGateway()).toBe("192.168.0.1");
+  });
+
+  it("Windows: duas rotas padrão com a mesma métrica desempatam pela métrica da interface", async () => {
+    // Cabo (25) e Wi-Fi (50) por DHCP: as duas rotas vêm com RouteMetric 0, e o Windows usa a do cabo.
+    mocks.readRouteTable.mockResolvedValue([route("0.0.0.0/0", "192.168.1.1", 0, 50), route("0.0.0.0/0", "192.168.0.1", 0, 25)]);
+    expect(await defaultGateway()).toBe("192.168.0.1");
+  });
+
+  it("Windows: vale a soma da métrica da rota com a da interface", async () => {
+    // 10 + 5 = 15 ganha de 0 + 25, embora a rota sozinha tenha a métrica maior.
+    mocks.readRouteTable.mockResolvedValue([route("0.0.0.0/0", "192.168.1.1", 0, 25), route("0.0.0.0/0", "192.168.0.1", 10, 5)]);
+    expect(await defaultGateway()).toBe("192.168.0.1");
+  });
+
+  it("métrica de interface ausente ou nula conta como zero", async () => {
+    mocks.readRouteTable.mockResolvedValue([route("0.0.0.0/0", "192.168.1.1", 20, null), route("0.0.0.0/0", "192.168.0.1", 5, 25), route("0.0.0.0/0", "192.168.2.1", 21)]);
+    expect(await defaultGateway()).toBe("192.168.1.1");
   });
 
   it("guarda o gateway encontrado por 5 min", async () => {
@@ -1144,18 +1222,100 @@ describe("probeDns", () => {
     expect(server.queries).toEqual(["example.com"]);
   });
 
-  it("com mais de um servidor, o corte encerra a consulta em vez de esperar um prazo por servidor", async () => {
-    // Quatro servidores mudos: sem o corte seriam 4 prazos de 300 ms (1,2 s), bem depois do corte (0,8 s).
-    const servers = await Promise.all(Array.from({ length: 4 }, () => startDns("mudo")));
-    mocks.getSystemDnsServers.mockResolvedValue(servers.map((server) => server.address));
-    const cancel = vi.spyOn(Resolver.prototype, "cancel");
-    const started = performance.now();
-    const result = await probeDns(AUTO_SYSTEM_DNS, "example.com", { timeoutMs: 300 });
-    expect(result).toEqual({ ok: false, latencyMs: null, error: "o servidor DNS não respondeu", failedAt: "dns" });
-    expect(cancel).toHaveBeenCalledTimes(1);
-    expect(performance.now() - started).toBeLessThan(2500);
-    // Dá tempo de o ECANCELLED do cancelamento chegar: ele não pode virar rejeição solta.
-    await sleep(50);
+  describe("auto:system com vários servidores do sistema (Windows)", () => {
+    const NO_ANSWER: ProbeResult = { ok: false, latencyMs: null, error: "o servidor DNS não respondeu", failedAt: "dns" };
+    const systemLists = (...servers: FakeDns[]) => mocks.getSystemDnsServers.mockResolvedValue(servers.map((server) => server.address));
+
+    it("todos mudos: são perguntados ao mesmo tempo e a medição dura um prazo, não um por servidor", async () => {
+      // Quatro servidores mudos com 400 ms de prazo: um depois do outro seriam 1,6 s.
+      const servers = await Promise.all(Array.from({ length: 4 }, () => startDns("mudo")));
+      systemLists(...servers);
+      const started = performance.now();
+      const result = await expectTimerReleased(900, () => probeDns(AUTO_SYSTEM_DNS, "example.com", { timeoutMs: 400 }));
+      expect(result).toEqual(NO_ANSWER);
+      expect(performance.now() - started).toBeLessThan(1300);
+      // Cada servidor recebeu a pergunta uma vez só (tries: 1).
+      expect(servers.map((server) => server.queries)).toEqual([["example.com"], ["example.com"], ["example.com"], ["example.com"]]);
+    });
+
+    it("um servidor morto no começo da lista não atrasa nem derruba a medição", async () => {
+      const [dead, alive] = [await startDns("mudo"), await startDns("a")];
+      systemLists(dead, alive);
+      const result = await probeDns(AUTO_SYSTEM_DNS, "example.com", { timeoutMs: 1500 });
+      expect(result.ok).toBe(true);
+      expect(result.latencyMs).toBe(result.dnsMs);
+      // Num resolvedor só, a resposta viria depois do prazo inteiro do servidor morto (1,5 s).
+      expect(result.latencyMs!).toBeLessThan(1200);
+      expect(dead.queries).toEqual(["example.com"]);
+      expect(alive.queries).toEqual(["example.com"]);
+    });
+
+    it("vale a primeira resposta boa, mesmo a de um servidor lento; os que ainda esperam são cancelados", async () => {
+      const [dead, slow] = [await startDns("mudo"), await startDns("a", 300)];
+      systemLists(dead, slow);
+      const cancel = vi.spyOn(Resolver.prototype, "cancel");
+      const result = await expectTimerReleased(2500, () => probeDns(AUTO_SYSTEM_DNS, "example.com", { timeoutMs: 2000 }));
+      expect(result.ok).toBe(true);
+      expect(result.latencyMs!).toBeGreaterThanOrEqual(250);
+      expect(result.latencyMs!).toBeLessThan(1800);
+      // Só o resolvedor do servidor mudo ainda esperava.
+      expect(cancel).toHaveBeenCalledTimes(1);
+      // Dá tempo de o ECANCELLED do cancelamento chegar: ele não pode virar rejeição solta nem mudar o resultado.
+      await sleep(50);
+    });
+
+    it("um servidor que devolve falha não derruba a medição se outro resolve", async () => {
+      for (const mode of ["servfail", "refused", "nxdomain", "vazio"] as const) {
+        systemLists(await startDns(mode), await startDns("a", 40));
+        expect(await probeDns(AUTO_SYSTEM_DNS, "example.com", { timeoutMs: 1500 }), mode).toMatchObject({ ok: true });
+      }
+    });
+
+    it("sem nenhuma resposta boa, uma resposta de verdade diz mais que o silêncio de outro servidor", async () => {
+      systemLists(await startDns("mudo"), await startDns("nxdomain"));
+      expect(await probeDns(AUTO_SYSTEM_DNS, "example.com", { timeoutMs: 300 })).toEqual({ ok: false, latencyMs: null, error: "nome não encontrado", failedAt: "dns" });
+
+      systemLists(await startDns("servfail"), await startDns("mudo"));
+      expect(await probeDns(AUTO_SYSTEM_DNS, "example.com", { timeoutMs: 300 })).toEqual({ ok: false, latencyMs: null, error: "o servidor DNS devolveu falha (SERVFAIL)", failedAt: "dns" });
+    });
+
+    it("com mais de uma falha de verdade, vale a do primeiro servidor da lista, e não a que chegou primeiro", async () => {
+      // O SERVFAIL do primeiro chega 150 ms depois do "nome não encontrado" do segundo.
+      systemLists(await startDns("servfail", 150), await startDns("nxdomain"));
+      expect(await probeDns(AUTO_SYSTEM_DNS, "example.com", { timeoutMs: 1500 })).toMatchObject({ ok: false, error: "o servidor DNS devolveu falha (SERVFAIL)" });
+
+      systemLists(await startDns("nxdomain", 150), await startDns("servfail"));
+      expect(await probeDns(AUTO_SYSTEM_DNS, "example.com", { timeoutMs: 1500 })).toMatchObject({ ok: false, error: "nome não encontrado" });
+    });
+
+    it("resolvedores que não devolvem nada: o corte encerra a medição e cancela todos", async () => {
+      const servers = await Promise.all(Array.from({ length: 3 }, () => startDns("mudo")));
+      systemLists(...servers);
+      // Consultas que nunca terminam, nem por prazo: só o corte encerra.
+      vi.spyOn(Resolver.prototype, "resolve4").mockImplementation((() => new Promise<string[]>(() => undefined)) as never);
+      const cancel = vi.spyOn(Resolver.prototype, "cancel");
+      const started = performance.now();
+      const result = await probeDns(AUTO_SYSTEM_DNS, "example.com", { timeoutMs: 100 });
+      expect(result).toEqual(NO_ANSWER);
+      expect(performance.now() - started).toBeGreaterThanOrEqual(550);
+      expect(cancel).toHaveBeenCalledTimes(3);
+    });
+
+    it("consulta no máximo 8 servidores do sistema", async () => {
+      const servers = await Promise.all(Array.from({ length: 10 }, () => startDns("mudo")));
+      systemLists(...servers);
+      expect(await probeDns(AUTO_SYSTEM_DNS, "example.com", { timeoutMs: 300 })).toEqual(NO_ANSWER);
+      expect(servers.map((server) => server.queries.length)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 0, 0]);
+    });
+
+    it("um servidor nomeado no alvo continua num resolvedor só", async () => {
+      const setServers = vi.spyOn(Resolver.prototype, "setServers");
+      const server = await startDns("a");
+      systemLists(await startDns("mudo"), await startDns("mudo"));
+      expect(await probeDns(server.address, "example.com")).toMatchObject({ ok: true });
+      expect(mocks.getSystemDnsServers).not.toHaveBeenCalled();
+      expect(setServers).toHaveBeenCalledTimes(1);
+    });
   });
 
   it.each([

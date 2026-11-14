@@ -4,7 +4,7 @@ import { requirePermission, requireSession } from "@/lib/auth/server";
 import { prisma } from "@/lib/prisma";
 import { STATUS_CATALOG } from "@/lib/global-status/catalog";
 import { checkGlobalStatus, ensureCatalogSeeded } from "@/lib/global-status/collector";
-import { SERVER_VANTAGE, sortByCatalog } from "@/lib/global-status/probe-logic";
+import { SERVER_VANTAGE, isStale, probesEnabled, servedMeasure, sortByCatalog } from "@/lib/global-status/probe-logic";
 import { getLocalConnectivity, runProbesNow } from "@/lib/global-status/probe-runner";
 import { defaultGateway } from "@/lib/global-status/probes";
 import { buildSeries, latencySummary, mainLatencyTarget, tailPoints, uptimeOf, type RollupPoint, type SparkSeries } from "@/lib/global-status/series";
@@ -46,6 +46,8 @@ export interface StatusServiceRow {
   measuredStatus: ServiceStatus | null;
   /** Motivo do estado medido quando não está normal (ex.: "HTTP: 3 falhas seguidas"). */
   measuredReason: string | null;
+  /** true = as medições do serviço estão paradas pela conexão local (fora, ou recém-voltada e ele ainda não foi medido de novo). */
+  measurementPaused: boolean;
   /** Latência de rede atual (handshake TCP ou ping), em ms. */
   latencyMs: number | null;
   /** Disponibilidade medida nas últimas 24 h, em % (o pior alvo do serviço); null sem amostras. */
@@ -103,7 +105,12 @@ export interface StatusTargetRow {
 }
 
 export interface GlobalStatusData {
-  /** Todos os serviços habilitados, inclusive os da categoria INTERNET (base da faixa "Sua Internet"). */
+  /** false = as medições deste servidor estão desligadas (`GLOBAL_STATUS_PROBES=off`): a página mostra só o status oficial. */
+  probes: boolean;
+  /**
+   * Os serviços habilitados, inclusive os da categoria INTERNET (base da faixa "Sua Internet"). Com as
+   * medições desligadas, só os que têm fonte oficial: dos outros não haveria nada a mostrar.
+   */
   services: StatusServiceRow[];
   /** Incidentes e manutenções em aberto em todos os serviços, mais recentes primeiro. */
   incidents: StatusIncidentRow[];
@@ -216,7 +223,8 @@ async function loadHistory(now: number): Promise<History> {
 function getHistory(): Promise<History> {
   const now = Date.now();
   const cached = g.__globalStatusHistory;
-  if (cached && now - cached.at < HISTORY_CACHE_MS) return cached.data;
+  // Uma leitura "do futuro" (o relógio do sistema voltou) também está velha: sem isso o histórico ficaria parado até o relógio alcançar a hora antiga.
+  if (cached && !isStale(cached.at, now, HISTORY_CACHE_MS)) return cached.data;
   const data: Promise<History> = loadHistory(now).catch((err) => {
     // Sem o histórico a página ainda mostra o status de cada serviço; os gráficos voltam na próxima consulta que der certo.
     if (g.__globalStatusHistory?.data === data) g.__globalStatusHistory = undefined;
@@ -227,13 +235,17 @@ function getHistory(): Promise<History> {
   return data;
 }
 
+/** Sem histórico: medições desligadas. */
+const NO_HISTORY: Pick<History, "services"> = { services: new Map() };
+
 export async function getGlobalStatus(): Promise<GlobalStatusData> {
   await requireSession();
   // Primeira abertura antes do monitor terminar a primeira rodada: os cards já aparecem como "Verificando".
   await ensureCatalogSeeded();
+  const probes = probesEnabled(process.env.GLOBAL_STATUS_PROBES);
 
   const [services, counts, problems, open, history] = await Promise.all([
-    prisma.statusService.findMany({ where: { enabled: true }, orderBy: { position: "asc" } }),
+    prisma.statusService.findMany({ where: probes ? { enabled: true } : { enabled: true, sourceType: { not: "NONE" } }, orderBy: { position: "asc" } }),
     prisma.statusComponent.groupBy({ by: ["serviceId", "status"], _count: { _all: true } }),
     prisma.statusComponent.findMany({ where: { status: { not: "OK" } }, orderBy: { position: "asc" } }),
     prisma.statusIncident.findMany({
@@ -241,7 +253,7 @@ export async function getGlobalStatus(): Promise<GlobalStatusData> {
       include: { service: { select: { slug: true, name: true } } },
       orderBy: { startedAt: "desc" },
     }),
-    getHistory(),
+    probes ? getHistory() : NO_HISTORY,
   ]);
 
   const countsBy = new Map<string, Record<ServiceStatus, number>>();
@@ -252,17 +264,16 @@ export async function getGlobalStatus(): Promise<GlobalStatusData> {
   }
 
   return {
+    probes,
     services: services.map((s) => ({
       slug: s.slug,
       name: s.name,
       category: s.category,
-      status: s.status as ServiceStatus,
       hasSource: s.sourceType !== "NONE",
       officialStatus: s.officialStatus,
       officialState: (s.officialState as ServiceStatus | null) ?? null,
-      measuredStatus: (s.measuredStatus as ServiceStatus | null) ?? null,
-      measuredReason: s.measuredReason,
-      latencyMs: s.latencyMs,
+      // Status do card, estado medido, motivo, pausa e latência: nada disso vai com as medições desligadas.
+      ...servedMeasure(s, probes),
       uptime24h: history.services.get(s.id)?.uptime24h ?? null,
       spark: history.services.get(s.id)?.spark ?? null,
       pageUrl: s.pageUrl,
@@ -308,9 +319,11 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
   });
   if (!service) return { components: [], incidents: [], targets: [] };
 
-  const targets = sortByCatalog(service.targets.map((t) => ({ ...t, serviceSlug: service.slug })), STATUS_CATALOG);
+  // Com as medições desligadas não há alvos a listar: o que está gravado neles é de antes.
+  const measuring = probesEnabled(process.env.GLOBAL_STATUS_PROBES);
+  const targets = measuring ? sortByCatalog(service.targets.map((t) => ({ ...t, serviceSlug: service.slug })), STATUS_CATALOG) : [];
   const [history, gateway, lasts] = await Promise.all([
-    getHistory(),
+    targets.length ? getHistory() : null,
     // Só o alvo "gateway padrão" precisa do IP descoberto (a descoberta tem cache próprio e nunca lança).
     targets.some((t) => t.host === AUTO_GATEWAY) ? defaultGateway() : null,
     // A medição mais nova de cada alvo: um serviço tem dois alvos, e cada busca usa o índice (targetId, at).
@@ -322,7 +335,7 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
     incidents: service.incidents.map((i) => incidentRow({ ...i, service: { slug: service.slug, name: service.name } })),
     targets: targets.map((t, index): StatusTargetRow => {
       const spec = { kind: t.kind as ProbeKind, host: t.host, url: t.url, port: t.port };
-      const points = history.points.get(t.id) ?? [];
+      const points = history?.points.get(t.id) ?? [];
       const last = lasts[index];
       return {
         key: t.key,
@@ -350,7 +363,7 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
           jitterMs: last.jitterMs,
           certDays: last.certDays,
         },
-        spark: sparkOf(points, history.end),
+        spark: history ? sparkOf(points, history.end) : null,
       };
     }),
   };

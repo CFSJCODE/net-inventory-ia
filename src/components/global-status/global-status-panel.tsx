@@ -20,16 +20,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { CATEGORY_LABEL, CATEGORY_ORDER } from "@/lib/global-status/catalog";
-import type { LocalConnectivity, ServiceCategory, ServiceStatus } from "@/lib/global-status/types";
+import type { ServiceCategory, ServiceStatus } from "@/lib/global-status/types";
 import { formatDateTime, formatRelativeTime } from "@/lib/format-time";
 import { cn } from "@/lib/utils";
 import { formatLatency, formatPercent, formatUptime, isWorseThanOfficial } from "./format";
 import { InternetHealthBar } from "./internet-health-bar";
 import { Sparkline } from "./sparkline";
 import { HTTP_PHASE_STYLE, IMPACT_LABEL, IMPACT_STATUS, SERVICE_STATUS_STYLE, incidentStateLabel } from "./status-style";
-
-/** Os serviços desta categoria medem a conexão do próprio servidor: ficam na faixa "Sua Internet", não nos cards. */
-const INTERNET_CATEGORY: ServiceCategory = "INTERNET";
+import { INTERNET_CATEGORY, rememberSeen, transitionNotices, type Notice, type SeenStatus } from "./transitions";
 
 function StatusPill({ status, className }: { status: ServiceStatus; className?: string }) {
   const style = SERVICE_STATUS_STYLE[status];
@@ -41,45 +39,21 @@ function StatusPill({ status, className }: { status: ServiceStatus; className?: 
   );
 }
 
-/** O que a consulta anterior mostrou: o estado de cada serviço e o da conexão do próprio servidor. */
-interface SeenStatus {
-  states: Map<string, ServiceStatus>;
-  connection: LocalConnectivity["state"];
-}
-
-/** Avisa quando um serviço mudou para pior (ou voltou) desde a consulta anterior; "Sem dados" não é notícia. */
-function announceServiceChange(service: StatusServiceRow, was: ServiceStatus | undefined) {
-  const now = service.status;
-  if (!was || was === now || now === "UNKNOWN" || was === "UNKNOWN") return;
-  const description = service.measuredReason ?? service.officialStatus ?? undefined;
-  if (now === "DOWN") toast.error(`${service.name}: fora do ar`, { description, duration: 15_000 });
-  else if (now === "DEGRADED" && was === "OK") toast.warning(`${service.name}: degradado`, { description });
-  else if (now === "OK") toast.success(`${service.name}: normalizado`);
-}
-
-/** Compara a consulta nova com a anterior e avisa o que mudou: primeiro a conexão do servidor, depois os serviços. */
-function announceChanges(before: SeenStatus, data: GlobalStatusData) {
-  const wasOk = before.connection === "ok";
-  const isOk = data.connectivity.state === "ok";
-  if (wasOk && !isOk) toast.error("Sua Internet está fora", { description: data.connectivity.reason ?? undefined, duration: 15_000 });
-  else if (!wasOk && isOk) toast.success("Sua Internet voltou");
-  // Com a conexão fora, ou recém-mudada, as medições estão pausadas e viram "Sem dados": isso não é notícia do serviço.
-  if (!wasOk || !isOk) return;
-  for (const s of data.services) {
-    if (s.category !== INTERNET_CATEGORY) announceServiceChange(s, before.states.get(s.slug));
-  }
+/** Quedas ficam 15 s na tela; os outros avisos, o tempo padrão. */
+function showNotice(notice: Notice) {
+  toast[notice.tone](notice.title, { description: notice.description, ...(notice.long ? { duration: 15_000 } : {}) });
 }
 
 /**
  * Avisa na tela quando um serviço muda para pior (ou volta) entre duas consultas, e quando a conexão
- * do próprio servidor cai ou volta.
+ * do próprio servidor cai ou volta. As regras estão em `transitions.ts`.
  */
 function useTransitionToasts(data: GlobalStatusData | undefined) {
   const previous = useRef<SeenStatus | null>(null);
   useEffect(() => {
     if (!data) return;
-    if (previous.current) announceChanges(previous.current, data);
-    previous.current = { states: new Map(data.services.map((s) => [s.slug, s.status])), connection: data.connectivity.state };
+    if (previous.current) transitionNotices(previous.current, data).forEach(showNotice);
+    previous.current = rememberSeen(previous.current, data);
   }, [data]);
 }
 
@@ -228,7 +202,8 @@ function openIncidentsText(open: number): string {
   return `${open} incidente${plural} aberto${plural}`;
 }
 
-function ServiceCard({ service, onOpen }: { service: StatusServiceRow; onOpen: () => void }) {
+/** `measuring` = as medições deste servidor estão ligadas; sem elas o card mostra só o que a fonte oficial publica. */
+function ServiceCard({ service, measuring, onOpen }: { service: StatusServiceRow; measuring: boolean; onOpen: () => void }) {
   const style = SERVICE_STATUS_STYLE[service.status];
   return (
     <Card size="sm" className={cn("relative transition-colors hover:ring-primary/40", service.status === "DOWN" && "ring-red-900")}>
@@ -243,16 +218,20 @@ function ServiceCard({ service, onOpen }: { service: StatusServiceRow; onOpen: (
       </CardHeader>
       {/* flex-1: o card estica até a altura da fileira e o rodapé (mt-auto) fica embaixo, alinhado com os vizinhos. */}
       <CardContent className="flex flex-1 flex-col gap-2 text-xs text-muted-foreground">
-        <div className="flex items-end gap-2">
-          <Reading label="Latência" value={formatLatency(service.latencyMs)} />
-          {service.spark ? (
-            <Sparkline series={service.spark} label={`Latência de ${service.name} nas últimas 24 h`} className="h-8 min-w-0 flex-1" />
-          ) : (
-            <span className="flex h-8 min-w-0 flex-1 items-center justify-center text-center">Coletando medições…</span>
-          )}
-          <Reading label="Disponibilidade 24 h" value={formatUptime(service.uptime24h)} className="text-right" />
-        </div>
-        <OfficialAndMeasured service={service} />
+        {measuring && (
+          <>
+            <div className="flex items-end gap-2">
+              <Reading label="Latência" value={formatLatency(service.latencyMs)} />
+              {service.spark ? (
+                <Sparkline series={service.spark} label={`Latência de ${service.name} nas últimas 24 h`} className="h-8 min-w-0 flex-1" />
+              ) : (
+                <span className="flex h-8 min-w-0 flex-1 items-center justify-center text-center">Coletando medições…</span>
+              )}
+              <Reading label="Disponibilidade 24 h" value={formatUptime(service.uptime24h)} className="text-right" />
+            </div>
+            <OfficialAndMeasured service={service} />
+          </>
+        )}
         <ComponentsBar counts={service.componentCounts} />
         {service.problemComponents.length > 0 && (
           <ul className="flex flex-col gap-0.5">
@@ -434,7 +413,7 @@ function ComponentList({ components }: { components: StatusComponentRow[] }) {
   );
 }
 
-function ServiceDetailSheet({ service, onClose }: { service: StatusServiceRow | null; onClose: () => void }) {
+function ServiceDetailSheet({ service, measuring, onClose }: { service: StatusServiceRow | null; measuring: boolean; onClose: () => void }) {
   const { data, isLoading } = useQuery({
     queryKey: ["global-status-detail", service?.slug],
     queryFn: () => getGlobalStatusDetail(service!.slug),
@@ -474,7 +453,7 @@ function ServiceDetailSheet({ service, onClose }: { service: StatusServiceRow | 
               {isLoading && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
               {data && (
                 <>
-                  <TargetList targets={data.targets} />
+                  {measuring && <TargetList targets={data.targets} />}
                   {/* Sem fonte oficial não há incidentes nem componentes publicados para listar. */}
                   {service.hasSource && (
                     <>
@@ -528,7 +507,9 @@ export function GlobalStatusPanel() {
     <>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted-foreground">
-          Status oficial de cada provedor, consultado a cada 2 minutos, e medições feitas por este servidor (HTTP, TCP, ping e DNS).
+          {data.probes
+            ? "Status oficial de cada provedor, consultado a cada 2 minutos, e medições feitas por este servidor (HTTP, TCP, ping e DNS)."
+            : "Status oficial publicado por cada provedor, consultado pelo servidor a cada 2 minutos. As medições deste servidor estão desligadas."}
           {lastCheck && <> Última consulta {formatRelativeTime(lastCheck)}.</>}
         </p>
         {canRefresh && (
@@ -548,13 +529,13 @@ export function GlobalStatusPanel() {
           <h2 className="text-sm font-medium text-muted-foreground">{CATEGORY_LABEL[category]}</h2>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {list.map((s) => (
-              <ServiceCard key={s.slug} service={s} onOpen={() => setOpenSlug(s.slug)} />
+              <ServiceCard key={s.slug} service={s} measuring={data.probes} onOpen={() => setOpenSlug(s.slug)} />
             ))}
           </div>
         </section>
       ))}
 
-      <ServiceDetailSheet service={services.find((s) => s.slug === openSlug) ?? null} onClose={() => setOpenSlug(null)} />
+      <ServiceDetailSheet service={services.find((s) => s.slug === openSlug) ?? null} measuring={data.probes} onClose={() => setOpenSlug(null)} />
     </>
   );
 }

@@ -29,11 +29,13 @@ export const PROBE_TIMEOUT_MS = 10_000;
 const TCP_TIMEOUT_MS = 5_000;
 const DNS_TIMEOUT_MS = 3_000;
 /**
- * Folga do corte da consulta DNS. O Node só confere o prazo do c-ares de segundo em segundo, e com mais
- * de um servidor configurado o c-ares dá um prazo inteiro para cada um: sem o corte, uma consulta de
- * 3 s poderia levar 8.
+ * Folga do corte da consulta DNS. O Node só confere o prazo do c-ares de segundo em segundo, e um
+ * resolvedor com mais de um servidor (os padrões do resolv.conf) dá um prazo inteiro para cada um: sem o
+ * corte, uma consulta de 3 s poderia levar 8.
  */
 const DNS_GUARD_MS = 500;
+/** Resolvedores do sistema consultados numa medição, no máximo (um Windows com VPN e vários adaptadores lista muitos). */
+const SYSTEM_DNS_MAX = 8;
 const PING_TIMEOUT_MS = 10_000;
 const PING_COUNT = 5;
 const PING_MAX_COUNT = 100;
@@ -379,51 +381,81 @@ function dnsFailure(err: unknown): ProbeResult {
   return failure((typeof code === "string" ? DNS_ERROR.get(code) : undefined) ?? errorText(err), "dns");
 }
 
-/** Tempo de resolução de `name` (registro A) em `server` ("auto:system" = resolvedores do sistema). */
+/**
+ * Os servidores de cada resolvedor de uma medição; null = os padrões do Node (resolv.conf).
+ *
+ * "auto:system" com a lista que o sistema informa (Windows) vira um resolvedor por servidor, todos
+ * consultados ao mesmo tempo. Num resolvedor só o c-ares pergunta um servidor de cada vez, sempre a
+ * partir do primeiro e com um prazo inteiro para cada um: um DNS morto no começo da lista (o de um
+ * adaptador de VPN parado, por exemplo) faria toda medição levar o prazo inteiro, ou falhar, enquanto o
+ * próprio Windows resolve normalmente pelo servidor seguinte.
+ */
+async function dnsServerSets(server: string): Promise<(string[] | null)[]> {
+  if (server !== AUTO_SYSTEM_DNS) return [[server]];
+  // No Windows o c-ares pode ler um DNS que o sistema não usa; fora dele a lista vem vazia e valem os padrões do resolvedor.
+  const system = await getSystemDnsServers().catch(() => [] as string[]);
+  return system.length ? system.slice(0, SYSTEM_DNS_MAX).map((address) => [address]) : [null];
+}
+
+/**
+ * Tempo de resolução de `name` (registro A) em `server` ("auto:system" = resolvedores do sistema). Com
+ * mais de um resolvedor do sistema vale a primeira resposta boa; só é falha quando nenhum resolve.
+ */
 export async function probeDns(server: string, name: string, options: ProbeOptions = {}): Promise<ProbeResult> {
   const timeoutMs = deadlineMs(options.timeoutMs, DNS_TIMEOUT_MS);
-  let resolver: Resolver;
+  let resolvers: Resolver[];
   try {
-    // Um resolvedor novo a cada medição: sem cache, toda medição é uma consulta de verdade.
-    resolver = new Resolver({ timeout: timeoutMs, tries: 1 });
-    if (server === AUTO_SYSTEM_DNS) {
-      // No Windows o c-ares pode ler um DNS que o sistema não usa; fora dele a lista vem vazia e valem os padrões do resolvedor (resolv.conf).
-      const system = await getSystemDnsServers().catch(() => [] as string[]);
-      if (system.length) resolver.setServers(system);
-    } else {
-      resolver.setServers([server]);
-    }
+    // Resolvedores novos a cada medição: sem cache, toda medição é uma consulta de verdade.
+    resolvers = (await dnsServerSets(server)).map((servers) => {
+      const resolver = new Resolver({ timeout: timeoutMs, tries: 1 });
+      if (servers) resolver.setServers(servers);
+      return resolver;
+    });
   } catch (err) {
     return dnsFailure(err);
   }
 
   return new Promise((resolve) => {
     let settled = false;
+    const failures: (ProbeResult | undefined)[] = resolvers.map(() => undefined);
+    const waiting = new Set(resolvers);
+    // Entre as falhas, uma resposta de verdade (nome não encontrado, SERVFAIL) diz mais que o silêncio de outro servidor.
+    const reported = () => failures.find((f) => f && f.error !== DNS_NO_ANSWER) ?? failure(DNS_NO_ANSWER, "dns");
     const finish = (result: ProbeResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(guard);
+      // Entrega o resultado antes de cancelar: o ECANCELLED que o cancelamento provoca chega com a medição já encerrada.
       resolve(result);
+      for (const resolver of waiting) resolver.cancel();
     };
-    // Entrega o resultado antes de cancelar: o ECANCELLED que o cancelamento provoca chega com a medição já encerrada.
-    const guard = setTimeout(() => {
-      finish(failure(DNS_NO_ANSWER, "dns"));
-      resolver.cancel();
-    }, timeoutMs + DNS_GUARD_MS);
+    const failed = (index: number, result: ProbeResult) => {
+      failures[index] = result;
+      if (!waiting.size) finish(reported());
+    };
+    const guard = setTimeout(() => finish(reported()), timeoutMs + DNS_GUARD_MS);
 
     const t0 = performance.now();
-    try {
-      resolver.resolve4(name).then(
-        (addresses) => {
-          const dnsMs = round1(performance.now() - t0);
-          finish(addresses.length ? { ok: true, latencyMs: dnsMs, dnsMs } : failure(DNS_NAME_NOT_FOUND, "dns"));
-        },
-        (err) => finish(dnsFailure(err)),
-      );
-    } catch (err) {
-      // resolve4 lança na hora com um nome que não é texto.
-      finish(dnsFailure(err));
-    }
+    resolvers.forEach((resolver, index) => {
+      try {
+        resolver.resolve4(name).then(
+          (addresses) => {
+            waiting.delete(resolver);
+            const dnsMs = round1(performance.now() - t0);
+            if (addresses.length) finish({ ok: true, latencyMs: dnsMs, dnsMs });
+            else failed(index, failure(DNS_NAME_NOT_FOUND, "dns"));
+          },
+          (err) => {
+            waiting.delete(resolver);
+            failed(index, dnsFailure(err));
+          },
+        );
+      } catch (err) {
+        // resolve4 lança na hora com um nome que não é texto.
+        waiting.delete(resolver);
+        failed(index, dnsFailure(err));
+      }
+    });
   });
 }
 
@@ -450,10 +482,12 @@ export function parsePingOutput(stdout: string, sent: number): PingStats {
   const rtts: number[] = [];
   let received = 0;
   for (const line of String(stdout).split(/\r?\n/)) {
-    // Duplicatas ("DUP!") não podem passar do que foi enviado.
+    // Nenhuma leitura pode passar do que foi enviado.
     if (received >= expected) break;
     // Só "ttl=" identifica uma resposta em qualquer idioma; o "Host de destino inacessível" do Windows vem sem TTL.
     if (!/ttl=/i.test(line)) continue;
+    // Resposta repetida de um pacote já contado (iputils, busybox e macOS marcam com "DUP!"): se contasse, esconderia a perda de outro pacote.
+    if (/\bDUP!/i.test(line)) continue;
     received++;
     const match = /([=<])\s*([\d.,]+)\s*ms/i.exec(line);
     if (!match) continue;
@@ -542,12 +576,15 @@ export function parseProcNetRoute(text: string, byteOrder: "LE" | "BE" = "LE"): 
   return best?.ip ?? null;
 }
 
-/** Rota padrão com um próximo salto de verdade (o Windows lista rotas "on-link" com 0.0.0.0), menor métrica primeiro. */
+/** Custo de uma rota como o sistema o compara: no Windows é a métrica da rota somada à da interface; nos outros, só a da rota. */
+const routeCost = (route: RouteEntry): number => (route.metric ?? 0) + (route.interfaceMetric ?? 0);
+
+/** Rota padrão com um próximo salto de verdade (o Windows lista rotas "on-link" com 0.0.0.0), menor custo primeiro. */
 function pickDefaultGateway(routes: RouteEntry[]): string | null {
   let best: RouteEntry | null = null;
   for (const route of routes) {
     if (route.destination !== "0.0.0.0/0" || !net.isIPv4(route.nextHop) || route.nextHop === "0.0.0.0") continue;
-    if (!best || (route.metric ?? 0) < (best.metric ?? 0)) best = route;
+    if (!best || routeCost(route) < routeCost(best)) best = route;
   }
   return best?.nextHop ?? null;
 }

@@ -1,6 +1,6 @@
 import { isIP } from "node:net";
 import type { CatalogEntry } from "./catalog";
-import { BUCKET_MS, WINDOW_SIZE, aggregateChecks, bucketStart, evaluateTarget, type BucketStats, type CheckSample, type RecentCheck } from "./stats";
+import { BUCKET_MS, WINDOW_SIZE, aggregateChecks, bucketStart, evaluateTarget, type BucketStats, type CheckSample, type RecentCheck, type TargetVerdict } from "./stats";
 import {
   AUTO_GATEWAY,
   STATUS_SEVERITY,
@@ -176,11 +176,16 @@ export function firstDueTimes(targets: readonly Pick<TargetInfo, "id" | "interva
 /**
  * Próximo vencimento depois de uma medição: vencimento anterior + intervalo, o que mantém o alvo no
  * seu lugar da agenda mesmo quando o passo atrasa alguns segundos. Se isso já passou (o servidor
- * ficou parado), é agora + intervalo: as medições perdidas são puladas, nunca feitas em rajada.
+ * ficou parado, ou um passo demorou mais que o intervalo), as medições perdidas são puladas, nunca
+ * feitas em rajada, e o alvo segue no seu lugar: vence no primeiro múltiplo do intervalo, contado do
+ * vencimento anterior, que ainda não passou. Com "agora + intervalo" todos os alvos atrasados no mesmo
+ * passo ganhariam o mesmo vencimento e passariam a disparar juntos dali em diante.
  */
 export function nextDueTime(previousDue: number, intervalSec: number, now: number): number {
-  const next = previousDue + intervalMs(intervalSec);
-  return next > now ? next : now + intervalMs(intervalSec);
+  const step = intervalMs(intervalSec);
+  const next = previousDue + step;
+  if (next > now) return next;
+  return previousDue + (Math.floor((now - previousDue) / step) + 1) * step;
 }
 
 /**
@@ -208,15 +213,43 @@ export function advanceAgenda(targets: ReadonlyMap<string, TargetState>, measure
   return next;
 }
 
+/**
+ * Traz de volta os vencimentos que ficaram mais de um intervalo no futuro. Isso só acontece quando o
+ * relógio do sistema volta (acerto de hora, máquina virtual retomada): sem o ajuste nenhum alvo
+ * venceria até o relógio alcançar a hora antiga. Cada alvo mantém o seu lugar dentro do intervalo,
+ * para o espalhamento sobreviver. Devolve o mesmo mapa quando não há o que ajustar.
+ */
+export function realignAgenda(targets: Map<string, TargetState>, now: number): Map<string, TargetState> {
+  let next: Map<string, TargetState> | null = null;
+  for (const [id, state] of targets) {
+    const step = intervalMs(state.intervalSec);
+    const ahead = state.dueAt - now;
+    if (ahead <= step) continue;
+    next ??= new Map(targets);
+    next.set(id, { ...state, dueAt: now + (ahead % step) });
+  }
+  return next ?? targets;
+}
+
+/**
+ * Já passou `everyMs` desde `since`? Idade negativa também conta: o relógio do sistema voltou e, sem
+ * isso, nada venceria até ele alcançar a hora antiga.
+ */
+function elapsed(since: number, now: number, everyMs: number): boolean {
+  const age = now - since;
+  return age < 0 || age >= everyMs;
+}
+
 /** A lista em memória (alvos ou linha de base) precisa ser relida: nunca foi, ficou velha ou o passo é forçado. */
 export function isStale(loadedAt: number, now: number, maxAgeMs: number, force = false): boolean {
-  return force || loadedAt <= 0 || now - loadedAt >= maxAgeMs;
+  return force || loadedAt <= 0 || elapsed(loadedAt, now, maxAgeMs);
 }
 
 /**
  * Junta a lista relida do banco com o estado em memória: alvo novo ganha um primeiro vencimento e o
  * último estado gravado na linha; alvo que sumiu (ou foi desabilitado) é descartado; os demais mantêm
- * agenda, medições recentes e estado, só com a ficha atualizada. `added` são os ids novos, que ainda
+ * agenda, medições recentes e estado, só com a ficha atualizada. Um alvo cujo endereço mudou conta
+ * como novo: as medições recentes eram do endereço antigo. `added` são os ids novos, que ainda
  * precisam do histórico (`hydrateTarget`).
  */
 export function reconcileTargets(previous: ReadonlyMap<string, TargetState>, loaded: readonly LoadedTarget[], now: number): { targets: Map<string, TargetState>; added: string[] } {
@@ -226,7 +259,7 @@ export function reconcileTargets(previous: ReadonlyMap<string, TargetState>, loa
   for (const row of loaded) {
     const { status, statusReason, lastLatencyMs, ...info } = row;
     const kept = previous.get(row.id);
-    if (kept) {
+    if (kept && !endpointChanged(kept, info)) {
       targets.set(row.id, { ...kept, ...info });
       continue;
     }
@@ -448,7 +481,7 @@ export function nextEvidenceStep(targets: readonly TargetState[], progress: Tick
 
 /** Com a conexão fora, a rodada de verificação roda a cada 30 s e em todo passo forçado. */
 export function pausedRoundDue(lastRoundAt: number, now: number, force = false): boolean {
-  return force || now - lastRoundAt >= PAUSED_ROUND_MS;
+  return force || elapsed(lastRoundAt, now, PAUSED_ROUND_MS);
 }
 
 /** O que a rodada com a conexão fora mede: todos os alvos de Internet e 3 canários. Alvos de serviço ficam parados. */
@@ -482,9 +515,28 @@ export function nextConnectivity(current: LocalConnectivity, decision: Connectiv
 
 // ---------------------------------------------------------------- pausa
 
+/** Começo da frase de pausa: é por ele que se reconhece um serviço com as medições ainda paradas. */
+const PAUSE_MARK = "Medições pausadas";
+
 /** Frase gravada nos serviços e nos alvos enquanto as medições estão pausadas. */
 export function pausedReason(state: "offline" | "dns"): string {
-  return state === "dns" ? "Medições pausadas: o DNS deste servidor não resolve nomes." : "Medições pausadas: sem Internet neste servidor.";
+  return state === "dns" ? `${PAUSE_MARK}: o DNS deste servidor não resolve nomes.` : `${PAUSE_MARK}: sem Internet neste servidor.`;
+}
+
+/** Alvo de serviço que a pausa deixou "Sem dados" e que ainda não foi medido de novo. */
+function isPausedTarget(target: Pick<TargetState, "status" | "reason">): boolean {
+  return target.status === "UNKNOWN" && target.reason !== null && target.reason.startsWith(PAUSE_MARK);
+}
+
+/**
+ * As medições deste serviço estão paradas por causa da conexão local: ela está fora, ou acabou de
+ * voltar e algum alvo do serviço ainda não foi medido de novo (nada é gravado na volta; cada alvo é
+ * julgado no seu próximo resultado, ver `summarizeService`). O medido é "Sem dados" e o motivo é a
+ * frase da pausa. A página usa isso para não tratar como notícia o estado que o card mostra nesse
+ * intervalo.
+ */
+export function measurementPaused(service: { measuredStatus: string | null; measuredReason: string | null }): boolean {
+  return service.measuredStatus === "UNKNOWN" && service.measuredReason !== null && service.measuredReason.startsWith(PAUSE_MARK);
 }
 
 /**
@@ -517,6 +569,105 @@ export interface PausedServiceData {
 export function pausedServiceData(current: { officialState: string | null; status: string }, state: "offline" | "dns", now: Date): PausedServiceData {
   const status = combineStatus(asServiceStatus(current.officialState), "UNKNOWN");
   return { measuredStatus: "UNKNOWN", measuredReason: pausedReason(state), latencyMs: null, status, ...(status !== current.status ? { lastChangeAt: now } : {}) };
+}
+
+/**
+ * A marcação de pausa que o passo precisa gravar: a que acabou de ser decidida (a conexão caiu, ou
+ * trocou de tipo) ou uma anterior cuja gravação o banco recusou (`pending`). Sem repetir a pendente, os
+ * cards ficariam a queda inteira com o estado medido de antes dela. Com a conexão ok não há pausa.
+ */
+export function pauseToWrite(pending: "offline" | "dns" | null, connectivity: Pick<LocalConnectivity, "state">, change: ConnectivityChange): "offline" | "dns" | null {
+  if (connectivity.state === "ok") return null;
+  return change === "lost" || change === "moved" ? connectivity.state : pending;
+}
+
+// ---------------------------------------------------------------- medições desligadas
+
+export interface ClearedServiceData {
+  measuredStatus: null;
+  measuredReason: null;
+  latencyMs: null;
+  status: ServiceStatus;
+  lastChangeAt?: Date;
+}
+
+/**
+ * Linha de um serviço com as medições desligadas (`GLOBAL_STATUS_PROBES=off`): o que elas deixaram é
+ * apagado e o card volta a valer só pelo status oficial. Sem isso o último estado medido, que ninguém
+ * mais atualiza, ficaria no card para sempre.
+ */
+export function clearedServiceData(current: { officialState: string | null; status: string }, now: Date): ClearedServiceData {
+  const status = combineStatus(asServiceStatus(current.officialState), null);
+  return { measuredStatus: null, measuredReason: null, latencyMs: null, status, ...(status !== current.status ? { lastChangeAt: now } : {}) };
+}
+
+/** O que as medições desligadas deixam em cada alvo: nenhum estado. */
+export const CLEARED_TARGET_DATA = { status: "UNKNOWN", statusReason: null, lastLatencyMs: null, lastError: null } as const;
+
+/** O que a página recebe do que as medições gravaram num serviço, com o status do card. */
+export interface ServedMeasure {
+  status: ServiceStatus;
+  measuredStatus: ServiceStatus | null;
+  measuredReason: string | null;
+  measurementPaused: boolean;
+  latencyMs: number | null;
+}
+
+/**
+ * O que é servido à página do que as medições gravaram num serviço. Com elas desligadas não vai nada e
+ * o status do card é só o oficial, mesmo que a limpeza do estado antigo (`clearedServiceData`) ainda
+ * não tenha rodado, ou tenha falhado: o que está gravado é de antes e ninguém mais o atualiza.
+ */
+export function servedMeasure(
+  service: { officialState: string | null; measuredStatus: string | null; measuredReason: string | null; latencyMs: number | null; status: string },
+  probes: boolean,
+): ServedMeasure {
+  if (!probes) return { status: combineStatus(asServiceStatus(service.officialState), null), measuredStatus: null, measuredReason: null, measurementPaused: false, latencyMs: null };
+  return {
+    status: asServiceStatus(service.status) ?? "UNKNOWN",
+    measuredStatus: asServiceStatus(service.measuredStatus),
+    measuredReason: service.measuredReason,
+    measurementPaused: measurementPaused(service),
+    latencyMs: service.latencyMs,
+  };
+}
+
+// ---------------------------------------------------------------- catálogo
+
+/** O endereço que um alvo mede. O intervalo não entra: mudar o ritmo não muda o que é medido. */
+export interface TargetEndpoint {
+  kind: string;
+  host: string;
+  url: string | null;
+  port: number | null;
+}
+
+/**
+ * Uma versão nova do catálogo trocou o endereço de um alvo sob a mesma chave? O histórico é do endereço
+ * antigo: a linha de base dele faria o novo parecer lento (ou esconderia uma lentidão de verdade) por
+ * horas, e o gráfico de 24 h misturaria os dois. Quem grava o catálogo apaga o histórico nesse caso.
+ */
+export function endpointChanged(before: TargetEndpoint, after: TargetEndpoint): boolean {
+  return before.kind !== after.kind || before.host !== after.host || (before.url ?? null) !== (after.url ?? null) || (before.port ?? null) !== (after.port ?? null);
+}
+
+export interface UnsourcedServiceData {
+  officialState: null;
+  officialStatus: null;
+  sourceVersion: null;
+  lastError: null;
+  status: ServiceStatus;
+  lastChangeAt?: Date;
+}
+
+/**
+ * Linha de um serviço que deixou de ter fonte oficial numa versão nova do catálogo: o que a fonte
+ * antiga declarou é apagado e o card passa a valer só pelo medido. Sem isso o último estado oficial,
+ * que ninguém mais consulta, continuaria somado ao status do card para sempre.
+ */
+export function unsourcedServiceData(current: { measuredStatus: string | null; status: string }, now: Date): UnsourcedServiceData {
+  const status = combineStatus(null, asServiceStatus(current.measuredStatus));
+  return { officialState: null, officialStatus: null, sourceVersion: null, lastError: null, status, ...(status !== current.status ? { lastChangeAt: now } : {}) };
 }
 
 // ---------------------------------------------------------------- gravação e veredito
@@ -579,6 +730,21 @@ function unmeasured(state: TargetState, at: Date, reason: string, error: string 
 }
 
 /**
+ * Veredito depois de uma medição. Enquanto as medições recentes são só falhas, ele nunca melhora o
+ * estado que o alvo já tinha. Isso acontece com um alvo novo, ou depois de uma parada longa do
+ * servidor (as medições antigas não entram na conta): a primeira falha sozinha não julga nada, e um
+ * alvo que estava fora do ar antes da parada continua fora enquanto só falhar, em vez de passar por
+ * "ok" e "degradado" e ser anunciado como uma queda nova. Um alvo "Sem dados" segue assim, já sem o
+ * motivo antigo, que podia ser o de uma pausa que acabou.
+ */
+function judge(state: Pick<TargetState, "status" | "reason">, ring: RecentCheck[], baseline: readonly number[]): TargetVerdict {
+  const fresh = evaluateTarget(ring, [...baseline]);
+  if (ring.some((c) => c.ok)) return fresh;
+  const kept: TargetVerdict = state.status === "UNKNOWN" ? { status: "UNKNOWN", reason: null } : { status: state.status, reason: state.reason };
+  return STATUS_SEVERITY[fresh.status] >= STATUS_SEVERITY[kept.status] ? fresh : kept;
+}
+
+/**
  * Grava um resultado e julga o alvo.
  *
  * - Sonda que não pôde rodar (`unsupported`): não é medição; o alvo fica "Sem dados" com o motivo.
@@ -586,7 +752,8 @@ function unmeasured(state: TargetState, at: Date, reason: string, error: string 
  *   descarta ping ou um firewall que bloqueia a porta 53 não pode aparecer como queda permanente com
  *   0% de disponibilidade. A partir da primeira resposta o alvo conta normalmente.
  * - Nos demais casos: uma linha de ProbeCheck, a medição entra na frente das recentes e o veredito sai
- *   de `evaluateTarget` com a linha de base do alvo.
+ *   de `evaluateTarget` com a linha de base do alvo, sem melhorar o estado enquanto só houver falhas
+ *   (ver `judge`).
  */
 export function recordResult(state: TargetState, result: ProbeResult, at: Date, baseline: readonly number[] = []): RecordedResult {
   const error = cutError(result.error);
@@ -597,7 +764,7 @@ export function recordResult(state: TargetState, result: ProbeResult, at: Date, 
   const latencyMs = ok ? finite(result.latencyMs) : null;
   const check: RecentCheck = { ok, latencyMs, lossPct: finite(result.lossPct), certDays: whole(result.certDays) };
   const ring = [check, ...state.ring].slice(0, WINDOW_SIZE);
-  const verdict = evaluateTarget(ring, [...baseline]);
+  const verdict = judge(state, ring, baseline);
   const lastError = ok ? null : error;
   return {
     state: { ...state, ring, status: verdict.status, reason: verdict.reason, lastLatencyMs: latencyMs, everOk: state.everOk || ok },
@@ -636,12 +803,19 @@ const labelled = (target: Pick<TargetState, "kind" | "port" | "reason">) => `${t
 /**
  * Resume um serviço a partir de todos os seus alvos (na ordem do catálogo).
  *
+ * - Voltando de uma pausa, enquanto algum alvo ainda não foi medido de novo o serviço segue como a
+ *   pausa o deixou: "Sem dados", com a frase da pausa e sem latência. Julgar pelo primeiro alvo que
+ *   volta mostraria "ok" num serviço cujo outro alvo estava (e segue) fora do ar, e a página anunciaria
+ *   uma volta e, meio minuto depois, uma queda que não é nova.
  * - Estado medido: o pior entre os alvos com estado conhecido; "Sem dados" quando nenhum tem.
  * - Motivo: "<rótulo do alvo>: <motivo>" do primeiro alvo nesse pior estado; nenhum quando está tudo
  *   normal; com todos em "Sem dados", o primeiro motivo que houver.
  * - Latência: a última do primeiro alvo que tiver uma, procurando por tipo (TCP, ping, TLS, DNS).
  */
 export function summarizeService(targets: readonly Pick<TargetState, "kind" | "port" | "status" | "reason" | "lastLatencyMs">[]): ServiceSummary {
+  const paused = targets.find(isPausedTarget);
+  if (paused) return { measuredStatus: "UNKNOWN", measuredReason: paused.reason, latencyMs: null };
+
   let latencyMs: number | null = null;
   for (const kind of LATENCY_KINDS) {
     const withLatency = targets.find((t) => t.kind === kind && t.lastLatencyMs !== null);
@@ -717,18 +891,20 @@ export function recordTick(targets: ReadonlyMap<string, TargetState>, record: re
 
 /** O que está na hora de fazer na manutenção do fim do passo. */
 export function maintenanceDue(last: { rollupAt: number; cleanupAt: number }, now: number): { rollup: boolean; cleanup: boolean } {
-  return { rollup: now - last.rollupAt >= ROLLUP_EVERY_MS, cleanup: now - last.cleanupAt >= CLEANUP_EVERY_MS };
+  return { rollup: elapsed(last.rollupAt, now, ROLLUP_EVERY_MS), cleanup: elapsed(last.cleanupAt, now, CLEANUP_EVERY_MS) };
 }
 
 /**
  * Primeira janela a resumir: a seguinte à última resumida (em memória), ou a seguinte à mais nova
  * gravada no banco, ou a da medição mais antiga; nunca antes de 48 h atrás (as medições cruas mais
- * velhas que isso já foram apagadas). null = não há o que resumir. Tempos em ms desde 1970.
+ * velhas que isso já foram apagadas) nem depois da janela em andamento (se o relógio do sistema
+ * voltou, as janelas revividas são resumidas de novo, com as medições das duas passagens).
+ * null = não há o que resumir. Tempos em ms desde 1970.
  */
 export function rollupStart(known: { lastRolled: number | null; newestRollup: number | null; oldestCheck: number | null }, now: number): number | null {
   const from = known.lastRolled !== null ? known.lastRolled + BUCKET_MS : known.newestRollup !== null ? known.newestRollup + BUCKET_MS : known.oldestCheck !== null ? bucketStart(known.oldestCheck) : null;
   if (from === null) return null;
-  return Math.max(bucketStart(from), bucketStart(now - CHECK_RETENTION_MS));
+  return Math.max(Math.min(bucketStart(from), bucketStart(now)), bucketStart(now - CHECK_RETENTION_MS));
 }
 
 /**
@@ -739,6 +915,19 @@ export function closedWindows(from: number, now: number, max = MAX_ROLLUP_WINDOW
   const windows: number[] = [];
   for (let b = bucketStart(from); windows.length < max && b + BUCKET_MS <= now - ROLLUP_SETTLE_MS; b += BUCKET_MS) windows.push(b);
   return windows;
+}
+
+/**
+ * Uma passada do resumo: as janelas fechadas a resumir agora e a "última resumida" a guardar para a
+ * passada seguinte (depois que a gravação der certo). Sem janela fechada ainda, guarda-se a anterior
+ * ao ponto de partida: é o que faz valer o ajuste de `rollupStart` quando o relógio do sistema volta,
+ * em vez de esperar o relógio alcançar a última janela resumida. null = não há o que resumir.
+ */
+export function planRollup(known: { lastRolled: number | null; newestRollup: number | null; oldestCheck: number | null }, now: number, max = MAX_ROLLUP_WINDOWS): { windows: number[]; lastRolled: number } | null {
+  const from = rollupStart(known, now);
+  if (from === null) return null;
+  const windows = closedWindows(from, now, max);
+  return { windows, lastRolled: windows.length ? windows[windows.length - 1] : from - BUCKET_MS };
 }
 
 /** Uma linha de ProbeRollup. */
