@@ -24,6 +24,7 @@ import {
   pausedRoundDue,
   pausedRoundTargets,
   pausedServiceData,
+  pausedTargetData,
   probesEnabled,
   reconcileTargets,
   recordTick,
@@ -311,7 +312,7 @@ async function writeTick(outcome: TickOutcome, pause: PausedState | null): Promi
   if (pause) {
     // Os cards passam a mostrar só o status oficial; os alvos de serviço ficam "Sem dados" com a frase da pausa.
     const paused = current.filter((s) => s.category !== "INTERNET");
-    writes.push(prisma.probeTarget.updateMany({ where: { serviceId: { in: paused.map((s) => s.id) } }, data: { status: "UNKNOWN", statusReason: pausedReason(pause) } }));
+    writes.push(prisma.probeTarget.updateMany({ where: { serviceId: { in: paused.map((s) => s.id) } }, data: pausedTargetData(pause) }));
     for (const s of paused) writes.push(prisma.statusService.updateMany({ where: { id: s.id }, data: pausedServiceData(s, pause, now) }));
   }
   if (writes.length) await prisma.$transaction(writes);

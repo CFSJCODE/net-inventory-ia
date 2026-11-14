@@ -108,19 +108,6 @@ export const FAILURES_TO_DEGRADED = 2;
 export const MIN_BASELINE_POINTS = 12;
 /** Perda média de pacotes, entre as medições da janela que tiveram resposta, acima da qual o alvo fica degradado. */
 export const LOSS_DEGRADED_PCT = 5;
-/** Aviso de certificado: dias restantes (certificados de vida curta usam `certWarningFor`). */
-export const CERT_WARNING_DAYS = 14;
-
-/**
- * Limite do aviso de vencimento para um certificado com `lifetimeDays` de validade total: 14 dias, mas
- * nunca mais que 20% da validade. Sem isso um certificado de 6 dias (Let's Encrypt "shortlived")
- * ficaria em aviso permanente.
- */
-export function certWarningFor(lifetimeDays: number | null | undefined): number {
-  if (!lifetimeDays || lifetimeDays <= 0) return CERT_WARNING_DAYS;
-  return Math.min(CERT_WARNING_DAYS, Math.floor(lifetimeDays * 0.2));
-}
-
 /** Latência acima da qual o alvo está "acima do normal", dada a linha de base; null sem base suficiente. */
 export function latencyLimit(baseline: number[]): { median: number; limit: number } | null {
   if (baseline.length < MIN_BASELINE_POINTS) return null;
@@ -135,23 +122,18 @@ export function latencyLimit(baseline: number[]): { median: number; limit: numbe
  * e da linha de base de 24 h (medianas das janelas de 5 min).
  *
  * - Fora: 3 falhas seguidas.
- * - Degradado: 2 falhas seguidas; certificado perto de vencer; perda média de pacotes acima de 5% entre
- *   as medições da janela que tiveram resposta; ou latência sustentada acima de mediana + 3·MAD (a
+ * - Degradado: 2 falhas seguidas; certificado vencido; perda média de pacotes acima de 5% entre as
+ *   medições da janela que tiveram resposta; ou latência sustentada acima de mediana + 3·MAD (a
  *   mediana da janela, isto é, 3 das 5 medições acima do limite: um pico isolado não alarma).
  *
  * Uma medição sem resposta nenhuma é falha e só conta na regra das falhas seguidas: assim uma falha
  * isolada não muda o estado em nenhum tipo de alvo, e o alvo volta a "ok" na primeira resposta depois
  * de uma queda, sem ficar minutos em "perda de 60%" por causa das falhas que ainda estão na janela.
  */
-export function evaluateTarget(recent: RecentCheck[], baseline: number[], options: { certWarningDays?: number } = {}): TargetVerdict {
+export function evaluateTarget(recent: RecentCheck[], baseline: number[]): TargetVerdict {
   const window = recent.slice(0, WINDOW_SIZE);
   if (!window.length) return { status: "UNKNOWN", reason: null };
-  return (
-    failureVerdict(window) ??
-    certVerdict(window[0], options.certWarningDays ?? CERT_WARNING_DAYS) ??
-    lossVerdict(window) ??
-    latencyVerdict(window, baseline) ?? { status: "OK", reason: null }
-  );
+  return failureVerdict(window) ?? certVerdict(window[0]) ?? lossVerdict(window) ?? latencyVerdict(window, baseline) ?? { status: "OK", reason: null };
 }
 
 // Cada regra abaixo devolve o veredito quando se aplica, ou null para a regra seguinte decidir.
@@ -167,17 +149,16 @@ function failureVerdict(window: RecentCheck[]): TargetVerdict | null {
   return null;
 }
 
-/** Certificado da medição mais nova vencido ou perto de vencer. */
-function certVerdict(latest: RecentCheck, warningDays: number): TargetVerdict | null {
+/**
+ * Certificado da medição mais nova já vencido. Só o vencido muda o estado: os serviços medidos são de
+ * terceiros, quem renova é o provedor, e há quem renove na última semana (em 14/11/2026 WhatsApp,
+ * Instagram e Facebook estavam a 7 dias do vencimento, funcionando normalmente). Um aviso de "vence em N
+ * dias" deixaria degradado um serviço sem problema nenhum; os dias restantes aparecem no detalhe do alvo.
+ */
+function certVerdict(latest: RecentCheck): TargetVerdict | null {
   const days = latest.certDays;
-  if (days === null || !(days < warningDays)) return null;
-  return { status: "DEGRADED", reason: certReason(days) };
-}
-
-function certReason(days: number): string {
-  if (days < 0) return "certificado vencido";
-  if (days === 0) return "certificado vence hoje";
-  return `certificado vence em ${days} dia${days === 1 ? "" : "s"}`;
+  if (days === null || !(days < 0)) return null;
+  return { status: "DEGRADED", reason: "certificado vencido" };
 }
 
 /** Perda média de pacotes entre as medições da janela que tiveram resposta (perda parcial; a total é falha). */

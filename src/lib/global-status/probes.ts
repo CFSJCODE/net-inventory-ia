@@ -135,35 +135,29 @@ interface ConnectionTrace {
   connectAt: number | null;
   secureAt: number | null;
   certDays: number | null;
-  certLifetimeDays: number | null;
 }
 
 /** Um IP literal não passa pela resolução de nome: a medição já começa na etapa de conexão. */
 function startTrace(hostIsIp: boolean): ConnectionTrace {
-  return { t0: performance.now(), phase: hostIsIp ? "connect" : "dns", lookupAt: null, connectAt: null, secureAt: null, certDays: null, certLifetimeDays: null };
+  return { t0: performance.now(), phase: hostIsIp ? "connect" : "dns", lookupAt: null, connectAt: null, secureAt: null, certDays: null };
 }
 
 /**
- * Dias até o certificado vencer (negativo = vencido) e a validade total dele.
+ * Dias até o certificado vencer (negativo = vencido); null quando o servidor não manda certificado.
  *
  * Um certificado em que o Node não confia NÃO reprova a medição (as sondas usam
  * `rejectUnauthorized: false`). A sonda mede se o serviço é alcançável a partir desta rede; atrás de um
  * proxy que inspeciona TLS, com uma CA que os navegadores da rede aceitam e o Node não, reprovar pintaria
  * todos os serviços de vermelho para sempre. O vencimento continua sendo pego por `certDays`.
  */
-function readCertificate(socket: tls.TLSSocket): Pick<ConnectionTrace, "certDays" | "certLifetimeDays"> {
+function readCertificate(socket: tls.TLSSocket): number | null {
   try {
     // Vem {} quando o servidor não manda certificado e null com o socket já destruído.
     const cert = socket.getPeerCertificate() as Partial<tls.PeerCertificate> | null;
     const validTo = Date.parse(cert?.valid_to ?? "");
-    if (Number.isNaN(validTo)) return { certDays: null, certLifetimeDays: null };
-    const validFrom = Date.parse(cert?.valid_from ?? "");
-    return {
-      certDays: Math.floor((validTo - Date.now()) / DAY_MS),
-      certLifetimeDays: Number.isNaN(validFrom) ? null : Math.round((validTo - validFrom) / DAY_MS),
-    };
+    return Number.isNaN(validTo) ? null : Math.floor((validTo - Date.now()) / DAY_MS);
   } catch {
-    return { certDays: null, certLifetimeDays: null };
+    return null;
   }
 }
 
@@ -191,7 +185,7 @@ function traceSocket(socket: net.Socket, trace: ConnectionTrace, secure: boolean
     if (!live()) return;
     trace.secureAt = performance.now();
     trace.phase = "http";
-    Object.assign(trace, readCertificate(socket as tls.TLSSocket));
+    trace.certDays = readCertificate(socket as tls.TLSSocket);
     ready?.();
   });
 }
@@ -282,7 +276,6 @@ export function probeHttp(url: string, options: ProbeOptions = {}): Promise<Prob
         ttfbMs: round1(responseAt - (trace.secureAt ?? trace.connectAt ?? trace.t0)),
         totalMs,
         certDays: trace.certDays,
-        certLifetimeDays: trace.certLifetimeDays,
       };
       // Redirecionamento, 401, 403 e 404 também são resposta: o serviço está no ar. Só 5xx conta como falha.
       finish(status < 500 ? { ok: true, latencyMs: totalMs, ...measured } : { ok: false, latencyMs: null, ...measured, error: `HTTP ${status}`, failedAt: "http" });
@@ -295,6 +288,23 @@ export function probeHttp(url: string, options: ProbeOptions = {}): Promise<Prob
 }
 
 // ---------------------------------------------------------------- TCP e TLS
+
+/** Tempo dado ao outro lado para fechar depois do `end` de closeGracefully. */
+const GRACEFUL_CLOSE_MS = 1_000;
+
+/**
+ * Fecha uma conexão TLS que deu certo com `end` (manda o que falta do handshake e o close_notify) em vez
+ * de derrubá-la. No TLS 1.3 o cliente termina o handshake antes do servidor: destruído no mesmo instante
+ * do "secureConnect", a última mensagem do cliente não sai, e o servidor registra um handshake abortado a
+ * cada medição. Se o outro lado não fechar logo, o socket é destruído.
+ */
+function closeGracefully(socket: net.Socket): void {
+  const timer = setTimeout(() => socket.destroy(), GRACEFUL_CLOSE_MS);
+  // O fechamento não segura o processo aberto nem conta como trabalho pendente.
+  timer.unref();
+  socket.once("close", () => clearTimeout(timer));
+  socket.end();
+}
 
 /** Handshake TCP e, com `secure`, o handshake TLS em seguida; fecha a conexão assim que ela fica pronta. */
 function probeSocket(host: string, port: number, timeoutMs: number, secure: boolean): Promise<ProbeResult> {
@@ -313,7 +323,9 @@ function probeSocket(host: string, port: number, timeoutMs: number, secure: bool
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      socket?.destroy();
+      // Só o handshake TLS concluído fecha com `end`; em qualquer outro caminho o socket é destruído na hora.
+      if (socket && secure && result.ok) closeGracefully(socket);
+      else socket?.destroy();
       resolve(result);
     };
     const timer = setTimeout(() => finish(failure(TIMEOUT_ERROR[trace.phase], trace.phase)), timeoutMs);
@@ -334,7 +346,7 @@ function probeSocket(host: string, port: number, timeoutMs: number, secure: bool
     opened.once("close", () => finish(failure(CLOSED_BY_SERVER, trace.phase)));
     traceSocket(opened, trace, secure, () => !settled, () => {
       const { dnsMs, connectMs, tlsMs } = timings(trace);
-      finish(secure ? { ok: true, latencyMs: tlsMs, dnsMs, connectMs, tlsMs, certDays: trace.certDays, certLifetimeDays: trace.certLifetimeDays } : { ok: true, latencyMs: connectMs, dnsMs, connectMs });
+      finish(secure ? { ok: true, latencyMs: tlsMs, dnsMs, connectMs, tlsMs, certDays: trace.certDays } : { ok: true, latencyMs: connectMs, dnsMs, connectMs });
     });
   });
 }

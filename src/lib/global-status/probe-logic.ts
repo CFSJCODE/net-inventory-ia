@@ -1,6 +1,6 @@
 import { isIP } from "node:net";
 import type { CatalogEntry } from "./catalog";
-import { BUCKET_MS, WINDOW_SIZE, aggregateChecks, bucketStart, certWarningFor, evaluateTarget, type BucketStats, type CheckSample, type RecentCheck } from "./stats";
+import { BUCKET_MS, WINDOW_SIZE, aggregateChecks, bucketStart, evaluateTarget, type BucketStats, type CheckSample, type RecentCheck } from "./stats";
 import {
   AUTO_GATEWAY,
   STATUS_SEVERITY,
@@ -487,24 +487,36 @@ export function pausedReason(state: "offline" | "dns"): string {
   return state === "dns" ? "Medições pausadas: o DNS deste servidor não resolve nomes." : "Medições pausadas: sem Internet neste servidor.";
 }
 
-/** Em memória, os alvos de serviço ficam "Sem dados" com a frase da pausa; os de Internet seguem sendo medidos. */
+/**
+ * Em memória, os alvos de serviço ficam "Sem dados" com a frase da pausa e sem a última latência (ela
+ * deixaria de ser "agora"); os de Internet seguem sendo medidos.
+ */
 export function pauseServiceTargets(targets: ReadonlyMap<string, TargetState>, reason: string): Map<string, TargetState> {
   const next = new Map<string, TargetState>();
-  for (const [id, t] of targets) next.set(id, isInternetTarget(t) ? t : { ...t, status: "UNKNOWN", reason });
+  for (const [id, t] of targets) next.set(id, isInternetTarget(t) ? t : { ...t, status: "UNKNOWN", reason, lastLatencyMs: null });
   return next;
+}
+
+/** O que a pausa grava em cada alvo de serviço: o mesmo que `pauseServiceTargets` faz em memória. */
+export function pausedTargetData(state: "offline" | "dns"): { status: "UNKNOWN"; statusReason: string; lastLatencyMs: null } {
+  return { status: "UNKNOWN", statusReason: pausedReason(state), lastLatencyMs: null };
 }
 
 export interface PausedServiceData {
   measuredStatus: "UNKNOWN";
   measuredReason: string;
+  latencyMs: null;
   status: ServiceStatus;
   lastChangeAt?: Date;
 }
 
-/** Linha de um serviço ao pausar: o medido vira "Sem dados" e o card passa a mostrar só o status oficial. */
+/**
+ * Linha de um serviço ao pausar: o medido vira "Sem dados", a latência some (não há medição atual) e o
+ * card passa a mostrar só o status oficial.
+ */
 export function pausedServiceData(current: { officialState: string | null; status: string }, state: "offline" | "dns", now: Date): PausedServiceData {
   const status = combineStatus(asServiceStatus(current.officialState), "UNKNOWN");
-  return { measuredStatus: "UNKNOWN", measuredReason: pausedReason(state), status, ...(status !== current.status ? { lastChangeAt: now } : {}) };
+  return { measuredStatus: "UNKNOWN", measuredReason: pausedReason(state), latencyMs: null, status, ...(status !== current.status ? { lastChangeAt: now } : {}) };
 }
 
 // ---------------------------------------------------------------- gravação e veredito
@@ -585,8 +597,7 @@ export function recordResult(state: TargetState, result: ProbeResult, at: Date, 
   const latencyMs = ok ? finite(result.latencyMs) : null;
   const check: RecentCheck = { ok, latencyMs, lossPct: finite(result.lossPct), certDays: whole(result.certDays) };
   const ring = [check, ...state.ring].slice(0, WINDOW_SIZE);
-  // O aviso de vencimento acompanha a validade total do certificado (um de 6 dias não fica em aviso permanente).
-  const verdict = evaluateTarget(ring, [...baseline], { certWarningDays: certWarningFor(result.certLifetimeDays) });
+  const verdict = evaluateTarget(ring, [...baseline]);
   const lastError = ok ? null : error;
   return {
     state: { ...state, ring, status: verdict.status, reason: verdict.reason, lastLatencyMs: latencyMs, everOk: state.everOk || ok },

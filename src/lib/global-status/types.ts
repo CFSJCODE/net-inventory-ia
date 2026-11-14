@@ -133,8 +133,6 @@ export interface ProbeResult {
   jitterMs?: number | null;
   /** Dias até o certificado vencer (negativo = vencido). */
   certDays?: number | null;
-  /** Validade total do certificado, em dias; calibra o aviso de vencimento (não é gravado). */
-  certLifetimeDays?: number | null;
   /** Frase curta em português quando ok = false. */
   error?: string | null;
   /** Etapa da falha (não é gravado; separa falha de DNS local de falha do serviço). */

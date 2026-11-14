@@ -30,6 +30,7 @@ import {
   pausedRoundDue,
   pausedRoundTargets,
   pausedServiceData,
+  pausedTargetData,
   pickCanaries,
   probesEnabled,
   reconcileTargets,
@@ -826,9 +827,16 @@ describe("pausa das medições", () => {
     const w = world();
     const live = w.all.map((t) => ({ ...t, status: "OK" as const, ring: [check(true)], lastLatencyMs: 20 }));
     const paused = pauseServiceTargets(byId(live), pausedReason("offline"));
-    expect(paused.get("github-tcp")).toMatchObject({ status: "UNKNOWN", reason: "Medições pausadas: sem Internet neste servidor.", ring: [check(true)] });
+    // A última latência sai junto: durante a pausa ela não é mais "agora". As medições recentes ficam.
+    expect(paused.get("github-tcp")).toMatchObject({ status: "UNKNOWN", reason: "Medições pausadas: sem Internet neste servidor.", ring: [check(true)], lastLatencyMs: null });
     expect(paused.get("ping-1")).toBe(live.find((t) => t.id === "ping-1"));
+    expect(paused.get("ping-1")?.lastLatencyMs).toBe(20);
     expect(Array.from(paused.keys())).toEqual(ids(live));
+  });
+
+  it("no banco o alvo de serviço recebe o mesmo: Sem dados, a frase e nenhuma latência", () => {
+    expect(pausedTargetData("offline")).toEqual({ status: "UNKNOWN", statusReason: "Medições pausadas: sem Internet neste servidor.", lastLatencyMs: null });
+    expect(pausedTargetData("dns")).toEqual({ status: "UNKNOWN", statusReason: "Medições pausadas: o DNS deste servidor não resolve nomes.", lastLatencyMs: null });
   });
 
   it("o serviço passa a mostrar só o status oficial", () => {
@@ -837,6 +845,7 @@ describe("pausa das medições", () => {
     expect(pausedServiceData({ officialState: "OK", status: "DOWN" }, "offline", now)).toEqual({
       measuredStatus: "UNKNOWN",
       measuredReason: "Medições pausadas: sem Internet neste servidor.",
+      latencyMs: null,
       status: "OK",
       lastChangeAt: now,
     });
@@ -844,6 +853,7 @@ describe("pausa das medições", () => {
     expect(pausedServiceData({ officialState: "DEGRADED", status: "DEGRADED" }, "dns", now)).toEqual({
       measuredStatus: "UNKNOWN",
       measuredReason: "Medições pausadas: o DNS deste servidor não resolve nomes.",
+      latencyMs: null,
       status: "DEGRADED",
     });
     // Sem fonte oficial (ou fonte sem dados) não sobra nada a mostrar.
@@ -873,13 +883,12 @@ describe("recordResult", () => {
 
   it("uma medição que deu certo vira linha, entra na frente das recentes e o alvo fica ok", () => {
     const state = target({ id: "http", kind: "HTTP", key: "http", ring: [check(true, 90)] });
-    const result = up(120.4, { httpStatus: 200, dnsMs: 12.1, connectMs: 20.2, tlsMs: 40.3, ttfbMs: 47.8, totalMs: 120.4, certDays: 60, certLifetimeDays: 90, failedAt: null });
+    const result = up(120.4, { httpStatus: 200, dnsMs: 12.1, connectMs: 20.2, tlsMs: 40.3, ttfbMs: 47.8, totalMs: 120.4, certDays: 60, failedAt: null });
     const recorded = recordResult(state, result, at);
     expect(recorded.row).toEqual({
       targetId: "http", vantage: "server", at, ok: true, latencyMs: 120.4, httpStatus: 200, dnsMs: 12.1, connectMs: 20.2, tlsMs: 40.3, ttfbMs: 47.8, totalMs: 120.4,
       lossPct: null, jitterMs: null, certDays: 60, error: null,
     });
-    expect(recorded.row).not.toHaveProperty("certLifetimeDays");
     expect(recorded.row).not.toHaveProperty("failedAt");
     expect(recorded.state.ring).toEqual([{ ok: true, latencyMs: 120.4, lossPct: null, certDays: 60 }, check(true, 90)]);
     expect(recorded.state).toMatchObject({ status: "OK", reason: null, lastLatencyMs: 120.4, everOk: true });
@@ -919,12 +928,13 @@ describe("recordResult", () => {
     expect(recorded.state).toMatchObject({ status: "DEGRADED", reason: "perda de 40% dos pacotes" });
   });
 
-  it("o aviso de certificado acompanha a validade total: 3 dias restantes alarmam num certificado de 90 dias, não num de 6", () => {
+  it("só o certificado já vencido muda o estado: perto de vencer é normal (o provedor renova na última hora)", () => {
     const state = target({ id: "http", kind: "HTTP", key: "http" });
-    expect(recordResult(state, up(100, { certDays: 3, certLifetimeDays: 90 }), at).state).toMatchObject({ status: "DEGRADED", reason: "certificado vence em 3 dias" });
-    expect(recordResult(state, up(100, { certDays: 3, certLifetimeDays: 6 }), at).state).toMatchObject({ status: "OK", reason: null });
-    // Sem a validade total vale o padrão de 14 dias.
-    expect(recordResult(state, up(100, { certDays: 3 }), at).state.status).toBe("DEGRADED");
+    expect(recordResult(state, up(100, { certDays: 7 }), at).state).toMatchObject({ status: "OK", reason: null });
+    expect(recordResult(state, up(100, { certDays: 0 }), at).state).toMatchObject({ status: "OK", reason: null });
+    expect(recordResult(state, up(100, { certDays: -1 }), at).state).toMatchObject({ status: "DEGRADED", reason: "certificado vencido" });
+    // Os dias restantes continuam gravados, para o detalhe do alvo.
+    expect(recordResult(state, up(100, { certDays: 7 }), at).row?.certDays).toBe(7);
   });
 
   it("a linha de base do alvo decide a latência acima do normal", () => {
@@ -939,7 +949,7 @@ describe("recordResult", () => {
   });
 
   it("valores que não são números finitos viram ausência, e dias de certificado e código HTTP são inteiros", () => {
-    const recorded = recordResult(target({ id: "http", kind: "HTTP" }), up(Number.NaN, { dnsMs: Number.POSITIVE_INFINITY, certDays: 29.7, httpStatus: 204.0, certLifetimeDays: 30 }), at);
+    const recorded = recordResult(target({ id: "http", kind: "HTTP" }), up(Number.NaN, { dnsMs: Number.POSITIVE_INFINITY, certDays: 29.7, httpStatus: 204.0 }), at);
     expect(recorded.row).toMatchObject({ latencyMs: null, dnsMs: null, certDays: 29, httpStatus: 204 });
   });
 
@@ -1017,7 +1027,7 @@ describe("summarizeService", () => {
     expect(summarizeService([t("HTTP", "DEGRADED", "2 falhas seguidas"), t("TCP", "DOWN", "3 falhas seguidas")]).measuredReason).toBe("TCP 443: 3 falhas seguidas");
     expect(summarizeService([t("HTTP", "DOWN", "sem resposta nas últimas 5 medições"), t("TCP", "DOWN", "3 falhas seguidas")]).measuredReason).toBe("HTTP: sem resposta nas últimas 5 medições");
     expect(summarizeService([t("ICMP", "DEGRADED", "perda de 20% dos pacotes"), t("DNS", "OK")]).measuredReason).toBe("Ping: perda de 20% dos pacotes");
-    expect(summarizeService([t("TLS", "DEGRADED", "certificado vence em 3 dias")]).measuredReason).toBe("Certificado TLS: certificado vence em 3 dias");
+    expect(summarizeService([t("TLS", "DEGRADED", "certificado vencido")]).measuredReason).toBe("Certificado TLS: certificado vencido");
   });
 
   it("com tudo normal não há motivo", () => {
