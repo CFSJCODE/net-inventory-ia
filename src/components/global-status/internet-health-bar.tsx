@@ -35,12 +35,19 @@ export function InternetHealthBar({ services, connectivity, onOpen }: { services
   const items = services.map((s) => {
     const style = SERVICE_STATUS_STYLE[s.status];
     return (
-      <button key={s.slug} type="button" onClick={() => onOpen(s.slug)} className="flex max-w-full min-w-0 items-center gap-2 px-4 text-left hover:text-foreground">
-        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", style.dot)} />
-        <span className="shrink-0 font-medium text-foreground">{s.name}</span>
-        <span className="shrink-0 tabular-nums">{formatLatency(s.latencyMs)}</span>
-        {s.status !== "OK" && <span className={cn("shrink-0", style.text)}>{style.label}</span>}
-        {s.status !== "OK" && s.measuredReason && <span className="truncate">{s.measuredReason}</span>}
+      // flex-wrap: numa tela estreita o estado e o motivo descem juntos para a linha de baixo em vez de serem cortados.
+      <button key={s.slug} type="button" onClick={() => onOpen(s.slug)} className="flex max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-4 text-left hover:text-foreground">
+        <span className="flex shrink-0 items-center gap-2">
+          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", style.dot)} />
+          <span className="font-medium text-foreground">{s.name}</span>
+          <span className="tabular-nums">{formatLatency(s.latencyMs)}</span>
+        </span>
+        {s.status !== "OK" && (
+          <span className="flex min-w-0 items-center gap-2">
+            <span className={cn("shrink-0", style.text)}>{style.label}</span>
+            {s.measuredReason && <span className="truncate">{s.measuredReason}</span>}
+          </span>
+        )}
       </button>
     );
   });

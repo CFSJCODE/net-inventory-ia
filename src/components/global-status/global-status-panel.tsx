@@ -187,7 +187,8 @@ function ServiceCard({ service, onOpen }: { service: StatusServiceRow; onOpen: (
         </CardTitle>
         <CardDescription className="line-clamp-1">{cardDescription(service)}</CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-2 text-xs text-muted-foreground">
+      {/* flex-1: o card estica até a altura da fileira e o rodapé (mt-auto) fica embaixo, alinhado com os vizinhos. */}
+      <CardContent className="flex flex-1 flex-col gap-2 text-xs text-muted-foreground">
         <div className="flex items-end gap-2">
           <Reading label="Latência" value={formatLatency(service.latencyMs)} />
           {service.spark ? (
