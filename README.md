@@ -82,6 +82,7 @@ O NetInventory roda como serviço em um computador ou servidor da sua rede e mos
 - **Mapa da topologia**: a rede desenhada a partir do gateway, com descoberta de ligações reais via SNMP (tabela de MACs do switch) e posições que você arrasta e ficam salvas.
 - **Ligações monitoradas**: cada link importante é testado a cada 30 segundos e só é declarado caído após 2 falhas seguidas; caiu, fica vermelho no mapa e vai para o histórico.
 - **Histórico e alertas**: dispositivos novos, mudanças de IP e hostname, quedas e retornos, com notificações no navegador e alertas por e-mail (Resend) para equipamento fora do ar, desempenho degradado e CPU, memória ou temperatura acima do limite.
+- **Status global**: o estado de nuvens, CDNs, IA, redes sociais e streaming num painel só. Junta o status oficial de cada provedor (quando ele publica um) com medições feitas pelo próprio servidor (HTTP, handshake TCP, ping e DNS): latência atual, gráfico das últimas 24 h e disponibilidade. A faixa "Sua Internet" mede o gateway e resolvedores públicos e avisa quando o problema é da sua conexão, em vez de pintar todos os serviços de vermelho.
 - **Regras de IP**: classifique endereços por tipo (IP único, faixa, CIDR ou curinga) e ignore IPs que só geram ruído no histórico.
 - **Ferramentas de rede**: ARP scan, port scan, SNMP, Wake-on-LAN, DHCP, DNS, tabela ARP, tabela de rotas e auditoria de segurança.
 - **Usuários e perfis**: Administrador, Operador e Visualizador, cada pessoa com o acesso certo.
@@ -284,6 +285,7 @@ O instalador registra o serviço `NetInventoryDotNetAgent` com início automáti
 | Ligações | `/topology/links` | Links monitorados, latência e estado | `topology/links-panel.tsx`, `src/lib/network/link-monitor.ts` |
 | Histórico | `/history` | Linha do tempo de eventos com resumo de 24 h ou 7 dias pela IA | `ai/ai-summary-card.tsx`, modelo `DeviceEvent` |
 | Alertas | `/alerts` | Configuração e estado dos alertas críticos e notificações por e-mail (Resend) | `src/app/alerts/page.tsx`, `src/components/email-alerts-card.tsx` |
+| Status global | `/status` | Status oficial dos provedores e medições próprias de latência e disponibilidade, com a faixa "Sua Internet" | `src/components/global-status/`, `src/lib/global-status/` |
 | Assistente | `/assistant` | Chat em português, consumo/limites de tokens e configuração da IA | `ai/assistant-chat.tsx`, `ai/ai-usage-panel.tsx`, `ai/ai-settings-card.tsx` |
 | Ferramentas | `/tools` | ARP scan, port scan, SNMP, WoL, DHCP, DNS, ARP, rotas e auditoria | `src/components/tools/`, `src/lib/network/tools/` |
 | Configurações | `/settings` | Faixa e agenda do scan, regras e IPs ignorados, limpeza | `settings-form.tsx`, `ip-rules-card.tsx`, `ignored-ips-card.tsx` |
@@ -358,7 +360,9 @@ flowchart LR
       SC --> DB
       LM["link-monitor (30 s)"] --> DB
       AM["alert-monitor"] --> R["Resend (e-mail)"]
+      GS["global-status<br/>status oficial + medições"] --> DB
     end
+    GS -->|páginas de status, HTTP, TCP, ping, DNS| WEB["Provedores e serviços na Internet"]
     SC -->|ping, ARP, DNS, NetBIOS, mDNS, portas| LAN["Rede local"]
     N -->|SNMP / HTTP| EQ["Switches, roteadores, impressoras, Nest"]
     N -->|dados anonimizados| IA["Provedor de IA"]
@@ -386,9 +390,24 @@ O resultado é persistido por [`src/lib/scan-service.ts`](src/lib/scan-service.t
 - Credenciais SNMPv3 (autenticação MD5/SHA e privacidade DES/AES) ficam criptografadas no banco.
 - `src/lib/alerts/rules.ts` é uma máquina de estados pura: só alerta depois de checagens seguidas com problema e respeita o intervalo mínimo entre e-mails. Os e-mails passam por uma fila guardada no banco (`alert-monitor.ts`).
 
+### Status global
+
+Módulo em `src/lib/global-status/`, com dois lados que se completam:
+
+- **Status oficial** (`collector.ts`, `adapters/`): a cada 2 minutos consulta a página de status de cada provedor (API da Statuspage, `incidents.json` do Google Cloud e o feed RSS do Azure) e grava o estado, os componentes e os incidentes. Só reprocessa quando a fonte muda (versão da página ou ETag).
+- **Medições próprias** (`probes.ts`, `probe-runner.ts`, `probe-logic.ts`): o próprio servidor mede cada serviço com HTTP (a cada 60 s, separando DNS, TCP, TLS e o tempo do servidor), handshake TCP na porta 443 (30 s), ping (60 s, 5 pacotes) e DNS (5 min), com no máximo 8 medições ao mesmo tempo. Qualquer resposta HTTP abaixo de 500 conta como "no ar". As medições cruas ficam 48 horas; os resumos de 5 minutos (mediana, p95 e falhas) ficam 30 dias e alimentam os gráficos, a disponibilidade e a linha de base.
+
+O catálogo (`catalog.ts`) mede o endereço mais leve de cada serviço (um `robots.txt`, um `generate_204`, um `security.txt`) e a sonda nunca lê o corpo da resposta. Mesmo assim cada medição HTTPS custa de 5 a 8 KB, quase tudo do handshake TLS: com os 21 serviços do catálogo isso dá de 150 a 240 MB de tráfego por dia. Em conexão com franquia de dados, desligue as medições (veja abaixo).
+
+O estado medido de cada alvo sai de `stats.ts`: 3 falhas seguidas é "fora do ar" e 2 é "degradado"; uma falha isolada aparece só no gráfico. A latência degrada quando a mediana das últimas 5 medições passa do limite da linha de base das últimas 24 horas (mediana + 3·MAD, com folga mínima de 50% e de 20 ms), então um pico isolado não alarma. Perda de pacotes acima de 5% no ping e certificado já vencido também degradam; os dias que faltam para o certificado vencer aparecem só no detalhe, porque há serviços grandes que renovam na última semana. O card mostra o pior entre o estado oficial e o medido, e avisa quando a medição acusa um problema que o provedor ainda não declarou.
+
+**Sua Internet.** Quando tudo falha ao mesmo tempo, a causa costuma ser local. Antes de culpar os serviços, o servidor mede o gateway e três resolvedores públicos (1.1.1.1, 8.8.8.8 e 9.9.9.9). Se nem eles respondem, o painel mostra "Sua Internet está fora", descarta as falhas daquele instante e pausa as medições dos serviços até a conexão voltar; os cards ficam só com o status oficial. Se os resolvedores respondem, as falhas são dos provedores e ficam registradas. Um DNS local que parou de resolver nomes tem estado próprio.
+
+As medições partem do servidor onde o NetInventory roda: mostram como os serviços respondem da sua rede, não o estado deles no resto do mundo. Para desligá-las e manter só o status oficial, defina a variável de ambiente `GLOBAL_STATUS_PROBES=off` no serviço.
+
 ### Banco de dados
 
-Prisma com SQLite ([`prisma/schema.prisma`](prisma/schema.prisma)). Modelos: `Device`, `DeviceEvent`, `ScanConfig`, `ScanRun`, `TopologyLink`, `MapPosition`, `User`, `AiCache`, `AiSummary`, `AiUsage`, `AppSetting` e `Equipment`. No app instalado, o `launcher.cjs` aplica as migrações com `node:sqlite`, compatível com a tabela `_prisma_migrations` do Prisma.
+Prisma com SQLite ([`prisma/schema.prisma`](prisma/schema.prisma)). Modelos: `Device`, `DeviceEvent`, `ScanConfig`, `ScanRun`, `TopologyLink`, `MapPosition`, `User`, `AiCache`, `AiSummary`, `AiUsage`, `AppSetting`, `Equipment` e, para o Status global, `StatusService`, `StatusComponent`, `StatusIncident`, `ProbeTarget`, `ProbeCheck` e `ProbeRollup`. No app instalado, o `launcher.cjs` aplica as migrações com `node:sqlite`, compatível com a tabela `_prisma_migrations` do Prisma.
 
 ## Desenvolvimento
 
