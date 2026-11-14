@@ -1,0 +1,1778 @@
+{
+ "page": {
+  "id": "yh6f0r4529hb",
+  "name": "Cloudflare Status",
+  "url": "https://www.cloudflarestatus.com",
+  "time_zone": "Etc/UTC",
+  "updated_at": "2026-11-13T20:29:30.472Z"
+ },
+ "components": [
+  {
+   "id": "1km35smx8p41",
+   "name": "Cloudflare Sites and Services",
+   "status": "degraded_performance",
+   "created_at": "2014-10-27T21:59:30.000Z",
+   "updated_at": "2026-11-13T15:31:13.773Z",
+   "position": 1,
+   "description": "Sites and services that Cloudflare customers use to interact with the Cloudflare Network and its provided services",
+   "showcase": false,
+   "start_date": null,
+   "group_id": null,
+   "page_id": "yh6f0r4529hb",
+   "group": true,
+   "only_show_if_degraded": false,
+   "components": [
+    "5wnz34mhfhrk",
+    "xm3cq0t85y10"
+   ]
+  },
+  {
+   "id": "4l01sk5cdn5c",
+   "name": "North America",
+   "status": "partial_outage",
+   "created_at": "2014-10-27T23:54:15.000Z",
+   "updated_at": "2026-10-28T14:35:29.913Z",
+   "position": 18,
+   "description": null,
+   "showcase": false,
+   "start_date": null,
+   "group_id": null,
+   "page_id": "yh6f0r4529hb",
+   "group": true,
+   "only_show_if_degraded": false,
+   "components": [
+    "fs7l9rdk9kq5"
+   ]
+  },
+  {
+   "id": "zqxhg7y54vy8",
+   "name": "Europe",
+   "status": "partial_outage",
+   "created_at": "2014-10-27T23:56:21.000Z",
+   "updated_at": "2026-10-28T14:35:29.913Z",
+   "position": 19,
+   "description": null,
+   "showcase": false,
+   "start_date": null,
+   "group_id": null,
+   "page_id": "yh6f0r4529hb",
+   "group": true,
+   "only_show_if_degraded": false,
+   "components": [
+    "57ctn3f2qsyj",
+    "bm711sgbslfk",
+    "5nlf038vr3n8"
+   ]
+  },
+  {
+   "id": "57ctn3f2qsyj",
+   "name": "Amsterdam, Netherlands - (AMS)",
+   "status": "operational",
+   "created_at": "2014-10-27T20:35:05.000Z",
+   "updated_at": "2026-11-05T07:01:14.283Z",
+   "position": 1,
+   "description": null,
+   "showcase": false,
+   "start_date": null,
+   "group_id": "zqxhg7y54vy8",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "5wnz34mhfhrk",
+   "name": "CDN/Cache",
+   "status": "operational",
+   "created_at": "2020-03-25T19:03:33.000Z",
+   "updated_at": "2026-10-28T14:30:39.261Z",
+   "position": 1,
+   "description": null,
+   "showcase": false,
+   "start_date": null,
+   "group_id": "1km35smx8p41",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "fs7l9rdk9kq5",
+   "name": "Albuquerque, United States - (ABQ)",
+   "status": "partial_outage",
+   "created_at": "2023-05-04T12:40:26.000Z",
+   "updated_at": "2026-11-10T17:16:11.037Z",
+   "position": 1,
+   "description": null,
+   "showcase": false,
+   "start_date": "2023-05-04",
+   "group_id": "4l01sk5cdn5c",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "xm3cq0t85y10",
+   "name": "Always Online",
+   "status": "operational",
+   "created_at": "2016-03-24T04:43:52.000Z",
+   "updated_at": "2026-10-28T14:30:39.261Z",
+   "position": 2,
+   "description": "Crawling and caching service",
+   "showcase": false,
+   "start_date": null,
+   "group_id": "1km35smx8p41",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "bm711sgbslfk",
+   "name": "Athens, Greece - (ATH)",
+   "status": "operational",
+   "created_at": "2016-09-22T00:34:05.000Z",
+   "updated_at": "2026-11-06T07:00:23.169Z",
+   "position": 2,
+   "description": null,
+   "showcase": false,
+   "start_date": null,
+   "group_id": "zqxhg7y54vy8",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "5nlf038vr3n8",
+   "name": "Almaty, Kazakhstan - (ALA)",
+   "status": "operational",
+   "created_at": "2021-11-02T12:04:47.000Z",
+   "updated_at": "2026-11-06T10:26:00.613Z",
+   "position": 2,
+   "description": null,
+   "showcase": false,
+   "start_date": "2021-11-02",
+   "group_id": "zqxhg7y54vy8",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "2htqrtyxmmtr",
+   "name": "Arica, Chile - (ARI)",
+   "status": "partial_outage",
+   "created_at": "2019-09-05T21:56:39.000Z",
+   "updated_at": "2026-11-10T17:16:11.037Z",
+   "position": 2,
+   "description": null,
+   "showcase": false,
+   "start_date": null,
+   "group_id": "91blz4ztt7dm",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "rfkpkllgfmrq",
+   "name": "Algiers, Algeria - (ALG)",
+   "status": "under_maintenance",
+   "created_at": "2021-08-06T15:49:20.000Z",
+   "updated_at": "2026-11-12T11:32:30.795Z",
+   "position": 2,
+   "description": null,
+   "showcase": false,
+   "start_date": "2021-08-06",
+   "group_id": "00gpj4s37mz4",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  }
+ ],
+ "incidents": [
+  {
+   "id": "e7ktq32gphhe",
+   "name": "Cloudflare is seeing an issue with Workers API availability",
+   "status": "monitoring",
+   "created_at": "2026-11-13T15:31:13.773Z",
+   "updated_at": "2026-11-13T15:42:43.996Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "minor",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/e7ktq32gphhe",
+   "started_at": "2026-11-13T15:31:13.772Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "84ax1hp9z5fs",
+     "status": "monitoring",
+     "body": "A fix has been implemented and we are monitoring the results.",
+     "incident_id": "e7ktq32gphhe",
+     "created_at": "2026-11-13T15:42:43.996Z",
+     "updated_at": "2026-11-13T15:42:43.996Z",
+     "display_at": "2026-11-13T15:42:43.996Z",
+     "affected_components": null,
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    },
+    {
+     "id": "rtumhl7zgfnv",
+     "status": "identified",
+     "body": "The issue has been identified and a fix is being implemented.",
+     "incident_id": "e7ktq32gphhe",
+     "created_at": "2026-11-13T15:39:22.677Z",
+     "updated_at": "2026-11-13T15:39:22.677Z",
+     "display_at": "2026-11-13T15:39:22.677Z",
+     "affected_components": null,
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    },
+    {
+     "id": "ve0cmj4tzy5p",
+     "status": "investigating",
+     "body": "Cloudflare is investigating an issue impacting the Cloudflare Workers API, customers may be seeing an increase in 5xx errors deploying Workers or doing other API actions.",
+     "incident_id": "e7ktq32gphhe",
+     "created_at": "2026-11-13T15:31:13.773Z",
+     "updated_at": "2026-11-13T15:32:54.354Z",
+     "display_at": "2026-11-13T15:31:13.773Z",
+     "affected_components": [
+      {
+       "code": "57srcl8zcn7c",
+       "name": "Developer Services - Workers",
+       "old_status": "degraded_performance",
+       "new_status": "degraded_performance"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "57srcl8zcn7c",
+     "name": "Workers",
+     "status": "degraded_performance",
+     "created_at": "2019-01-24T16:49:08.000Z",
+     "updated_at": "2026-11-13T15:31:13.773Z",
+     "position": 1,
+     "description": "Cloudflare Workers provides a serverless execution environment that allows you to create new applications or augment existing ones without configuring or maintaining infrastructure",
+     "showcase": false,
+     "start_date": null,
+     "group_id": "1km35smx8p41",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "reminder_intervals": null
+  },
+  {
+   "id": "mc91s22odfvf",
+   "name": "Cloudflare is currently having an issue with the r8.im registry used for Replicate model publishing and builds is currently restricted",
+   "status": "identified",
+   "created_at": "2026-11-13T14:55:26.179Z",
+   "updated_at": "2026-11-13T14:56:27.695Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "minor",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/mc91s22odfvf",
+   "started_at": "2026-11-13T14:55:26.180Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "bupssimkmqbf",
+     "status": "identified",
+     "body": "The issue has been identified and a fix is being implemented.",
+     "incident_id": "mc91s22odfvf",
+     "created_at": "2026-11-13T14:55:26.179Z",
+     "updated_at": "2026-11-13T14:55:26.179Z",
+     "display_at": "2026-11-13T14:55:26.179Z",
+     "affected_components": [
+      {
+       "code": "fvgfcmy66tdr",
+       "name": "AI - Replicate",
+       "old_status": "operational",
+       "new_status": "degraded_performance"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "fvgfcmy66tdr",
+     "name": "Replicate",
+     "status": "degraded_performance",
+     "created_at": "2026-06-30T13:39:35.000Z",
+     "updated_at": "2026-11-13T14:56:27.695Z",
+     "position": 5,
+     "description": "Replicate runs and fine-tunes open-source models.",
+     "showcase": false,
+     "start_date": "2026-06-30",
+     "group_id": "1km35smx8p41",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "reminder_intervals": null
+  },
+  {
+   "id": "0ocqieaifg7h",
+   "name": "Changes to Cloudflare Workers are not producing Event Subscription events",
+   "status": "identified",
+   "created_at": "2026-11-10T01:53:58.905Z",
+   "updated_at": "2026-11-11T05:05:06.331Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "minor",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/0ocqieaifg7h",
+   "started_at": "2026-11-10T01:53:58.905Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "tsd2wb2nx1mq",
+     "status": "identified",
+     "body": "The issue has been identified and a fix is being implemented.",
+     "incident_id": "0ocqieaifg7h",
+     "created_at": "2026-11-11T05:05:06.331Z",
+     "updated_at": "2026-11-11T05:05:06.331Z",
+     "display_at": "2026-11-11T05:05:06.331Z",
+     "affected_components": null,
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    },
+    {
+     "id": "rxfxlvk6bnk3",
+     "status": "investigating",
+     "body": "Changes to Cloudflare Workers are temporarily not producing Event Subscription events. We have intentionally disabled this feature due to an on-going issue. We are actively working to restore it, but this, regrettably, may take a while. Changes to Workers themselves are working normally. Already deployed Workers are entirely unaffected.",
+     "incident_id": "0ocqieaifg7h",
+     "created_at": "2026-11-10T01:53:58.905Z",
+     "updated_at": "2026-11-10T01:53:58.905Z",
+     "display_at": "2026-11-10T01:53:58.905Z",
+     "affected_components": [
+      {
+       "code": "3z7cmdfch5kb",
+       "name": "Developer Services - Queues",
+       "old_status": "operational",
+       "new_status": "degraded_performance"
+      },
+      {
+       "code": "57srcl8zcn7c",
+       "name": "Developer Services - Workers",
+       "old_status": "operational",
+       "new_status": "degraded_performance"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "57srcl8zcn7c",
+     "name": "Workers",
+     "status": "degraded_performance",
+     "created_at": "2019-01-24T16:49:08.000Z",
+     "updated_at": "2026-11-13T15:31:13.773Z",
+     "position": 1,
+     "description": "Cloudflare Workers provides a serverless execution environment that allows you to create new applications or augment existing ones without configuring or maintaining infrastructure",
+     "showcase": false,
+     "start_date": null,
+     "group_id": "1km35smx8p41",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    },
+    {
+     "id": "3z7cmdfch5kb",
+     "name": "Queues",
+     "status": "degraded_performance",
+     "created_at": "2025-10-22T09:19:59.000Z",
+     "updated_at": "2026-11-10T01:53:58.905Z",
+     "position": 13,
+     "description": "Send and receive messages with guaranteed delivery and no charges for egress bandwidth.",
+     "showcase": false,
+     "start_date": "2025-10-22",
+     "group_id": "1km35smx8p41",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "reminder_intervals": null
+  }
+ ],
+ "scheduled_maintenances": [
+  {
+   "id": "6nik2rihsm8r",
+   "name": "HKG (Hong Kong) on 2026-11-13",
+   "status": "scheduled",
+   "created_at": "2026-11-13T16:44:13.839Z",
+   "updated_at": "2026-11-13T20:00:14.722Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/6nik2rihsm8r",
+   "started_at": "2026-11-13T21:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "0vpjjz44ud3k",
+     "status": "scheduled",
+     "body": "Maintenance will begin soon as scheduled.",
+     "incident_id": "6nik2rihsm8r",
+     "created_at": "2026-11-13T20:00:14.722Z",
+     "updated_at": "2026-11-13T20:00:14.722Z",
+     "display_at": "2026-11-13T20:00:14.722Z",
+     "affected_components": null,
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    },
+    {
+     "id": "81hhukg5y63j",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in HKG (Hong Kong) datacenter on 2026-11-13 between 21:00 and 23:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "6nik2rihsm8r",
+     "created_at": "2026-11-13T16:44:13.839Z",
+     "updated_at": "2026-11-13T16:44:13.839Z",
+     "display_at": "2026-11-13T16:44:13.839Z",
+     "affected_components": [
+      {
+       "code": "wf2gdmxg7cv3",
+       "name": "Asia - Hong Kong - (HKG)",
+       "old_status": "under_maintenance",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "wf2gdmxg7cv3",
+     "name": "Hong Kong - (HKG)",
+     "status": "under_maintenance",
+     "created_at": "2014-10-27T21:46:42.000Z",
+     "updated_at": "2026-11-12T03:39:31.144Z",
+     "position": 25,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "77867vxkttgw",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-13T21:00:00.000Z",
+   "scheduled_until": "2026-11-13T23:00:00.000Z"
+  },
+  {
+   "id": "751g0o7oohpt",
+   "name": "TPE (Taipei) on 2026-11-16",
+   "status": "scheduled",
+   "created_at": "2026-11-13T06:40:32.313Z",
+   "updated_at": "2026-11-13T06:40:32.313Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/751g0o7oohpt",
+   "started_at": "2026-11-16T16:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "oosdkx7iag6d",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in TPE (Taipei) datacenter on 2026-11-16 between 16:00 and 22:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "751g0o7oohpt",
+     "created_at": "2026-11-13T06:40:32.313Z",
+     "updated_at": "2026-11-13T06:40:32.313Z",
+     "display_at": "2026-11-13T06:40:32.313Z",
+     "affected_components": [
+      {
+       "code": "hk319v924h0m",
+       "name": "Asia - Taipei - (TPE)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "hk319v924h0m",
+     "name": "Taipei - (TPE)",
+     "status": "operational",
+     "created_at": "2016-03-15T11:51:08.000Z",
+     "updated_at": "2026-11-12T03:48:09.767Z",
+     "position": 61,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "77867vxkttgw",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-16T16:00:00.000Z",
+   "scheduled_until": "2026-11-16T22:00:00.000Z"
+  },
+  {
+   "id": "wd2csnb4qtjl",
+   "name": "HKG (Hong Kong) on 2026-11-16",
+   "status": "scheduled",
+   "created_at": "2026-11-12T09:04:01.667Z",
+   "updated_at": "2026-11-12T09:04:01.667Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/wd2csnb4qtjl",
+   "started_at": "2026-11-16T18:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "cy3cmw9s8fwi",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in HKG (Hong Kong) datacenter on 2026-11-16 between 18:00 and 22:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "wd2csnb4qtjl",
+     "created_at": "2026-11-12T09:04:01.667Z",
+     "updated_at": "2026-11-12T09:04:01.667Z",
+     "display_at": "2026-11-12T09:04:01.667Z",
+     "affected_components": [
+      {
+       "code": "wf2gdmxg7cv3",
+       "name": "Asia - Hong Kong - (HKG)",
+       "old_status": "under_maintenance",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "wf2gdmxg7cv3",
+     "name": "Hong Kong - (HKG)",
+     "status": "under_maintenance",
+     "created_at": "2014-10-27T21:46:42.000Z",
+     "updated_at": "2026-11-12T03:39:31.144Z",
+     "position": 25,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "77867vxkttgw",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-16T18:00:00.000Z",
+   "scheduled_until": "2026-11-16T22:00:00.000Z"
+  },
+  {
+   "id": "rh9n3vhuf8s8",
+   "name": "SIN (Singapore) on 2026-11-16",
+   "status": "scheduled",
+   "created_at": "2026-11-10T17:41:41.927Z",
+   "updated_at": "2026-11-10T17:41:41.927Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/rh9n3vhuf8s8",
+   "started_at": "2026-11-16T18:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "ke2y6u4c4jkf",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in SIN (Singapore) datacenter on 2026-11-16 between 18:00 and 22:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "rh9n3vhuf8s8",
+     "created_at": "2026-11-10T17:41:41.927Z",
+     "updated_at": "2026-11-10T17:41:41.927Z",
+     "display_at": "2026-11-10T17:41:41.927Z",
+     "affected_components": [
+      {
+       "code": "18p6r93swmbl",
+       "name": "Asia - Singapore, Singapore - (SIN)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "18p6r93swmbl",
+     "name": "Singapore, Singapore - (SIN)",
+     "status": "under_maintenance",
+     "created_at": "2014-10-27T21:44:15.000Z",
+     "updated_at": "2026-11-13T18:33:30.772Z",
+     "position": 59,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "77867vxkttgw",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-16T18:00:00.000Z",
+   "scheduled_until": "2026-11-16T22:00:00.000Z"
+  },
+  {
+   "id": "68r9lf0tyj23",
+   "name": "EZE (Buenos Aires) on 2026-11-17",
+   "status": "scheduled",
+   "created_at": "2026-11-13T17:20:02.650Z",
+   "updated_at": "2026-11-13T17:20:02.650Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/68r9lf0tyj23",
+   "started_at": "2026-11-17T04:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "inmcd7om14rr",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in EZE (Buenos Aires) datacenter on 2026-11-17 between 04:00 and 10:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "68r9lf0tyj23",
+     "created_at": "2026-11-13T17:20:02.650Z",
+     "updated_at": "2026-11-13T17:20:02.650Z",
+     "display_at": "2026-11-13T17:20:02.650Z",
+     "affected_components": [
+      {
+       "code": "26gznn8sts5z",
+       "name": "Latin America & the Caribbean - Buenos Aires, Argentina - (EZE)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "26gznn8sts5z",
+     "name": "Buenos Aires, Argentina - (EZE)",
+     "status": "operational",
+     "created_at": "2015-04-01T11:05:40.000Z",
+     "updated_at": "2026-11-13T06:11:09.774Z",
+     "position": 9,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "91blz4ztt7dm",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-17T04:00:00.000Z",
+   "scheduled_until": "2026-11-17T10:00:00.000Z"
+  },
+  {
+   "id": "lb1srn86p444",
+   "name": "EWR (Newark) on 2026-11-17",
+   "status": "scheduled",
+   "created_at": "2026-10-28T17:54:35.507Z",
+   "updated_at": "2026-11-12T17:22:40.945Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/lb1srn86p444",
+   "started_at": "2026-11-17T06:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "bpisdlf36666",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in EWR (Newark) datacenter on 2026-11-17 between 06:00 and 14:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "lb1srn86p444",
+     "created_at": "2026-10-28T17:54:35.507Z",
+     "updated_at": "2026-11-12T17:22:40.945Z",
+     "display_at": "2026-10-28T17:54:35.507Z",
+     "affected_components": [
+      {
+       "code": "grpnztl4pd46",
+       "name": "North America - Newark, United States - (EWR)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "grpnztl4pd46",
+     "name": "Newark, United States - (EWR)",
+     "status": "operational",
+     "created_at": "2014-10-27T20:30:34.000Z",
+     "updated_at": "2026-11-12T13:00:20.417Z",
+     "position": 34,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-17T06:00:00.000Z",
+   "scheduled_until": "2026-11-17T14:00:00.000Z"
+  },
+  {
+   "id": "asldhbcwfepo",
+   "name": "BOS (Boston) on 2026-11-17",
+   "status": "scheduled",
+   "created_at": "2026-11-11T17:29:11.375Z",
+   "updated_at": "2026-11-11T17:29:11.375Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/asldhbcwfepo",
+   "started_at": "2026-11-17T07:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "8n3uwnf3icfu",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in BOS (Boston) datacenter on 2026-11-17 between 07:00 and 11:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "asldhbcwfepo",
+     "created_at": "2026-11-11T17:29:11.375Z",
+     "updated_at": "2026-11-11T17:29:11.375Z",
+     "display_at": "2026-11-11T17:29:11.375Z",
+     "affected_components": [
+      {
+       "code": "mfwf3n729rpy",
+       "name": "North America - Boston, United States - (BOS)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "mfwf3n729rpy",
+     "name": "Boston, United States - (BOS)",
+     "status": "under_maintenance",
+     "created_at": "2016-09-02T11:22:00.000Z",
+     "updated_at": "2026-11-13T05:30:21.106Z",
+     "position": 7,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-17T07:00:00.000Z",
+   "scheduled_until": "2026-11-17T11:00:00.000Z"
+  },
+  {
+   "id": "zxtghrlwznug",
+   "name": "GUA (Guatemala City) on 2026-11-17",
+   "status": "scheduled",
+   "created_at": "2026-11-12T12:30:31.979Z",
+   "updated_at": "2026-11-12T12:30:31.979Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/zxtghrlwznug",
+   "started_at": "2026-11-17T08:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "2ru1v1uwqutz",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in GUA (Guatemala City) datacenter on 2026-11-17 between 08:00 and 12:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "zxtghrlwznug",
+     "created_at": "2026-11-12T12:30:31.979Z",
+     "updated_at": "2026-11-12T12:30:31.979Z",
+     "display_at": "2026-11-12T12:30:31.979Z",
+     "affected_components": [
+      {
+       "code": "srz7zhpwynys",
+       "name": "North America - Guatemala City, Guatemala - (GUA)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "srz7zhpwynys",
+     "name": "Guatemala City, Guatemala - (GUA)",
+     "status": "operational",
+     "created_at": "2019-08-15T07:22:07.000Z",
+     "updated_at": "2026-11-13T13:29:30.779Z",
+     "position": 20,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-17T08:00:00.000Z",
+   "scheduled_until": "2026-11-17T12:00:00.000Z"
+  },
+  {
+   "id": "53dwi8p7ocrg",
+   "name": "GUA (Guatemala City) on 2026-11-17",
+   "status": "scheduled",
+   "created_at": "2026-11-12T12:30:31.979Z",
+   "updated_at": "2026-11-12T12:30:31.979Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/53dwi8p7ocrg",
+   "started_at": "2026-11-17T08:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "ajdn3inkk0p4",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in GUA (Guatemala City) datacenter on 2026-11-17 between 08:00 and 12:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "53dwi8p7ocrg",
+     "created_at": "2026-11-12T12:30:31.979Z",
+     "updated_at": "2026-11-12T12:30:31.979Z",
+     "display_at": "2026-11-12T12:30:31.979Z",
+     "affected_components": [
+      {
+       "code": "srz7zhpwynys",
+       "name": "North America - Guatemala City, Guatemala - (GUA)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "srz7zhpwynys",
+     "name": "Guatemala City, Guatemala - (GUA)",
+     "status": "operational",
+     "created_at": "2019-08-15T07:22:07.000Z",
+     "updated_at": "2026-11-13T13:29:30.779Z",
+     "position": 20,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-17T08:00:00.000Z",
+   "scheduled_until": "2026-11-17T12:00:00.000Z"
+  },
+  {
+   "id": "esshy7dd649y",
+   "name": "OKC (Oklahoma City) on 2026-11-17",
+   "status": "scheduled",
+   "created_at": "2026-11-12T12:30:31.979Z",
+   "updated_at": "2026-11-12T12:30:31.979Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/esshy7dd649y",
+   "started_at": "2026-11-17T08:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "jfhoz43cuavw",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in OKC (Oklahoma City) datacenter on 2026-11-17 between 08:00 and 12:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "esshy7dd649y",
+     "created_at": "2026-11-12T12:30:31.979Z",
+     "updated_at": "2026-11-12T12:30:31.979Z",
+     "display_at": "2026-11-12T12:30:31.979Z",
+     "affected_components": [
+      {
+       "code": "3mj4c8m14ncw",
+       "name": "North America - Oklahoma City, United States - (OKC)",
+       "old_status": "partial_outage",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "3mj4c8m14ncw",
+     "name": "Oklahoma City, United States - (OKC)",
+     "status": "partial_outage",
+     "created_at": "2023-09-20T11:00:43.000Z",
+     "updated_at": "2026-11-11T23:57:09.613Z",
+     "position": 36,
+     "description": null,
+     "showcase": false,
+     "start_date": "2023-09-20",
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-17T08:00:00.000Z",
+   "scheduled_until": "2026-11-17T12:00:00.000Z"
+  },
+  {
+   "id": "i7jabae5hmb4",
+   "name": "SAT (San Antonio) on 2026-11-17",
+   "status": "scheduled",
+   "created_at": "2026-11-12T12:30:31.979Z",
+   "updated_at": "2026-11-12T12:30:31.979Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/i7jabae5hmb4",
+   "started_at": "2026-11-17T08:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "x4096392w87b",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in SAT (San Antonio) datacenter on 2026-11-17 between 08:00 and 12:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "i7jabae5hmb4",
+     "created_at": "2026-11-12T12:30:31.979Z",
+     "updated_at": "2026-11-12T12:30:31.979Z",
+     "display_at": "2026-11-12T12:30:31.979Z",
+     "affected_components": [
+      {
+       "code": "5dhjdhgdqjzd",
+       "name": "North America - San Antonio, United States - (SAT)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "5dhjdhgdqjzd",
+     "name": "San Antonio, United States - (SAT)",
+     "status": "operational",
+     "created_at": "2023-08-14T14:20:37.000Z",
+     "updated_at": "2026-11-10T07:25:33.592Z",
+     "position": 47,
+     "description": null,
+     "showcase": false,
+     "start_date": "2023-08-14",
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-17T08:00:00.000Z",
+   "scheduled_until": "2026-11-17T12:00:00.000Z"
+  },
+  {
+   "id": "2372ab42vj1e",
+   "name": "ABQ (Albuquerque) on 2026-11-17",
+   "status": "scheduled",
+   "created_at": "2026-11-12T12:30:31.979Z",
+   "updated_at": "2026-11-12T12:30:31.979Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/2372ab42vj1e",
+   "started_at": "2026-11-17T09:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "5fyxck2tnk0d",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in ABQ (Albuquerque) datacenter on 2026-11-17 between 09:00 and 13:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "2372ab42vj1e",
+     "created_at": "2026-11-12T12:30:31.979Z",
+     "updated_at": "2026-11-12T12:30:31.979Z",
+     "display_at": "2026-11-12T12:30:31.979Z",
+     "affected_components": [
+      {
+       "code": "fs7l9rdk9kq5",
+       "name": "North America - Albuquerque, United States - (ABQ)",
+       "old_status": "partial_outage",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "fs7l9rdk9kq5",
+     "name": "Albuquerque, United States - (ABQ)",
+     "status": "partial_outage",
+     "created_at": "2023-05-04T12:40:26.000Z",
+     "updated_at": "2026-11-10T17:16:11.037Z",
+     "position": 1,
+     "description": null,
+     "showcase": false,
+     "start_date": "2023-05-04",
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-17T09:00:00.000Z",
+   "scheduled_until": "2026-11-17T13:00:00.000Z"
+  },
+  {
+   "id": "dvbtxaopvoz5",
+   "name": "SMF (Sacramento) on 2026-11-17",
+   "status": "scheduled",
+   "created_at": "2026-11-12T12:30:31.979Z",
+   "updated_at": "2026-11-12T12:30:31.979Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/dvbtxaopvoz5",
+   "started_at": "2026-11-17T10:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "04qvpxcgm493",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in SMF (Sacramento) datacenter on 2026-11-17 between 10:00 and 14:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "dvbtxaopvoz5",
+     "created_at": "2026-11-12T12:30:31.979Z",
+     "updated_at": "2026-11-12T12:30:31.979Z",
+     "display_at": "2026-11-12T12:30:31.979Z",
+     "affected_components": [
+      {
+       "code": "2k1qvzk3763q",
+       "name": "North America - Sacramento, United States - (SMF)",
+       "old_status": "partial_outage",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "2k1qvzk3763q",
+     "name": "Sacramento, United States - (SMF)",
+     "status": "operational",
+     "created_at": "2018-03-26T07:13:13.000Z",
+     "updated_at": "2026-11-12T20:41:30.752Z",
+     "position": 45,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-17T10:00:00.000Z",
+   "scheduled_until": "2026-11-17T14:00:00.000Z"
+  },
+  {
+   "id": "4l9cqy33fd6i",
+   "name": "ANC (Anchorage) on 2026-11-17",
+   "status": "scheduled",
+   "created_at": "2026-11-12T12:30:31.979Z",
+   "updated_at": "2026-11-12T12:30:31.979Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/4l9cqy33fd6i",
+   "started_at": "2026-11-17T11:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "40nph2lkanyn",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in ANC (Anchorage) datacenter on 2026-11-17 between 11:00 and 15:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "4l9cqy33fd6i",
+     "created_at": "2026-11-12T12:30:31.979Z",
+     "updated_at": "2026-11-12T12:30:31.979Z",
+     "display_at": "2026-11-12T12:30:31.979Z",
+     "affected_components": [
+      {
+       "code": "4npbr7cg7zgn",
+       "name": "North America - Anchorage, United States - (ANC)",
+       "old_status": "partial_outage",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "4npbr7cg7zgn",
+     "name": "Anchorage, United States - (ANC)",
+     "status": "operational",
+     "created_at": "2024-01-22T10:00:38.000Z",
+     "updated_at": "2026-11-12T20:41:00.776Z",
+     "position": 2,
+     "description": null,
+     "showcase": false,
+     "start_date": "2024-01-22",
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-17T11:00:00.000Z",
+   "scheduled_until": "2026-11-17T15:00:00.000Z"
+  },
+  {
+   "id": "zsngrdgugz49",
+   "name": "HKG (Hong Kong) on 2026-11-17",
+   "status": "scheduled",
+   "created_at": "2026-11-11T08:07:11.571Z",
+   "updated_at": "2026-11-11T08:07:11.571Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/zsngrdgugz49",
+   "started_at": "2026-11-17T16:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "o6piuszz0tvo",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in HKG (Hong Kong) datacenter on 2026-11-17 between 16:00 and 20:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "zsngrdgugz49",
+     "created_at": "2026-11-11T08:07:11.571Z",
+     "updated_at": "2026-11-11T08:07:11.571Z",
+     "display_at": "2026-11-11T08:07:11.571Z",
+     "affected_components": [
+      {
+       "code": "wf2gdmxg7cv3",
+       "name": "Asia - Hong Kong - (HKG)",
+       "old_status": "under_maintenance",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "wf2gdmxg7cv3",
+     "name": "Hong Kong - (HKG)",
+     "status": "under_maintenance",
+     "created_at": "2014-10-27T21:46:42.000Z",
+     "updated_at": "2026-11-12T03:39:31.144Z",
+     "position": 25,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "77867vxkttgw",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-17T16:00:00.000Z",
+   "scheduled_until": "2026-11-17T20:00:00.000Z"
+  },
+  {
+   "id": "t7rp8jaev5vm",
+   "name": "SIN (Singapore) on 2026-11-17",
+   "status": "scheduled",
+   "created_at": "2026-11-10T17:41:41.927Z",
+   "updated_at": "2026-11-10T17:41:41.927Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/t7rp8jaev5vm",
+   "started_at": "2026-11-17T18:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "1hi0nkaz7w6w",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in SIN (Singapore) datacenter on 2026-11-17 between 18:00 and 22:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "t7rp8jaev5vm",
+     "created_at": "2026-11-10T17:41:41.927Z",
+     "updated_at": "2026-11-10T17:41:41.927Z",
+     "display_at": "2026-11-10T17:41:41.927Z",
+     "affected_components": [
+      {
+       "code": "18p6r93swmbl",
+       "name": "Asia - Singapore, Singapore - (SIN)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "18p6r93swmbl",
+     "name": "Singapore, Singapore - (SIN)",
+     "status": "under_maintenance",
+     "created_at": "2014-10-27T21:44:15.000Z",
+     "updated_at": "2026-11-13T18:33:30.772Z",
+     "position": 59,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "77867vxkttgw",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-17T18:00:00.000Z",
+   "scheduled_until": "2026-11-17T22:00:00.000Z"
+  },
+  {
+   "id": "t5dapbyc09jw",
+   "name": "HKG (Hong Kong) on 2026-11-17",
+   "status": "scheduled",
+   "created_at": "2026-11-11T08:11:41.798Z",
+   "updated_at": "2026-11-11T08:11:41.798Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/t5dapbyc09jw",
+   "started_at": "2026-11-17T20:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "m15niqibfv5i",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in HKG (Hong Kong) datacenter between 2026-11-17 20:00 and 2026-11-18 00:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "t5dapbyc09jw",
+     "created_at": "2026-11-11T08:11:41.798Z",
+     "updated_at": "2026-11-11T08:11:41.798Z",
+     "display_at": "2026-11-11T08:11:41.798Z",
+     "affected_components": [
+      {
+       "code": "wf2gdmxg7cv3",
+       "name": "Asia - Hong Kong - (HKG)",
+       "old_status": "under_maintenance",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "wf2gdmxg7cv3",
+     "name": "Hong Kong - (HKG)",
+     "status": "under_maintenance",
+     "created_at": "2014-10-27T21:46:42.000Z",
+     "updated_at": "2026-11-12T03:39:31.144Z",
+     "position": 25,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "77867vxkttgw",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-17T20:00:00.000Z",
+   "scheduled_until": "2026-11-18T00:00:00.000Z"
+  },
+  {
+   "id": "eh9sw9bu4w4i",
+   "name": "ATH (Athens) on 2026-11-18",
+   "status": "scheduled",
+   "created_at": "2026-11-13T11:37:01.739Z",
+   "updated_at": "2026-11-13T11:37:01.739Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/eh9sw9bu4w4i",
+   "started_at": "2026-11-18T01:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "k8wph1rgpsmm",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in ATH (Athens) datacenter on 2026-11-18 between 01:00 and 05:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "eh9sw9bu4w4i",
+     "created_at": "2026-11-13T11:37:01.739Z",
+     "updated_at": "2026-11-13T11:37:01.739Z",
+     "display_at": "2026-11-13T11:37:01.739Z",
+     "affected_components": [
+      {
+       "code": "bm711sgbslfk",
+       "name": "Europe - Athens, Greece - (ATH)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "bm711sgbslfk",
+     "name": "Athens, Greece - (ATH)",
+     "status": "operational",
+     "created_at": "2016-09-22T00:34:05.000Z",
+     "updated_at": "2026-11-06T07:00:23.169Z",
+     "position": 2,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "zqxhg7y54vy8",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-18T01:00:00.000Z",
+   "scheduled_until": "2026-11-18T05:00:00.000Z"
+  },
+  {
+   "id": "ot8x3722m2em",
+   "name": "EWR (Newark) on 2026-11-18",
+   "status": "scheduled",
+   "created_at": "2026-10-28T17:54:35.507Z",
+   "updated_at": "2026-11-12T17:20:31.850Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/ot8x3722m2em",
+   "started_at": "2026-11-18T06:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "7hnmxjtm6h4c",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in EWR (Newark) datacenter on 2026-11-18 between 06:00 and 14:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "ot8x3722m2em",
+     "created_at": "2026-10-28T17:54:35.507Z",
+     "updated_at": "2026-11-12T17:20:31.850Z",
+     "display_at": "2026-10-28T17:54:35.507Z",
+     "affected_components": [
+      {
+       "code": "grpnztl4pd46",
+       "name": "North America - Newark, United States - (EWR)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "grpnztl4pd46",
+     "name": "Newark, United States - (EWR)",
+     "status": "operational",
+     "created_at": "2014-10-27T20:30:34.000Z",
+     "updated_at": "2026-11-12T13:00:20.417Z",
+     "position": 34,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-18T06:00:00.000Z",
+   "scheduled_until": "2026-11-18T14:00:00.000Z"
+  },
+  {
+   "id": "r24ex9hdsid0",
+   "name": "AUS (Austin) on 2026-11-18",
+   "status": "scheduled",
+   "created_at": "2026-11-12T12:30:31.979Z",
+   "updated_at": "2026-11-12T12:30:31.979Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/r24ex9hdsid0",
+   "started_at": "2026-11-18T08:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "nd39imemskag",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in AUS (Austin) datacenter on 2026-11-18 between 08:00 and 12:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "r24ex9hdsid0",
+     "created_at": "2026-11-12T12:30:31.979Z",
+     "updated_at": "2026-11-12T12:30:31.979Z",
+     "display_at": "2026-11-12T12:30:31.979Z",
+     "affected_components": [
+      {
+       "code": "3l8dxwjtgpp6",
+       "name": "North America - Austin, United States - (AUS)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "3l8dxwjtgpp6",
+     "name": "Austin, United States - (AUS)",
+     "status": "operational",
+     "created_at": "2023-04-21T15:40:55.000Z",
+     "updated_at": "2026-11-13T08:04:00.850Z",
+     "position": 5,
+     "description": null,
+     "showcase": false,
+     "start_date": "2023-04-21",
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-18T08:00:00.000Z",
+   "scheduled_until": "2026-11-18T12:00:00.000Z"
+  },
+  {
+   "id": "rhnq0hx1p788",
+   "name": "GDL (Guadalajara) on 2026-11-18",
+   "status": "scheduled",
+   "created_at": "2026-11-12T12:30:31.979Z",
+   "updated_at": "2026-11-12T12:30:31.979Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/rhnq0hx1p788",
+   "started_at": "2026-11-18T08:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "lq811lp6rq2n",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in GDL (Guadalajara) datacenter on 2026-11-18 between 08:00 and 12:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "rhnq0hx1p788",
+     "created_at": "2026-11-12T12:30:31.979Z",
+     "updated_at": "2026-11-12T12:30:31.979Z",
+     "display_at": "2026-11-12T12:30:31.979Z",
+     "affected_components": [
+      {
+       "code": "wnbl5c6vrmv6",
+       "name": "North America - Guadalajara, Mexico - (GDL)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "wnbl5c6vrmv6",
+     "name": "Guadalajara, Mexico - (GDL)",
+     "status": "operational",
+     "created_at": "2023-06-07T11:00:38.000Z",
+     "updated_at": "2026-11-13T10:12:00.907Z",
+     "position": 18,
+     "description": null,
+     "showcase": false,
+     "start_date": "2023-06-07",
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-18T08:00:00.000Z",
+   "scheduled_until": "2026-11-18T12:00:00.000Z"
+  },
+  {
+   "id": "cq0sua5r8vrh",
+   "name": "GUA (Guatemala City) on 2026-11-18",
+   "status": "scheduled",
+   "created_at": "2026-11-12T12:30:31.979Z",
+   "updated_at": "2026-11-12T12:30:31.979Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/cq0sua5r8vrh",
+   "started_at": "2026-11-18T08:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "38z2a1vqaqmc",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in GUA (Guatemala City) datacenter on 2026-11-18 between 08:00 and 12:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "cq0sua5r8vrh",
+     "created_at": "2026-11-12T12:30:31.979Z",
+     "updated_at": "2026-11-12T12:30:31.979Z",
+     "display_at": "2026-11-12T12:30:31.979Z",
+     "affected_components": [
+      {
+       "code": "srz7zhpwynys",
+       "name": "North America - Guatemala City, Guatemala - (GUA)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "srz7zhpwynys",
+     "name": "Guatemala City, Guatemala - (GUA)",
+     "status": "operational",
+     "created_at": "2019-08-15T07:22:07.000Z",
+     "updated_at": "2026-11-13T13:29:30.779Z",
+     "position": 20,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-18T08:00:00.000Z",
+   "scheduled_until": "2026-11-18T12:00:00.000Z"
+  },
+  {
+   "id": "3s9fkmwosqjo",
+   "name": "NRT (Tokyo) on 2026-11-18",
+   "status": "scheduled",
+   "created_at": "2026-11-09T02:06:35.494Z",
+   "updated_at": "2026-11-10T01:11:34.724Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/3s9fkmwosqjo",
+   "started_at": "2026-11-18T17:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "vs43i7s5srsq",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in NRT (Tokyo) datacenter on 2026-11-18 between 17:00 and 23:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "3s9fkmwosqjo",
+     "created_at": "2026-11-09T02:06:35.494Z",
+     "updated_at": "2026-11-10T01:11:34.724Z",
+     "display_at": "2026-11-09T02:06:35.494Z",
+     "affected_components": [
+      {
+       "code": "rmjk2n758yzc",
+       "name": "Asia - Tokyo, Japan - (NRT)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "rmjk2n758yzc",
+     "name": "Tokyo, Japan - (NRT)",
+     "status": "operational",
+     "created_at": "2014-10-27T21:42:49.000Z",
+     "updated_at": "2026-11-13T19:00:16.061Z",
+     "position": 65,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "77867vxkttgw",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-18T17:00:00.000Z",
+   "scheduled_until": "2026-11-18T23:00:00.000Z"
+  },
+  {
+   "id": "tamb2j0a2q9a",
+   "name": "SIN (Singapore) on 2026-11-18",
+   "status": "scheduled",
+   "created_at": "2026-11-10T17:41:41.927Z",
+   "updated_at": "2026-11-10T17:41:41.927Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/tamb2j0a2q9a",
+   "started_at": "2026-11-18T18:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "0v1h7qfma9mu",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in SIN (Singapore) datacenter on 2026-11-18 between 18:00 and 22:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "tamb2j0a2q9a",
+     "created_at": "2026-11-10T17:41:41.927Z",
+     "updated_at": "2026-11-10T17:41:41.927Z",
+     "display_at": "2026-11-10T17:41:41.927Z",
+     "affected_components": [
+      {
+       "code": "18p6r93swmbl",
+       "name": "Asia - Singapore, Singapore - (SIN)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "18p6r93swmbl",
+     "name": "Singapore, Singapore - (SIN)",
+     "status": "under_maintenance",
+     "created_at": "2014-10-27T21:44:15.000Z",
+     "updated_at": "2026-11-13T18:33:30.772Z",
+     "position": 59,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "77867vxkttgw",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-18T18:00:00.000Z",
+   "scheduled_until": "2026-11-18T22:00:00.000Z"
+  },
+  {
+   "id": "eg60wd5v5fn7",
+   "name": "EWR (Newark) on 2026-11-19",
+   "status": "scheduled",
+   "created_at": "2026-10-28T18:09:57.180Z",
+   "updated_at": "2026-11-12T17:20:31.850Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/eg60wd5v5fn7",
+   "started_at": "2026-11-19T06:00:00.000Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "fltajstt2mm3",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in EWR (Newark) datacenter on 2026-11-19 between 06:00 and 14:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.",
+     "incident_id": "eg60wd5v5fn7",
+     "created_at": "2026-10-28T18:09:57.180Z",
+     "updated_at": "2026-11-12T17:20:31.850Z",
+     "display_at": "2026-10-28T18:09:57.180Z",
+     "affected_components": [
+      {
+       "code": "grpnztl4pd46",
+       "name": "North America - Newark, United States - (EWR)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "grpnztl4pd46",
+     "name": "Newark, United States - (EWR)",
+     "status": "operational",
+     "created_at": "2014-10-27T20:30:34.000Z",
+     "updated_at": "2026-11-12T13:00:20.417Z",
+     "position": 34,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "4l01sk5cdn5c",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-11-19T06:00:00.000Z",
+   "scheduled_until": "2026-11-19T14:00:00.000Z"
+  }
+ ],
+ "status": {
+  "indicator": "minor",
+  "description": "Partially Degraded Service"
+ }
+}

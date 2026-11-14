@@ -13,6 +13,7 @@ import { UserIcon } from "@/components/ui/user";
 import { CpuIcon } from "@/components/ui/cpu";
 import { BotMessageSquareIcon } from "@/components/ui/bot-message-square";
 import { RouterIcon } from "@/components/ui/router";
+import { EarthIcon } from "@/components/ui/earth";
 import { BellIcon } from "@/components/ui/bell";
 
 /** Contrato comum dos ícones do lucide-animated: animam sozinhos no hover ou sob comando via ref. */
@@ -38,6 +39,7 @@ const PAGES: Record<string, PageMeta> = {
   "/assistant/usage": { title: "Uso e limites da IA", icon: BotMessageSquareIcon },
   "/tools": { title: "Ferramentas de rede", icon: WrenchIcon },
   "/equipment": { title: "Equipamentos", icon: RouterIcon },
+  "/status": { title: "Status global", icon: EarthIcon },
   "/alerts": { title: "Alertas por e-mail", icon: BellIcon },
   "/settings": { title: "Configurações", icon: SettingsIcon },
   "/users": { title: "Usuários e acessos", icon: ShieldCheckIcon },

@@ -229,3 +229,73 @@ model Equipment {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
+/// Serviço externo exibido no painel "Status global" (GitHub, Cloudflare, Google Cloud...).
+model StatusService {
+  id             String    @id @default(cuid())
+  /// Identificador estável do catálogo (ex.: "github"); o coletor usa para atualizar sem duplicar.
+  slug           String    @unique
+  name           String
+  /// CLOUD | CDN | DEV | AI | SOCIAL | STREAMING | INTERNET
+  category       String
+  /// Fonte oficial: STATUSPAGE | GCP | AZURE_RSS | NONE
+  sourceType     String    @default("NONE")
+  /// Endereço base da API oficial (ex.: https://www.githubstatus.com).
+  sourceUrl      String?
+  /// Página pública de status, para o link no card.
+  pageUrl        String?
+  /// Status consolidado: OK | DEGRADED | DOWN | MAINTENANCE | UNKNOWN
+  status         String    @default("UNKNOWN")
+  /// Frase do provedor (ex.: "Partially Degraded Service").
+  officialStatus String?
+  /// Último erro ao consultar a fonte oficial (null = última consulta ok).
+  lastError      String?
+  lastCheckAt    DateTime?
+  lastChangeAt   DateTime?
+  /// Marcador de mudança da fonte (updated_at da Statuspage, ETag do Google/Azure).
+  sourceVersion  String?
+  enabled        Boolean   @default(true)
+  position       Int       @default(0)
+  components     StatusComponent[]
+  incidents      StatusIncident[]
+}
+
+/// Componente declarado pelo provedor (ex.: "Git Operations", "São Paulo, Brazil - (GRU)").
+model StatusComponent {
+  id         String   @id @default(cuid())
+  serviceId  String
+  externalId String
+  name       String
+  groupName  String?
+  /// OK | DEGRADED | DOWN | MAINTENANCE | UNKNOWN
+  status     String
+  position   Int      @default(0)
+  updatedAt  DateTime
+  service    StatusService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, externalId])
+}
+
+/// Incidente oficial (do provedor) ou detectado (pelos probes próprios). Mantido sem limite.
+model StatusIncident {
+  id         String    @id @default(cuid())
+  serviceId  String
+  /// OFFICIAL | DETECTED
+  origin     String
+  externalId String
+  title      String
+  /// MINOR | MAJOR | CRITICAL | MAINTENANCE
+  impact     String
+  /// investigating | identified | monitoring | resolved | scheduled | in_progress | completed
+  state      String
+  url        String?
+  /// Componentes/produtos afetados, separados por " · ".
+  affected   String?
+  startedAt  DateTime
+  resolvedAt DateTime?
+  updatedAt  DateTime  @updatedAt
+  service    StatusService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, origin, externalId])
+  @@index([resolvedAt])
+}
