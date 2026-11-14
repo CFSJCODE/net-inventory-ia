@@ -35,7 +35,8 @@ export function InternetHealthBar({ services, connectivity, onOpen }: { services
   const items = services.map((s) => {
     const style = SERVICE_STATUS_STYLE[s.status];
     return (
-      // flex-wrap: numa tela estreita o estado e o motivo descem juntos para a linha de baixo em vez de serem cortados.
+      // flex-wrap: numa tela estreita o estado e o motivo descem juntos para a linha de baixo, e o motivo
+      // quebra de linha se ainda não couber. Nada é cortado: no celular não há como passar o mouse para ler o resto.
       <button key={s.slug} type="button" onClick={() => onOpen(s.slug)} className="flex max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-4 text-left hover:text-foreground">
         <span className="flex shrink-0 items-center gap-2">
           <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", style.dot)} />
@@ -43,9 +44,9 @@ export function InternetHealthBar({ services, connectivity, onOpen }: { services
           <span className="tabular-nums">{formatLatency(s.latencyMs)}</span>
         </span>
         {s.status !== "OK" && (
-          <span className="flex min-w-0 items-center gap-2">
+          <span className="flex min-w-0 items-baseline gap-2">
             <span className={cn("shrink-0", style.text)}>{style.label}</span>
-            {s.measuredReason && <span className="truncate">{s.measuredReason}</span>}
+            {s.measuredReason && <span className="min-w-0 break-words">{s.measuredReason}</span>}
           </span>
         )}
       </button>
@@ -53,8 +54,9 @@ export function InternetHealthBar({ services, connectivity, onOpen }: { services
   });
 
   return (
-    <div className={cn("flex items-center overflow-hidden rounded-xl border text-sm", out ? SERVICE_STATUS_STYLE.DOWN.badge : "bg-card text-muted-foreground")}>
-      <span className={cn("flex shrink-0 items-center gap-2 self-stretch border-r px-3 text-xs font-semibold tracking-wide", !out && toneStyle.text)}>
+    // No celular o rótulo fica em cima, numa linha só, e o conteúdo usa a largura toda; a partir de `sm` ele vai para a esquerda.
+    <div className={cn("flex flex-col overflow-hidden rounded-xl border text-sm sm:flex-row sm:items-center", out ? SERVICE_STATUS_STYLE.DOWN.badge : "bg-card text-muted-foreground")}>
+      <span className={cn("flex shrink-0 items-center gap-2 border-b px-4 py-2 text-xs font-semibold tracking-wide sm:self-stretch sm:border-r sm:border-b-0 sm:px-3 sm:py-0", !out && toneStyle.text)}>
         <span className={cn("h-1.5 w-1.5 rounded-full", toneStyle.dot, tone !== "OK" && tone !== "UNKNOWN" && "animate-pulse")} />
         SUA INTERNET
       </span>

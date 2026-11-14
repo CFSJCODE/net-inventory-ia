@@ -41,35 +41,45 @@ function StatusPill({ status, className }: { status: ServiceStatus; className?: 
   );
 }
 
+/** O que a consulta anterior mostrou: o estado de cada serviço e o da conexão do próprio servidor. */
+interface SeenStatus {
+  states: Map<string, ServiceStatus>;
+  connection: LocalConnectivity["state"];
+}
+
+/** Avisa quando um serviço mudou para pior (ou voltou) desde a consulta anterior; "Sem dados" não é notícia. */
+function announceServiceChange(service: StatusServiceRow, was: ServiceStatus | undefined) {
+  const now = service.status;
+  if (!was || was === now || now === "UNKNOWN" || was === "UNKNOWN") return;
+  const description = service.measuredReason ?? service.officialStatus ?? undefined;
+  if (now === "DOWN") toast.error(`${service.name}: fora do ar`, { description, duration: 15_000 });
+  else if (now === "DEGRADED" && was === "OK") toast.warning(`${service.name}: degradado`, { description });
+  else if (now === "OK") toast.success(`${service.name}: normalizado`);
+}
+
+/** Compara a consulta nova com a anterior e avisa o que mudou: primeiro a conexão do servidor, depois os serviços. */
+function announceChanges(before: SeenStatus, data: GlobalStatusData) {
+  const wasOk = before.connection === "ok";
+  const isOk = data.connectivity.state === "ok";
+  if (wasOk && !isOk) toast.error("Sua Internet está fora", { description: data.connectivity.reason ?? undefined, duration: 15_000 });
+  else if (!wasOk && isOk) toast.success("Sua Internet voltou");
+  // Com a conexão fora, ou recém-mudada, as medições estão pausadas e viram "Sem dados": isso não é notícia do serviço.
+  if (!wasOk || !isOk) return;
+  for (const s of data.services) {
+    if (s.category !== INTERNET_CATEGORY) announceServiceChange(s, before.states.get(s.slug));
+  }
+}
+
 /**
  * Avisa na tela quando um serviço muda para pior (ou volta) entre duas consultas, e quando a conexão
  * do próprio servidor cai ou volta.
  */
 function useTransitionToasts(data: GlobalStatusData | undefined) {
-  const previous = useRef<{ states: Map<string, ServiceStatus>; connection: LocalConnectivity["state"] } | null>(null);
+  const previous = useRef<SeenStatus | null>(null);
   useEffect(() => {
     if (!data) return;
-    const before = previous.current;
-    const connection = data.connectivity.state;
-    if (before) {
-      const wasOk = before.connection === "ok";
-      const isOk = connection === "ok";
-      if (wasOk && !isOk) toast.error("Sua Internet está fora", { description: data.connectivity.reason ?? undefined, duration: 15_000 });
-      else if (!wasOk && isOk) toast.success("Sua Internet voltou");
-      // Com a conexão fora, ou recém-mudada, as medições estão pausadas e viram "Sem dados": isso não é notícia do serviço.
-      if (wasOk && isOk) {
-        for (const s of data.services) {
-          if (s.category === INTERNET_CATEGORY) continue;
-          const was = before.states.get(s.slug);
-          if (!was || was === s.status || s.status === "UNKNOWN" || was === "UNKNOWN") continue;
-          const description = s.measuredReason ?? s.officialStatus ?? undefined;
-          if (s.status === "DOWN") toast.error(`${s.name}: fora do ar`, { description, duration: 15_000 });
-          else if (s.status === "DEGRADED" && was === "OK") toast.warning(`${s.name}: degradado`, { description });
-          else if (s.status === "OK") toast.success(`${s.name}: normalizado`);
-        }
-      }
-    }
-    previous.current = { states: new Map(data.services.map((s) => [s.slug, s.status])), connection };
+    if (previous.current) announceChanges(previous.current, data);
+    previous.current = { states: new Map(data.services.map((s) => [s.slug, s.status])), connection: data.connectivity.state };
   }, [data]);
 }
 
@@ -169,13 +179,57 @@ function cardDescription(service: StatusServiceRow): string {
   return service.measuredReason ?? SERVICE_STATUS_STYLE[service.measuredStatus].label;
 }
 
-function ServiceCard({ service, onOpen }: { service: StatusServiceRow; onOpen: () => void }) {
-  const counts = service.componentCounts;
-  const total = Object.values(counts).reduce((a, b) => a + b, 0);
-  const affected = total - counts.OK;
-  const style = SERVICE_STATUS_STYLE[service.status];
+/** O estado oficial ao lado do medido e, quando a medição não está normal, o motivo. Só com fonte oficial. */
+function OfficialAndMeasured({ service }: { service: StatusServiceRow }) {
   const measured = service.measuredStatus;
+  if (!service.hasSource || !measured) return null;
   const official = service.officialState ?? "UNKNOWN";
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span>
+          oficial: <span className={SERVICE_STATUS_STYLE[official].text}>{SERVICE_STATUS_STYLE[official].label}</span> · medido:{" "}
+          <span className={SERVICE_STATUS_STYLE[measured].text}>{SERVICE_STATUS_STYLE[measured].label}</span>
+        </span>
+        {isWorseThanOfficial(service.officialState, measured) && (
+          <Badge variant="outline" className={cn("font-normal", SERVICE_STATUS_STYLE.DEGRADED.badge)}>
+            Sem aviso oficial
+          </Badge>
+        )}
+      </div>
+      {/* Sem fonte oficial o motivo já está na frase sob o nome; aqui ele não se repete. */}
+      {measured !== "OK" && service.measuredReason && (
+        <p className={cn("line-clamp-2", measured !== "UNKNOWN" && SERVICE_STATUS_STYLE[measured].text)}>{service.measuredReason}</p>
+      )}
+    </>
+  );
+}
+
+/** Barra proporcional dos componentes que a fonte oficial publica: verde = normais, demais cores = afetados. */
+function ComponentsBar({ counts }: { counts: StatusServiceRow["componentCounts"] }) {
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  if (!total) return null;
+  const affected = total - counts.OK;
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-800">
+        {(["OK", "MAINTENANCE", "DEGRADED", "DOWN"] as ServiceStatus[]).map((s) =>
+          counts[s] ? <span key={s} className={SERVICE_STATUS_STYLE[s].dot} style={{ width: `${(counts[s] / total) * 100}%` }} /> : null,
+        )}
+      </div>
+      <span className="shrink-0 tabular-nums">{affected ? `${affected} de ${total} afetados` : `${total} componentes ok`}</span>
+    </div>
+  );
+}
+
+function openIncidentsText(open: number): string {
+  if (!open) return "Sem incidentes abertos";
+  const plural = open > 1 ? "s" : "";
+  return `${open} incidente${plural} aberto${plural}`;
+}
+
+function ServiceCard({ service, onOpen }: { service: StatusServiceRow; onOpen: () => void }) {
+  const style = SERVICE_STATUS_STYLE[service.status];
   return (
     <Card size="sm" className={cn("relative transition-colors hover:ring-primary/40", service.status === "DOWN" && "ring-red-900")}>
       <CardHeader>
@@ -198,34 +252,8 @@ function ServiceCard({ service, onOpen }: { service: StatusServiceRow; onOpen: (
           )}
           <Reading label="Disponibilidade 24 h" value={formatUptime(service.uptime24h)} className="text-right" />
         </div>
-        {service.hasSource && measured && (
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span>
-              oficial: <span className={SERVICE_STATUS_STYLE[official].text}>{SERVICE_STATUS_STYLE[official].label}</span> · medido:{" "}
-              <span className={SERVICE_STATUS_STYLE[measured].text}>{SERVICE_STATUS_STYLE[measured].label}</span>
-            </span>
-            {isWorseThanOfficial(service.officialState, measured) && (
-              <Badge variant="outline" className={cn("font-normal", SERVICE_STATUS_STYLE.DEGRADED.badge)}>
-                Sem aviso oficial
-              </Badge>
-            )}
-          </div>
-        )}
-        {/* Sem fonte oficial o motivo já está na frase sob o nome; aqui ele não se repete. */}
-        {service.hasSource && measured && measured !== "OK" && service.measuredReason && (
-          <p className={cn("line-clamp-2", measured !== "UNKNOWN" && SERVICE_STATUS_STYLE[measured].text)}>{service.measuredReason}</p>
-        )}
-        {total > 0 && (
-          <div className="flex items-center gap-2">
-            {/* Barra proporcional: verde = componentes normais, demais cores = afetados. */}
-            <div className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-800">
-              {(["OK", "MAINTENANCE", "DEGRADED", "DOWN"] as ServiceStatus[]).map((s) =>
-                counts[s] ? <span key={s} className={SERVICE_STATUS_STYLE[s].dot} style={{ width: `${(counts[s] / total) * 100}%` }} /> : null,
-              )}
-            </div>
-            <span className="shrink-0 tabular-nums">{affected ? `${affected} de ${total} afetados` : `${total} componentes ok`}</span>
-          </div>
-        )}
+        <OfficialAndMeasured service={service} />
+        <ComponentsBar counts={service.componentCounts} />
         {service.problemComponents.length > 0 && (
           <ul className="flex flex-col gap-0.5">
             {service.problemComponents.slice(0, 3).map((c) => (
@@ -238,9 +266,7 @@ function ServiceCard({ service, onOpen }: { service: StatusServiceRow; onOpen: (
         )}
         <div className="mt-auto flex items-center justify-between gap-2 pt-1">
           {service.hasSource ? (
-            <span className={cn(service.openIncidents ? style.text : undefined)}>
-              {service.openIncidents ? `${service.openIncidents} incidente${service.openIncidents > 1 ? "s" : ""} aberto${service.openIncidents > 1 ? "s" : ""}` : "Sem incidentes abertos"}
-            </span>
+            <span className={cn(service.openIncidents ? style.text : undefined)}>{openIncidentsText(service.openIncidents)}</span>
           ) : (
             <span>Só medições deste servidor</span>
           )}
