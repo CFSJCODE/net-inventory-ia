@@ -509,10 +509,26 @@ describe("lista de alvos em memória", () => {
       expect(hydrate(wasDown)).toMatchObject({ status: "UNKNOWN", reason: pausedReason("offline"), ring: [], beforePause: { status: "DOWN", reason: "3 falhas seguidas" } });
       expect(hydrate([check(false), check(false), check(true)]).beforePause).toEqual({ status: "DEGRADED", reason: "2 falhas seguidas" });
       expect(hydrate([check(true), check(false), check(false)]).beforePause).toEqual({ status: "OK", reason: null });
-      // O certificado vencido não depende da linha de base, que não existe mais para aquela hora.
+      // O certificado vencido não depende da linha de base.
       expect(hydrate([{ ...check(true), certDays: -3 }]).beforePause).toEqual({ status: "DEGRADED", reason: "certificado vencido" });
       // Só as 5 mais novas contam: a sexta, mais velha, não muda o veredito.
       expect(hydrate([check(true), check(true), check(true), check(true), check(true), check(false)]).beforePause).toEqual({ status: "OK", reason: null });
+    });
+
+    it("o alvo que estava lento volta como degradado: as últimas medições são julgadas pela linha de base de agora", () => {
+      const slow = [check(true, 200), check(true, 200), check(true, 200), check(true, 20), check(true, 20)];
+      // 1 h de janelas de 5 min em 20 ms: o mínimo para julgar latência.
+      const hourAt20 = Array.from({ length: 12 }, () => 20);
+      const before = (lastChecks: RecentCheck[], baseline?: number[]) => hydrateTarget(stored, { checks: [], everOk: false, lastChecks, baseline }, T0).beforePause;
+
+      expect(before(slow, hourAt20)).toEqual({ status: "DEGRADED", reason: "latência 10,0× acima do normal (200 ms)" });
+      // A mesma latência dentro do normal do alvo não é degradação.
+      expect(before(slow, Array.from({ length: 12 }, () => 180))).toEqual({ status: "OK", reason: null });
+      // Menos de 1 h de janelas (ou nenhuma) não é linha de base: a latência não conta.
+      expect(before(slow, hourAt20.slice(1))).toEqual({ status: "OK", reason: null });
+      expect(before(slow)).toEqual({ status: "OK", reason: null });
+      // As falhas seguidas passam na frente da latência.
+      expect(before(wasDown, hourAt20)).toEqual({ status: "DOWN", reason: "3 falhas seguidas" });
     });
 
     it("sem nenhuma medição guardada não há veredito a recuperar", () => {

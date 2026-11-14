@@ -190,6 +190,8 @@ beforeEach(() => {
   db.rollupError = null;
   history.__globalStatusHistory = undefined;
   vi.clearAllMocks();
+  // clearAllMocks não desfaz um mockReturnValue: sem isto, a conexão "offline" de um teste valeria nos seguintes.
+  mocks.getLocalConnectivity.mockReturnValue({ state: "ok", since: null, reason: null });
   at(T);
 });
 

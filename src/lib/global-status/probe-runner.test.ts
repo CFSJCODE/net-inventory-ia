@@ -48,9 +48,12 @@ async function leaveMeasuredState(): Promise<void> {
   await db.probeRollup.create({ data: { targetId: github.targets[1].id, vantage: "server", bucket: T0, samples: 10, failures: 0, p50Ms: 470, p95Ms: 490 } });
 }
 
-/** Espera a limpeza que o agendador dispara ao subir desligado: ela entra na fila de escrita depois de conferir o catálogo. */
+/**
+ * Espera a limpeza que o agendador dispara ao subir desligado: ela entra na fila de escrita depois de conferir o catálogo.
+ * O prazo da espera é menor que o do teste: se a limpeza não vier, a falha diz quantas gravações faltaram.
+ */
 async function cleared(transaction: { mock: { calls: unknown[] } }, times = 1): Promise<void> {
-  await vi.waitFor(() => expect(transaction.mock.calls.length).toBeGreaterThanOrEqual(times), { timeout: 5_000, interval: 20 });
+  await vi.waitFor(() => expect(transaction.mock.calls.length).toBeGreaterThanOrEqual(times), { timeout: 4_000, interval: 20 });
   await serialized(async () => undefined);
 }
 
@@ -111,6 +114,36 @@ async function ageChecks(minutes: number): Promise<void> {
 /** `count` passos seguidos medindo todos os alvos. */
 async function rounds(count: number): Promise<void> {
   for (let i = 0; i < count; i++) await runProbeTick({ force: true });
+}
+
+/** O catálogo de verdade tem a faixa "Sua Internet" (gateway, DNS do sistema e três resolvedores públicos); os serviços com fonte oficial estão normais nela. */
+async function withInternetStrip(): Promise<void> {
+  const real = (await vi.importActual<typeof import("./catalog")>("./catalog")).STATUS_CATALOG;
+  fixture.catalog.push(...real.filter((entry) => entry.category === "INTERNET"));
+  state.__globalStatusSeed = undefined;
+  await ensureCatalogSeeded();
+  await db.statusService.updateMany({ where: { sourceType: { not: "NONE" } }, data: { officialState: "OK", officialStatus: "All Systems Operational" } });
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+}
+
+/** A conexão do servidor cai e a pausa é gravada; o servidor fica 30 min parado e, quando sobe, a conexão já voltou. */
+async function outageWithRestart(page: ReturnType<typeof openPage>): Promise<void> {
+  link = "fora";
+  await rounds(1);
+  await page.see();
+  restart();
+  await ageChecks(30);
+  link = "ok";
+}
+
+/** As três rodadas seguintes à volta da conexão: o que o card do GitHub mostra depois de cada uma. */
+async function githubAfterReturn(page: ReturnType<typeof openPage>): Promise<string[]> {
+  const cards: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    await rounds(1);
+    cards.push(await page.github());
+  }
+  return cards;
 }
 
 beforeAll(async () => {
@@ -242,7 +275,9 @@ describe("medições desligadas (GLOBAL_STATUS_PROBES=off)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     startProbeRunner();
-    await cleared(transaction, 2);
+    // A espera termina quando a limpeza chega ao banco ou quando o agendador desiste dela: aí é o aviso que conta o motivo.
+    await vi.waitFor(() => expect(transaction.mock.calls.length >= 2 || warn.mock.calls.length > 0).toBe(true), { timeout: 4_000, interval: 20 });
+    await serialized(async () => undefined);
 
     expect(warn).not.toHaveBeenCalled();
     expect(await serviceOf("github")).toMatchObject({ status: "OK", measuredStatus: null, measuredReason: null, latencyMs: null });
@@ -269,6 +304,9 @@ describe("medições desligadas (GLOBAL_STATUS_PROBES=off)", () => {
 });
 
 describe("medições ligadas", () => {
+  const STILL_DOWN = "DOWN HTTP: sem resposta nas últimas 5 medições";
+  const ONLY_THE_CONNECTION = ["Sua Internet está fora", "Sua Internet voltou"];
+
   it("ao subir, arma o primeiro passo e não apaga nada do que está gravado", async () => {
     await leaveMeasuredState();
     const transaction = vi.spyOn(db, "$transaction");
@@ -288,34 +326,15 @@ describe("medições ligadas", () => {
   });
 
   describe("serviço que já estava fora do ar quando a conexão do servidor caiu", () => {
-    const STILL_DOWN = "DOWN HTTP: sem resposta nas últimas 5 medições";
-    const ONLY_THE_CONNECTION = ["Sua Internet está fora", "Sua Internet voltou"];
-
     beforeEach(async () => {
-      // O catálogo de verdade tem a faixa "Sua Internet" (gateway, DNS do sistema e três resolvedores públicos).
-      const real = (await vi.importActual<typeof import("./catalog")>("./catalog")).STATUS_CATALOG;
-      fixture.catalog.push(...real.filter((entry) => entry.category === "INTERNET"));
-      state.__globalStatusSeed = undefined;
-      await ensureCatalogSeeded();
-      await db.statusService.updateMany({ where: { sourceType: { not: "NONE" } }, data: { officialState: "OK", officialStatus: "All Systems Operational" } });
+      await withInternetStrip();
       fixture.runProbe.mockImplementation(async (spec: { kind: string; host: string }) => githubHttpDown(spec));
-      vi.spyOn(console, "warn").mockImplementation(() => undefined);
     });
 
     /** O processo de antes: cinco rodadas com o HTTP do GitHub em 503, e a página já mostrou o GitHub fora do ar. */
     async function githubAlreadyDown(page: ReturnType<typeof openPage>): Promise<void> {
       await rounds(5);
       expect(await page.github()).toBe(STILL_DOWN);
-    }
-
-    /** As três rodadas seguintes à volta da conexão: o que o card do GitHub mostra depois de cada uma. */
-    async function githubAfterReturn(page: ReturnType<typeof openPage>): Promise<string[]> {
-      const cards: string[] = [];
-      for (let i = 0; i < 3; i++) {
-        await rounds(1);
-        cards.push(await page.github());
-      }
-      return cards;
     }
 
     it("sem reinício: a página só avisa da conexão, e o GitHub segue fora do ar sem aviso novo", async () => {
@@ -407,6 +426,116 @@ describe("medições ligadas", () => {
       await githubAfterReturn(page);
 
       expect(page.notices).toEqual([...ONLY_THE_CONNECTION, "Discord: degradado", "Discord: fora do ar"]);
+    });
+  });
+
+  describe("veredito de antes da pausa refeito ao reiniciar: valem as medições mais novas do alvo, falhas ou não", () => {
+    let githubHttp: "ok" | "503";
+
+    beforeEach(async () => {
+      await withInternetStrip();
+      githubHttp = "ok";
+      fixture.runProbe.mockImplementation(async (spec: { kind: string; host: string }) => (githubHttp === "503" ? githubHttpDown(spec) : answering()));
+    });
+
+    it("o GitHub respondia antes de cair: as medições boas, mais velhas, não apagam a queda", async () => {
+      const page = openPage();
+      await rounds(5);
+      githubHttp = "503";
+      await rounds(5);
+      expect(await page.github()).toBe(STILL_DOWN);
+      await outageWithRestart(page);
+
+      expect(await githubAfterReturn(page)).toEqual([STILL_DOWN, STILL_DOWN, "DOWN HTTP: 3 falhas seguidas"]);
+      expect(page.notices).toEqual(ONLY_THE_CONNECTION);
+    });
+
+    it("o GitHub tinha caído e já estava normal de novo: a queda antiga não vira o veredito de antes da pausa", async () => {
+      const page = openPage();
+      githubHttp = "503";
+      await rounds(3);
+      githubHttp = "ok";
+      await rounds(5);
+      expect(await page.github()).toBe("OK null");
+      await outageWithRestart(page);
+      // A primeira medição depois da volta falha: uma falha só, partindo de normal, não muda o card.
+      githubHttp = "503";
+      await rounds(1);
+
+      expect(await page.github()).toBe("OK null");
+      expect(page.notices).toEqual(ONLY_THE_CONNECTION);
+    });
+  });
+
+  describe("serviço que estava lento quando a conexão do servidor caiu e para de responder depois da volta", () => {
+    const SLOW = "DEGRADED TCP 443: latência 10,0× acima do normal (200 ms)";
+    // O card não passa por "normal": segue degradado até a terceira falha, e a página só anuncia a queda de verdade.
+    const SLOW_THEN_DOWN = [SLOW, "DEGRADED TCP 443: 2 falhas seguidas", "DOWN TCP 443: 3 falhas seguidas"];
+    const ONE_REAL_OUTAGE = [...ONLY_THE_CONNECTION, "GitHub: fora do ar"];
+    let githubTcp: "lento" | "mudo";
+
+    beforeEach(async () => {
+      await withInternetStrip();
+      githubTcp = "lento";
+      fixture.runProbe.mockImplementation(async (spec: { kind: string; host: string }) => {
+        if (link === "fora" || spec.kind !== "TCP" || spec.host !== "github.com") return answering();
+        return githubTcp === "lento" ? { ok: true, latencyMs: 200 } : { ok: false, latencyMs: null, error: "prazo esgotado", failedAt: "connect" };
+      });
+      // A linha de base do TCP do GitHub: 18 janelas de 5 min em 20 ms, a mais nova de 20 min atrás.
+      const tcp = await db.probeTarget.findFirstOrThrow({ where: { key: "tcp", service: { slug: "github" } } });
+      const window = 5 * 60_000;
+      const newest = Math.floor(Date.now() / window) * window - 4 * window;
+      await db.probeRollup.createMany({ data: Array.from({ length: 18 }, (_, i) => ({ targetId: tcp.id, vantage: "server", bucket: new Date(newest - i * window), samples: 10, failures: 0, p50Ms: 20, p95Ms: 22 })) });
+    });
+
+    /** O processo de antes: cinco rodadas com o TCP do GitHub em 200 ms, e a página já mostrou o GitHub degradado. */
+    async function githubAlreadySlow(page: ReturnType<typeof openPage>): Promise<void> {
+      await rounds(5);
+      expect(await page.github()).toBe(SLOW);
+    }
+
+    it("sem reinício: a página avisa da conexão e, depois, só da queda de verdade", async () => {
+      const page = openPage();
+      await githubAlreadySlow(page);
+      link = "fora";
+      await rounds(1);
+      await page.see();
+      link = "ok";
+      await rounds(1);
+      await page.see();
+      githubTcp = "mudo";
+
+      expect(await githubAfterReturn(page)).toEqual(SLOW_THEN_DOWN);
+      expect(page.notices).toEqual(ONE_REAL_OUTAGE);
+    });
+
+    it("a conexão voltou enquanto o servidor estava parado: os mesmos avisos, sem \"normalizado\" nem \"degradado\" falsos", async () => {
+      const page = openPage();
+      await githubAlreadySlow(page);
+      await outageWithRestart(page);
+      githubTcp = "mudo";
+
+      expect(await githubAfterReturn(page)).toEqual(SLOW_THEN_DOWN);
+      expect(page.notices).toEqual(ONE_REAL_OUTAGE);
+    });
+
+    it("o servidor reinicia com a pausa já gravada e a conexão ainda fora: os mesmos avisos", async () => {
+      const page = openPage();
+      await githubAlreadySlow(page);
+      link = "fora";
+      await rounds(1);
+      await page.see();
+      restart();
+      await ageChecks(30);
+      await rounds(1);
+      expect((await page.see()).connectivity.state).toBe("offline");
+      link = "ok";
+      await rounds(1);
+      await page.see();
+      githubTcp = "mudo";
+
+      expect(await githubAfterReturn(page)).toEqual(SLOW_THEN_DOWN);
+      expect(page.notices).toEqual(ONE_REAL_OUTAGE);
     });
   });
 

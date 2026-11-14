@@ -301,6 +301,8 @@ export interface TargetHistory {
   everOk: boolean;
   /** Só para o alvo gravado como pausado: as últimas medições dele, de qualquer idade, mais nova primeiro. */
   lastChecks?: readonly RecentCheck[];
+  /** Linha de base de latência do alvo (medianas das janelas das últimas 24 h), para julgar `lastChecks`. */
+  baseline?: readonly number[];
 }
 
 /**
@@ -308,13 +310,16 @@ export interface TargetHistory {
  * alguma vez. Um alvo que o banco guarda como pausado (o servidor parou durante uma queda da conexão
  * local) recebe também o veredito de antes da pausa, recalculado a partir de `lastChecks`: durante a
  * pausa nada foi medido, então as últimas medições dele, por velhas que sejam, são as de antes dela.
- * A linha de base daquela hora não existe mais, e por isso só contam as regras que não dependem dela
- * (falhas seguidas, certificado vencido, perda de pacotes).
+ * Elas são julgadas pela linha de base de agora: nenhuma medição do alvo foi gravada durante a pausa,
+ * então as janelas que ela tem são as de antes da queda, e é por ela que um alvo que estava lento volta
+ * como degradado. Sem linha de base suficiente (alvo com menos de 1 h de janelas, ou uma pausa de quase
+ * um dia, que tira as janelas das últimas 24 h) só contam as regras que não dependem dela: falhas
+ * seguidas, certificado vencido e perda de pacotes.
  */
 export function hydrateTarget(state: TargetState, history: TargetHistory, now: number): TargetState {
   const hydrated = { ...state, ring: initialRing(history.checks, state.intervalSec, now), everOk: history.everOk };
   if (!isPausedTarget(state) || !history.lastChecks?.length) return hydrated;
-  return { ...hydrated, beforePause: evaluateTarget([...history.lastChecks], []) };
+  return { ...hydrated, beforePause: evaluateTarget([...history.lastChecks], [...(history.baseline ?? [])]) };
 }
 
 /**

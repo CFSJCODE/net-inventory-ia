@@ -1178,6 +1178,9 @@ describe.skipIf(!certificate)("HTTPS e TLS com certificado autoassinado (precisa
   });
 
   it("probeTls manda o SNI com o nome e não manda com IP", async () => {
+    // O servidor registra o handshake um instante depois de a sonda dar a medição por terminada: sem esperar as conexões
+    // do teste anterior fecharem, o SNI de uma delas entraria na lista deste teste.
+    expect(await waitFor(() => secure!.sockets.size === 0)).toBe(true);
     serverNames.length = 0;
     expect(await probeTls("localhost", port())).toMatchObject({ ok: true });
     expect(await probeTls("127.0.0.1", port())).toMatchObject({ ok: true, dnsMs: null });
