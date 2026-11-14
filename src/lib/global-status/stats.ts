@@ -142,34 +142,54 @@ export function latencyLimit(baseline: number[]): { median: number; limit: numbe
 export function evaluateTarget(recent: RecentCheck[], baseline: number[], options: { certWarningDays?: number } = {}): TargetVerdict {
   const window = recent.slice(0, WINDOW_SIZE);
   if (!window.length) return { status: "UNKNOWN", reason: null };
+  return (
+    failureVerdict(window) ??
+    certVerdict(window[0], options.certWarningDays ?? CERT_WARNING_DAYS) ??
+    lossVerdict(window) ??
+    latencyVerdict(window, baseline) ?? { status: "OK", reason: null }
+  );
+}
 
+// Cada regra abaixo devolve o veredito quando se aplica, ou null para a regra seguinte decidir.
+
+/** Falhas seguidas, contadas a partir da medição mais nova. */
+function failureVerdict(window: RecentCheck[]): TargetVerdict | null {
   const firstOk = window.findIndex((c) => c.ok);
   const failures = firstOk === -1 ? window.length : firstOk;
   if (failures >= FAILURES_TO_DOWN) {
     return { status: "DOWN", reason: failures >= WINDOW_SIZE ? `sem resposta nas últimas ${failures} medições` : `${failures} falhas seguidas` };
   }
   if (failures >= FAILURES_TO_DEGRADED) return { status: "DEGRADED", reason: `${failures} falhas seguidas` };
+  return null;
+}
 
-  const latest = window[0];
-  const certWarningDays = options.certWarningDays ?? CERT_WARNING_DAYS;
-  if (latest.certDays !== null && latest.certDays < certWarningDays) {
-    const reason = latest.certDays < 0 ? "certificado vencido" : latest.certDays === 0 ? "certificado vence hoje" : `certificado vence em ${latest.certDays} dia${latest.certDays === 1 ? "" : "s"}`;
-    return { status: "DEGRADED", reason };
-  }
+/** Certificado da medição mais nova vencido ou perto de vencer. */
+function certVerdict(latest: RecentCheck, warningDays: number): TargetVerdict | null {
+  const days = latest.certDays;
+  if (days === null || !(days < warningDays)) return null;
+  return { status: "DEGRADED", reason: certReason(days) };
+}
 
+function certReason(days: number): string {
+  if (days < 0) return "certificado vencido";
+  if (days === 0) return "certificado vence hoje";
+  return `certificado vence em ${days} dia${days === 1 ? "" : "s"}`;
+}
+
+/** Perda média de pacotes na janela, entre as medições que informam perda. */
+function lossVerdict(window: RecentCheck[]): TargetVerdict | null {
   const losses = window.map((c) => c.lossPct).filter((v): v is number => v !== null);
-  if (losses.length) {
-    const loss = losses.reduce((a, b) => a + b, 0) / losses.length;
-    if (loss > LOSS_DEGRADED_PCT) return { status: "DEGRADED", reason: `perda de ${Math.round(loss)}% dos pacotes` };
-  }
+  if (!losses.length) return null;
+  const loss = losses.reduce((a, b) => a + b, 0) / losses.length;
+  return loss > LOSS_DEGRADED_PCT ? { status: "DEGRADED", reason: `perda de ${Math.round(loss)}% dos pacotes` } : null;
+}
 
+/** Latência sustentada: a mediana da janela acima do limite da linha de base. */
+function latencyVerdict(window: RecentCheck[], baseline: number[]): TargetVerdict | null {
   const latencies = window.filter((c) => c.ok).map((c) => c.latencyMs).filter((v): v is number => v !== null);
   const base = latencyLimit(baseline);
-  if (base && latencies.length >= 3) {
-    const current = median(latencies)!;
-    if (current > base.limit && base.median > 0) {
-      return { status: "DEGRADED", reason: `latência ${(current / base.median).toFixed(1).replace(".", ",")}× acima do normal (${Math.round(current)} ms)` };
-    }
-  }
-  return { status: "OK", reason: null };
+  if (!base || latencies.length < 3) return null;
+  const current = median(latencies)!;
+  if (!(current > base.limit && base.median > 0)) return null;
+  return { status: "DEGRADED", reason: `latência ${(current / base.median).toFixed(1).replace(".", ",")}× acima do normal (${Math.round(current)} ms)` };
 }
