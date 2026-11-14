@@ -101,11 +101,11 @@ vi.mock("@/lib/prisma", () => {
         ),
       },
       probeRollup: {
-        findMany: record("probeRollup.findMany", ({ where }) => {
+        findMany: record("probeRollup.findMany", ({ where = {} }) => {
           if (db.rollupError) throw new Error(db.rollupError);
-          const ids = (where?.targetId as { in: string[] }).in;
-          const from = (where?.bucket as { gte: Date }).gte;
-          return (db.rollups as RollupRow[]).filter((r) => ids.includes(r.targetId) && r.bucket >= from);
+          // A consulta de verdade sempre filtra pelos alvos e pelo começo do período; sem um dos dois o teste quebra aqui.
+          const { targetId, bucket } = where as { targetId: { in: string[] }; bucket: { gte: Date } };
+          return (db.rollups as RollupRow[]).filter((r) => targetId.in.includes(r.targetId) && r.bucket >= bucket.gte);
         }),
       },
       probeCheck: {
