@@ -231,6 +231,19 @@ export async function seedStatusCatalog(): Promise<void> {
   g.__globalStatusSeeded = true;
 }
 
+/**
+ * Garante o catálogo gravado antes de qualquer leitura ou medição. O coletor, as medições e a primeira
+ * abertura da página pedem ao mesmo tempo: todos esperam a mesma gravação (uma por processo).
+ */
+export function ensureCatalogSeeded(): Promise<void> {
+  const state = globalThis as typeof globalThis & { __globalStatusSeed?: Promise<void> };
+  state.__globalStatusSeed ??= seedStatusCatalog().catch((err) => {
+    state.__globalStatusSeed = undefined;
+    throw err;
+  });
+  return state.__globalStatusSeed;
+}
+
 /** Uma rodada de consulta a todas as fontes. `force` ignora intervalos, cache de versão e backoff. */
 export function checkGlobalStatus(force = false): Promise<void> {
   if (g.__globalStatusRun) return g.__globalStatusRun;
