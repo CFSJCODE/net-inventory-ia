@@ -248,6 +248,14 @@ model StatusService {
   status         String    @default("UNKNOWN")
   /// Frase do provedor (ex.: "Partially Degraded Service").
   officialStatus String?
+  /// Status declarado pelo provedor (OK | DEGRADED | DOWN | MAINTENANCE | UNKNOWN); null = sem fonte oficial.
+  officialState  String?
+  /// Status medido pelos probes próprios; null = sem probes.
+  measuredStatus String?
+  /// Motivo do status medido (ex.: "3 falhas seguidas no HTTP", "latência 4× acima do normal").
+  measuredReason String?
+  /// Latência de rede mais recente (TCP connect ou ICMP), em ms.
+  latencyMs      Float?
   /// Último erro ao consultar a fonte oficial (null = última consulta ok).
   lastError      String?
   lastCheckAt    DateTime?
@@ -258,6 +266,7 @@ model StatusService {
   position       Int       @default(0)
   components     StatusComponent[]
   incidents      StatusIncident[]
+  targets        ProbeTarget[]
 }
 
 /// Componente declarado pelo provedor (ex.: "Git Operations", "São Paulo, Brazil - (GRU)").
@@ -298,4 +307,76 @@ model StatusIncident {
 
   @@unique([serviceId, origin, externalId])
   @@index([resolvedAt])
+}
+
+/// Alvo de medição própria de um serviço (HTTP, TCP, ICMP, DNS ou certificado TLS).
+model ProbeTarget {
+  id            String    @id @default(cuid())
+  serviceId     String
+  /// Chave estável dentro do serviço (ex.: "http", "tcp443"); o catálogo atualiza sem duplicar.
+  key           String
+  /// HTTP | TCP | ICMP | DNS | TLS
+  kind          String
+  /// Host, IP, "auto:gateway" (gateway padrão) ou o servidor DNS consultado.
+  host          String
+  /// HTTP: URL completa. DNS: nome consultado.
+  url           String?
+  port          Int?
+  intervalSec   Int       @default(60)
+  enabled       Boolean   @default(true)
+  /// OK | DEGRADED | DOWN | UNKNOWN, recalculado a cada medição.
+  status        String    @default("UNKNOWN")
+  statusReason  String?
+  lastCheckAt   DateTime?
+  lastLatencyMs Float?
+  lastError     String?
+  service       StatusService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  checks        ProbeCheck[]
+  rollups       ProbeRollup[]
+
+  @@unique([serviceId, key])
+}
+
+/// Medição crua; apagada após 48 h.
+model ProbeCheck {
+  id         Int      @id @default(autoincrement())
+  targetId   String
+  /// "server" (onde o painel roda) ou o id do agente Windows (fase 3).
+  vantage    String   @default("server")
+  at         DateTime @default(now())
+  ok         Boolean
+  /// Métrica principal do tipo: HTTP = primeiro byte, TCP = handshake, ICMP = RTT médio, DNS = resolução, TLS = handshake.
+  latencyMs  Float?
+  httpStatus Int?
+  dnsMs      Float?
+  connectMs  Float?
+  tlsMs      Float?
+  ttfbMs     Float?
+  totalMs    Float?
+  lossPct    Float?
+  jitterMs   Float?
+  certDays   Int?
+  error      String?
+  target     ProbeTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([targetId, at])
+  @@index([at])
+}
+
+/// Agregado de 5 min; mantido 30 dias. Alimenta sparklines, uptime e a linha de base.
+model ProbeRollup {
+  targetId String
+  vantage  String
+  /// Início da janela de 5 min.
+  bucket   DateTime
+  samples  Int
+  failures Int
+  p50Ms    Float?
+  p95Ms    Float?
+  maxMs    Float?
+  lossPct  Float?
+  target   ProbeTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@id([targetId, vantage, bucket])
+  @@index([bucket])
 }

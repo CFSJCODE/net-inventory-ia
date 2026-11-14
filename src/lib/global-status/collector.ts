@@ -1,10 +1,12 @@
-import type { StatusService } from "@prisma/client";
+import type { Prisma, StatusService } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { STATUS_CATALOG } from "./catalog";
+import { DEFAULT_INTERVAL_SEC, STATUS_CATALOG, type CatalogEntry } from "./catalog";
 import { parseStatuspageSummary, statuspageVersion, type SpSummary } from "./adapters/statuspage";
 import { parseGcpIncidents } from "./adapters/gcp";
 import { parseAzureRss } from "./adapters/azure-rss";
-import type { OfficialSnapshot, ServiceStatus } from "./types";
+import { CLEARED_TARGET_DATA, endpointChanged, probesEnabled, unsourcedServiceData } from "./probe-logic";
+import { combineStatus, type OfficialSnapshot, type ServiceStatus } from "./types";
+import { serialized } from "./write-queue";
 
 /**
  * Coletor do status oficial dos serviços globais. Roda em segundo plano (instrumentation), no mesmo
@@ -37,8 +39,6 @@ const g = globalThis as typeof globalThis & {
   __globalStatusTimer?: NodeJS.Timeout;
   __globalStatusRun?: Promise<void>;
   __globalStatusSources?: Map<string, SourceState>;
-  __globalStatusSeeded?: boolean;
-  __globalStatusWrites?: Promise<unknown>;
 };
 
 function sourceState(slug: string): SourceState {
@@ -73,11 +73,18 @@ async function get(url: string, version?: string | null): Promise<Response> {
 /** Resultado de uma consulta: um snapshot novo, ou "nada mudou" (só atualiza a hora da checagem). */
 type FetchResult = { kind: "snapshot"; snapshot: OfficialSnapshot; version: string | null } | { kind: "unchanged" };
 
+/**
+ * O provedor ainda não tem estado declarado gravado: antes da primeira consulta (null) ou depois de
+ * falhas seguidas ("UNKNOWN"). O que conta é o estado oficial, não o status do card, que agora junta
+ * as medições próprias.
+ */
+const officialUnknown = (service: StatusService) => !service.officialState || service.officialState === "UNKNOWN";
+
 async function fetchStatuspage(service: StatusService, state: SourceState, force: boolean): Promise<FetchResult> {
   const base = service.sourceUrl!.replace(/\/$/, "");
   const fresh = Date.now() - state.lastFetchAt < SUMMARY_MAX_AGE_MS;
   // Saindo de "Sem dados" sempre baixa o summary: a versão guardada pode ser igual e o status ficaria preso.
-  if (!force && fresh && service.sourceVersion && service.status !== "UNKNOWN") {
+  if (!force && fresh && service.sourceVersion && !officialUnknown(service)) {
     const light = (await (await get(`${base}/api/v2/status.json`)).json()) as SpSummary;
     if (statuspageVersion(light) === service.sourceVersion) return { kind: "unchanged" };
   }
@@ -87,7 +94,7 @@ async function fetchStatuspage(service: StatusService, state: SourceState, force
 }
 
 async function fetchWithEtag(service: StatusService, url: string, parse: (body: string) => OfficialSnapshot): Promise<FetchResult> {
-  const res = await get(url, service.status === "UNKNOWN" ? null : service.sourceVersion);
+  const res = await get(url, officialUnknown(service) ? null : service.sourceVersion);
   if (res.status === 304) return { kind: "unchanged" };
   const body = await res.text();
   const etag = res.headers.get("etag");
@@ -114,16 +121,30 @@ async function fetchService(service: StatusService, state: SourceState, force: b
   }
 }
 
-/** Grava um snapshot: status do serviço, componentes (só o que mudou) e incidentes. */
+/**
+ * Status do card: o pior entre o estado oficial e o medido pelas sondas próprias. O medido e o status
+ * atual são lidos na hora de gravar, dentro da fila de escrita, porque as medições gravam em paralelo
+ * com as consultas e a linha carregada no começo da rodada já pode estar velha. Com as medições
+ * desligadas o medido não entra: o que estiver gravado é de antes, e ninguém mais o atualiza.
+ */
+async function combinedStatus(db: Prisma.TransactionClient, serviceId: string, official: ServiceStatus): Promise<{ status: ServiceStatus; changed: boolean }> {
+  const current = await db.statusService.findUnique({ where: { id: serviceId }, select: { measuredStatus: true, status: true } });
+  const measured = probesEnabled(process.env.GLOBAL_STATUS_PROBES) ? (current?.measuredStatus as ServiceStatus | null | undefined) : null;
+  const status = combineStatus(official, measured);
+  return { status, changed: status !== current?.status };
+}
+
+/** Grava um snapshot: estado oficial e status do serviço, componentes (só o que mudou) e incidentes. */
 async function persist(service: StatusService, snapshot: OfficialSnapshot, version: string | null): Promise<void> {
   const now = new Date();
-  const changed = snapshot.status !== service.status;
 
   await prisma.$transaction(async (tx) => {
+    const { status, changed } = await combinedStatus(tx, service.id, snapshot.status);
     await tx.statusService.update({
       where: { id: service.id },
       data: {
-        status: snapshot.status,
+        officialState: snapshot.status,
+        status,
         officialStatus: snapshot.description || null,
         lastError: null,
         lastCheckAt: now,
@@ -176,14 +197,16 @@ async function persist(service: StatusService, snapshot: OfficialSnapshot, versi
   }, { timeout: 30_000 });
 }
 
-/**
- * Fila de escrita: as consultas aos provedores rodam em paralelo, mas o SQLite aceita um escritor por
- * vez, então as gravações entram em fila (sem isso as transações disputam o lock e estouram o tempo).
- */
-function serialized<T>(work: () => Promise<T>): Promise<T> {
-  const run = (g.__globalStatusWrites ?? Promise.resolve()).then(work, work);
-  g.__globalStatusWrites = run.catch(() => undefined);
-  return run;
+/** Grava a falha de uma consulta; com `unknown`, a fonte oficial passa a "Sem dados" e o status do card fica só com o medido. */
+async function persistFailure(serviceId: string, message: string, unknown: boolean): Promise<void> {
+  const data: Prisma.StatusServiceUpdateInput = { lastError: message.slice(0, 300) };
+  if (unknown) {
+    const { status, changed } = await combinedStatus(prisma, serviceId, "UNKNOWN");
+    data.officialState = "UNKNOWN";
+    data.status = status;
+    if (changed) data.lastChangeAt = new Date();
+  }
+  await prisma.statusService.update({ where: { id: serviceId }, data });
 }
 
 async function checkService(service: StatusService, force: boolean): Promise<void> {
@@ -208,34 +231,106 @@ async function checkService(service: StatusService, force: boolean): Promise<voi
       state.backoffMs = Math.min(MAX_BACKOFF_MS, state.backoffMs ? state.backoffMs * 2 : TICK_MS * 2);
       state.nextAllowedAt = Date.now() + state.backoffMs;
     }
-    const status: ServiceStatus | undefined = state.failures >= FAILURES_TO_UNKNOWN ? "UNKNOWN" : undefined;
-    await serialized(() => prisma.statusService
-      .update({
-        where: { id: service.id },
-        data: {
-          lastError: message.slice(0, 300),
-          ...(status && service.status !== status ? { status, lastChangeAt: new Date() } : {}),
-        },
-      }))
-      .catch(() => {});
+    await serialized(() => persistFailure(service.id, message, state.failures >= FAILURES_TO_UNKNOWN)).catch(() => {});
     console.warn(`[global-status] ${service.slug}: ${message}`);
   }
 }
 
-/** Cria/atualiza os serviços do catálogo (nome, categoria, fonte e ordem), sem mexer em "enabled". */
-export async function seedStatusCatalog(): Promise<void> {
-  for (const [position, entry] of STATUS_CATALOG.entries()) {
-    const data = { name: entry.name, category: entry.category, sourceType: entry.sourceType, sourceUrl: entry.sourceUrl, pageUrl: entry.pageUrl, position };
-    await prisma.statusService.upsert({ where: { slug: entry.slug }, create: { slug: entry.slug, ...data }, update: data });
+/** O que a gravação do catálogo precisa saber de cada serviço já gravado, com os alvos dele. */
+const STORED_SERVICE = {
+  id: true,
+  slug: true,
+  sourceType: true,
+  officialState: true,
+  measuredStatus: true,
+  status: true,
+  targets: { select: { id: true, key: true, kind: true, host: true, url: true, port: true } },
+} satisfies Prisma.StatusServiceSelect;
+
+type StoredService = Prisma.StatusServiceGetPayload<{ select: typeof STORED_SERVICE }>;
+
+/**
+ * Grava os alvos de um serviço do catálogo. O alvo que manteve a chave mas trocou de endereço perde as
+ * medições e o estado, que eram do endereço antigo; a chave que saiu do catálogo é apagada, com o
+ * histórico em cascata.
+ */
+async function seedTargets(tx: Prisma.TransactionClient, serviceId: string, entry: CatalogEntry, stored: StoredService["targets"]): Promise<void> {
+  const known = new Map(stored.map((t) => [t.key, t]));
+  for (const target of entry.targets) {
+    const fields = { kind: target.kind, host: target.host, url: target.url ?? null, port: target.port ?? null, intervalSec: target.intervalSec ?? DEFAULT_INTERVAL_SEC[target.kind] };
+    const old = known.get(target.key);
+    const moved = old !== undefined && endpointChanged(old, fields);
+    if (moved) {
+      await tx.probeCheck.deleteMany({ where: { targetId: old.id } });
+      await tx.probeRollup.deleteMany({ where: { targetId: old.id } });
+    }
+    await tx.probeTarget.upsert({
+      where: { serviceId_key: { serviceId, key: target.key } },
+      create: { serviceId, key: target.key, ...fields },
+      update: moved ? { ...fields, ...CLEARED_TARGET_DATA, lastCheckAt: null } : fields,
+    });
   }
-  g.__globalStatusSeeded = true;
+  await tx.probeTarget.deleteMany({ where: { serviceId, key: { notIn: entry.targets.map((t) => t.key) } } });
+}
+
+/**
+ * Grava um serviço do catálogo e os alvos dele. O serviço que deixou de ter fonte oficial perde o que a
+ * fonte antiga declarou: o estado, a frase, os componentes e os incidentes.
+ */
+async function seedService(tx: Prisma.TransactionClient, entry: CatalogEntry, position: number, before: StoredService | undefined, now: Date): Promise<void> {
+  const data = { name: entry.name, category: entry.category, sourceType: entry.sourceType, sourceUrl: entry.sourceUrl, pageUrl: entry.pageUrl, position };
+  const lostSource = entry.sourceType === "NONE" && before !== undefined && (before.sourceType !== "NONE" || before.officialState !== null);
+  const update = lostSource ? { ...data, ...unsourcedServiceData(before, now) } : data;
+  const service = await tx.statusService.upsert({ where: { slug: entry.slug }, create: { slug: entry.slug, ...data }, update, select: { id: true } });
+  if (lostSource) {
+    // Componentes e incidentes vieram da fonte que não existe mais.
+    await tx.statusComponent.deleteMany({ where: { serviceId: service.id } });
+    await tx.statusIncident.deleteMany({ where: { serviceId: service.id, origin: "OFFICIAL" } });
+  }
+  await seedTargets(tx, service.id, entry, before?.targets ?? []);
+}
+
+/**
+ * Cria/atualiza os serviços do catálogo (nome, categoria, fonte e ordem) e os alvos de medição de cada
+ * um, sem mexer em "enabled". O que saiu do catálogo é apagado, com o histórico em cascata: o alvo cuja
+ * chave saiu e o serviço cujo identificador saiu (senão ele seguiria sendo consultado e medido para
+ * sempre).
+ *
+ * Tudo numa transação só, dentro da fila de escrita: no SQLite cada transação é uma ida ao disco, e são
+ * mais de cem gravações pequenas.
+ */
+export async function seedStatusCatalog(): Promise<void> {
+  await serialized(() => prisma.$transaction(async (tx) => {
+    const now = new Date();
+    const stored = await tx.statusService.findMany({ select: STORED_SERVICE });
+    const bySlug = new Map(stored.map((s) => [s.slug, s]));
+    for (const [position, entry] of STATUS_CATALOG.entries()) await seedService(tx, entry, position, bySlug.get(entry.slug), now);
+
+    const slugs = new Set(STATUS_CATALOG.map((entry) => entry.slug));
+    const removed = stored.filter((s) => !slugs.has(s.slug)).map((s) => s.id);
+    if (removed.length) await tx.statusService.deleteMany({ where: { id: { in: removed } } });
+    // Roda ao subir, junto com os outros monitores: espera mais por uma conexão livre antes de desistir.
+  }, { maxWait: 10_000, timeout: 30_000 }));
+}
+
+/**
+ * Garante o catálogo gravado antes de qualquer leitura ou medição. O coletor, as medições e a primeira
+ * abertura da página pedem ao mesmo tempo: todos esperam a mesma gravação (uma por processo).
+ */
+export function ensureCatalogSeeded(): Promise<void> {
+  const state = globalThis as typeof globalThis & { __globalStatusSeed?: Promise<void> };
+  state.__globalStatusSeed ??= seedStatusCatalog().catch((err) => {
+    state.__globalStatusSeed = undefined;
+    throw err;
+  });
+  return state.__globalStatusSeed;
 }
 
 /** Uma rodada de consulta a todas as fontes. `force` ignora intervalos, cache de versão e backoff. */
 export function checkGlobalStatus(force = false): Promise<void> {
   if (g.__globalStatusRun) return g.__globalStatusRun;
   g.__globalStatusRun = (async () => {
-    if (!g.__globalStatusSeeded) await seedStatusCatalog();
+    await ensureCatalogSeeded();
     const services = await prisma.statusService.findMany({ where: { enabled: true, sourceType: { not: "NONE" } } });
     await Promise.all(services.map((s) => checkService(s, force)));
   })()
