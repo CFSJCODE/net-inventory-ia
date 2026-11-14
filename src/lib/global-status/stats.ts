@@ -106,7 +106,7 @@ export const FAILURES_TO_DOWN = 3;
 export const FAILURES_TO_DEGRADED = 2;
 /** Mínimo de janelas de 5 min na linha de base para julgar latência (1 h). */
 export const MIN_BASELINE_POINTS = 12;
-/** Perda média de pacotes, na janela, acima da qual o alvo fica degradado. */
+/** Perda média de pacotes, entre as medições da janela que tiveram resposta, acima da qual o alvo fica degradado. */
 export const LOSS_DEGRADED_PCT = 5;
 /** Aviso de certificado: dias restantes (certificados de vida curta usam `certWarningFor`). */
 export const CERT_WARNING_DAYS = 14;
@@ -135,9 +135,13 @@ export function latencyLimit(baseline: number[]): { median: number; limit: numbe
  * e da linha de base de 24 h (medianas das janelas de 5 min).
  *
  * - Fora: 3 falhas seguidas.
- * - Degradado: 2 falhas seguidas; certificado perto de vencer; perda média de pacotes acima de 5% na
- *   janela; ou latência sustentada acima de mediana + 3·MAD (a mediana da janela, isto é, 3 das 5
- *   medições acima do limite: um pico isolado não alarma).
+ * - Degradado: 2 falhas seguidas; certificado perto de vencer; perda média de pacotes acima de 5% entre
+ *   as medições da janela que tiveram resposta; ou latência sustentada acima de mediana + 3·MAD (a
+ *   mediana da janela, isto é, 3 das 5 medições acima do limite: um pico isolado não alarma).
+ *
+ * Uma medição sem resposta nenhuma é falha e só conta na regra das falhas seguidas: assim uma falha
+ * isolada não muda o estado em nenhum tipo de alvo, e o alvo volta a "ok" na primeira resposta depois
+ * de uma queda, sem ficar minutos em "perda de 60%" por causa das falhas que ainda estão na janela.
  */
 export function evaluateTarget(recent: RecentCheck[], baseline: number[], options: { certWarningDays?: number } = {}): TargetVerdict {
   const window = recent.slice(0, WINDOW_SIZE);
@@ -176,9 +180,9 @@ function certReason(days: number): string {
   return `certificado vence em ${days} dia${days === 1 ? "" : "s"}`;
 }
 
-/** Perda média de pacotes na janela, entre as medições que informam perda. */
+/** Perda média de pacotes entre as medições da janela que tiveram resposta (perda parcial; a total é falha). */
 function lossVerdict(window: RecentCheck[]): TargetVerdict | null {
-  const losses = window.map((c) => c.lossPct).filter((v): v is number => v !== null);
+  const losses = window.filter((c) => c.ok).map((c) => c.lossPct).filter((v): v is number => v !== null);
   if (!losses.length) return null;
   const loss = losses.reduce((a, b) => a + b, 0) / losses.length;
   return loss > LOSS_DEGRADED_PCT ? { status: "DEGRADED", reason: `perda de ${Math.round(loss)}% dos pacotes` } : null;
