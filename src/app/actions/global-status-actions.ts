@@ -173,6 +173,24 @@ function sparkOf(points: RollupPoint[], end: Date): SparkSeries | null {
   return series.p50.some((value) => value !== null) || series.fail.some((count) => count > 0) ? series : null;
 }
 
+/**
+ * Onde começa a ponta viva, o trecho mais novo do histórico, lido das medições cruas em vez das janelas
+ * gravadas (o agendador grava cada janela cerca de 1 min depois de ela fechar). `buckets` são os inícios
+ * das janelas gravadas nas últimas 24 h.
+ *
+ * - Começa logo depois da última janela fechada que já está gravada, e no máximo 30 min atrás.
+ * - A janela em andamento e a anterior a ela são sempre da ponta viva. Uma janela gravada com data de
+ *   agora ou do futuro só existe quando o relógio do sistema voltou: ela não marca até onde o histórico
+ *   está resumido (os gráficos ficariam sem as medições novas até o relógio alcançar a hora antiga), e a
+ *   da janela anterior ainda pode ser a de antes da volta, que o agendador regrava em até 2 min.
+ */
+function liveTailStart(buckets: readonly number[], now: number): number {
+  const open = bucketStart(now);
+  const newest = buckets.reduce((max, bucket) => (bucket < open && bucket > max ? bucket : max), 0);
+  const afterNewest = newest ? newest + BUCKET_MS : 0;
+  return Math.max(Math.min(afterNewest, open - BUCKET_MS), bucketStart(now - TAIL_MAX_MS));
+}
+
 /** Lê as janelas e a ponta viva de todos os alvos habilitados: três consultas, nenhuma por alvo. */
 async function loadHistory(now: number): Promise<History> {
   const end = new Date(now);
@@ -189,15 +207,12 @@ async function loadHistory(now: number): Promise<History> {
       where: { targetId: { in: ids }, vantage: SERVER_VANTAGE, bucket: { gte: new Date(now - DAY_MS) } },
       select: { targetId: true, bucket: true, samples: true, failures: true, p50Ms: true, p95Ms: true },
     });
-    let newest = 0;
-    for (const { targetId, ...point } of rollups) {
-      points.get(targetId)?.push(point);
-      newest = Math.max(newest, point.bucket.getTime());
-    }
-    // Ponta viva: o que foi medido depois da última janela gravada (o agendador grava cada janela cerca de 1 min depois de ela fechar).
-    const tailStart = Math.max(newest ? newest + BUCKET_MS : 0, bucketStart(now - TAIL_MAX_MS));
+    const tailStart = liveTailStart(rollups.map((r) => r.bucket.getTime()), now);
+    // No trecho da ponta viva valem as medições cruas: a janela gravada ali contaria as mesmas medições duas vezes.
+    const stored = rollups.filter((r) => r.bucket.getTime() < tailStart || r.bucket.getTime() > now);
+    for (const { targetId, ...point } of stored) points.get(targetId)?.push(point);
     const checks = await prisma.probeCheck.findMany({
-      where: { targetId: { in: ids }, vantage: SERVER_VANTAGE, at: { gte: new Date(tailStart) } },
+      where: { targetId: { in: ids }, vantage: SERVER_VANTAGE, at: { gte: new Date(tailStart), lte: end } },
       select: { targetId: true, at: true, ok: true, latencyMs: true, lossPct: true },
     });
     for (const [targetId, tail] of tailPoints(checks)) points.get(targetId)?.push(...tail);

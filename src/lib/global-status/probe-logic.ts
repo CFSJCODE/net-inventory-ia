@@ -96,6 +96,12 @@ export interface TargetState extends TargetInfo {
   lastLatencyMs: number | null;
   /** Alvos de Internet: já respondeu alguma vez. Enquanto não, a falta de resposta é bloqueio na rede, não queda. */
   everOk: boolean;
+  /**
+   * Veredito que o alvo tinha quando as medições foram pausadas (a pausa troca o estado por "Sem
+   * dados"); null fora de uma pausa, ou quando ele não tinha veredito. O primeiro resultado depois da
+   * pausa é julgado a partir dele (ver `judge`) e o apaga.
+   */
+  beforePause: TargetVerdict | null;
 }
 
 /** Uma medição de um passo: o alvo como estava ao medir, o instante em que a sonda começou e o resultado. */
@@ -264,7 +270,7 @@ export function reconcileTargets(previous: ReadonlyMap<string, TargetState>, loa
       continue;
     }
     added.push(row.id);
-    targets.set(row.id, { ...info, dueAt: firstDue.get(row.id) ?? now, ring: [], status: asTargetStatus(status), reason: statusReason, lastLatencyMs, everOk: false });
+    targets.set(row.id, { ...info, dueAt: firstDue.get(row.id) ?? now, ring: [], status: asTargetStatus(status), reason: statusReason, lastLatencyMs, everOk: false, beforePause: null });
   }
   return { targets, added };
 }
@@ -287,9 +293,28 @@ export function initialRing(checks: readonly (RecentCheck & { at: Date })[], int
     .map(({ ok, latencyMs, lossPct, certDays }) => ({ ok, latencyMs, lossPct, certDays }));
 }
 
-/** Completa um alvo recém-carregado com o histórico do banco: as medições recentes e se já respondeu alguma vez. */
-export function hydrateTarget(state: TargetState, history: { checks: readonly (RecentCheck & { at: Date })[]; everOk: boolean }, now: number): TargetState {
-  return { ...state, ring: initialRing(history.checks, state.intervalSec, now), everOk: history.everOk };
+/** O histórico que o banco guarda de um alvo recém-carregado. */
+export interface TargetHistory {
+  /** Medições dentro de `ringMaxAgeMs`, em qualquer ordem. */
+  checks: readonly (RecentCheck & { at: Date })[];
+  /** Alvos de Internet: já respondeu alguma vez. */
+  everOk: boolean;
+  /** Só para o alvo gravado como pausado: as últimas medições dele, de qualquer idade, mais nova primeiro. */
+  lastChecks?: readonly RecentCheck[];
+}
+
+/**
+ * Completa um alvo recém-carregado com o histórico do banco: as medições recentes e se já respondeu
+ * alguma vez. Um alvo que o banco guarda como pausado (o servidor parou durante uma queda da conexão
+ * local) recebe também o veredito de antes da pausa, recalculado a partir de `lastChecks`: durante a
+ * pausa nada foi medido, então as últimas medições dele, por velhas que sejam, são as de antes dela.
+ * A linha de base daquela hora não existe mais, e por isso só contam as regras que não dependem dela
+ * (falhas seguidas, certificado vencido, perda de pacotes).
+ */
+export function hydrateTarget(state: TargetState, history: TargetHistory, now: number): TargetState {
+  const hydrated = { ...state, ring: initialRing(history.checks, state.intervalSec, now), everOk: history.everOk };
+  if (!isPausedTarget(state) || !history.lastChecks?.length) return hydrated;
+  return { ...hydrated, beforePause: evaluateTarget([...history.lastChecks], []) };
 }
 
 /**
@@ -524,7 +549,7 @@ export function pausedReason(state: "offline" | "dns"): string {
 }
 
 /** Alvo de serviço que a pausa deixou "Sem dados" e que ainda não foi medido de novo. */
-function isPausedTarget(target: Pick<TargetState, "status" | "reason">): boolean {
+export function isPausedTarget(target: Pick<TargetState, "status" | "reason">): boolean {
   return target.status === "UNKNOWN" && target.reason !== null && target.reason.startsWith(PAUSE_MARK);
 }
 
@@ -539,13 +564,20 @@ export function measurementPaused(service: { measuredStatus: string | null; meas
   return service.measuredStatus === "UNKNOWN" && service.measuredReason !== null && service.measuredReason.startsWith(PAUSE_MARK);
 }
 
+/** O veredito a guardar ao pausar um alvo: o que ele tinha ou, se já estava pausado, o que já estava guardado. */
+function verdictBeforePause(target: TargetState): TargetVerdict | null {
+  if (isPausedTarget(target)) return target.beforePause;
+  return target.status === "UNKNOWN" ? null : { status: target.status, reason: target.reason };
+}
+
 /**
  * Em memória, os alvos de serviço ficam "Sem dados" com a frase da pausa e sem a última latência (ela
- * deixaria de ser "agora"); os de Internet seguem sendo medidos.
+ * deixaria de ser "agora"); os de Internet seguem sendo medidos. O veredito que cada alvo tinha fica
+ * guardado em `beforePause`: é dele que o julgamento parte quando o alvo voltar a ser medido.
  */
 export function pauseServiceTargets(targets: ReadonlyMap<string, TargetState>, reason: string): Map<string, TargetState> {
   const next = new Map<string, TargetState>();
-  for (const [id, t] of targets) next.set(id, isInternetTarget(t) ? t : { ...t, status: "UNKNOWN", reason, lastLatencyMs: null });
+  for (const [id, t] of targets) next.set(id, isInternetTarget(t) ? t : { ...t, status: "UNKNOWN", reason, lastLatencyMs: null, beforePause: verdictBeforePause(t) });
   return next;
 }
 
@@ -723,7 +755,7 @@ export function neverAnsweredReason(kind: ProbeKind): string {
 /** Resultado que não vira medição: o alvo fica "Sem dados" com o motivo, e o histórico não muda. */
 function unmeasured(state: TargetState, at: Date, reason: string, error: string | null): RecordedResult {
   return {
-    state: { ...state, status: "UNKNOWN", reason, lastLatencyMs: null },
+    state: { ...state, status: "UNKNOWN", reason, lastLatencyMs: null, beforePause: null },
     row: null,
     update: { status: "UNKNOWN", statusReason: reason, lastCheckAt: at, lastLatencyMs: null, lastError: error },
   };
@@ -734,13 +766,15 @@ function unmeasured(state: TargetState, at: Date, reason: string, error: string 
  * estado que o alvo já tinha. Isso acontece com um alvo novo, ou depois de uma parada longa do
  * servidor (as medições antigas não entram na conta): a primeira falha sozinha não julga nada, e um
  * alvo que estava fora do ar antes da parada continua fora enquanto só falhar, em vez de passar por
- * "ok" e "degradado" e ser anunciado como uma queda nova. Um alvo "Sem dados" segue assim, já sem o
- * motivo antigo, que podia ser o de uma pausa que acabou.
+ * "ok" e "degradado" e ser anunciado como uma queda nova. O estado que o alvo já tinha é o de antes
+ * da pausa, quando ele está voltando de uma. Um alvo "Sem dados" segue assim, já sem o motivo antigo,
+ * que podia ser o de uma pausa que acabou.
  */
-function judge(state: Pick<TargetState, "status" | "reason">, ring: RecentCheck[], baseline: readonly number[]): TargetVerdict {
+function judge(state: Pick<TargetState, "status" | "reason" | "beforePause">, ring: RecentCheck[], baseline: readonly number[]): TargetVerdict {
   const fresh = evaluateTarget(ring, [...baseline]);
   if (ring.some((c) => c.ok)) return fresh;
-  const kept: TargetVerdict = state.status === "UNKNOWN" ? { status: "UNKNOWN", reason: null } : { status: state.status, reason: state.reason };
+  const before = state.beforePause ?? state;
+  const kept: TargetVerdict = before.status === "UNKNOWN" ? { status: "UNKNOWN", reason: null } : { status: before.status, reason: before.reason };
   return STATUS_SEVERITY[fresh.status] >= STATUS_SEVERITY[kept.status] ? fresh : kept;
 }
 
@@ -767,7 +801,7 @@ export function recordResult(state: TargetState, result: ProbeResult, at: Date, 
   const verdict = judge(state, ring, baseline);
   const lastError = ok ? null : error;
   return {
-    state: { ...state, ring, status: verdict.status, reason: verdict.reason, lastLatencyMs: latencyMs, everOk: state.everOk || ok },
+    state: { ...state, ring, status: verdict.status, reason: verdict.reason, lastLatencyMs: latencyMs, everOk: state.everOk || ok, beforePause: null },
     row: {
       targetId: state.id,
       vantage: SERVER_VANTAGE,

@@ -16,6 +16,7 @@ import {
   groupBaseline,
   hydrateTarget,
   isInternetTarget,
+  isPausedTarget,
   isStale,
   maintenanceDue,
   nextConnectivity,
@@ -46,7 +47,7 @@ import {
   type TickProgress,
 } from "./probe-logic";
 import { defaultGateway, runProbe } from "./probes";
-import { BUCKET_MS, type RecentCheck } from "./stats";
+import { BUCKET_MS, WINDOW_SIZE, type RecentCheck } from "./stats";
 import type { LocalConnectivity, ProbeKind } from "./types";
 import { serialized } from "./write-queue";
 
@@ -177,6 +178,25 @@ async function refreshTargets(r: RunnerState, now: number, force: boolean): Prom
   }
 }
 
+/**
+ * Últimas medições de cada alvo que o banco guarda como pausado (o servidor parou durante uma queda da
+ * conexão local), de qualquer idade: nada foi medido durante a pausa, então são elas que dizem como
+ * o alvo estava antes. Uma consulta por alvo, pelo índice (targetId, at); só acontece nessa partida.
+ */
+async function lastChecksOfPaused(targets: TargetState[]): Promise<Map<string, RecentCheck[]>> {
+  const last = new Map<string, RecentCheck[]>();
+  for (const t of targets.filter(isPausedTarget)) {
+    const rows = await prisma.probeCheck.findMany({
+      where: { targetId: t.id, vantage: SERVER_VANTAGE },
+      orderBy: { at: "desc" },
+      take: WINDOW_SIZE,
+      select: { ok: true, latencyMs: true, lossPct: true, certDays: true },
+    });
+    last.set(t.id, rows);
+  }
+  return last;
+}
+
 /** Histórico dos alvos que acabaram de entrar em memória: as medições recentes e, nos de Internet, se já responderam alguma vez. */
 async function hydrate(targets: Map<string, TargetState>, added: string[], now: number): Promise<void> {
   if (!added.length) return;
@@ -208,7 +228,8 @@ async function hydrate(targets: Map<string, TargetState>, added: string[], now: 
     for (const row of [...rollups, ...oks]) answered.add(row.targetId);
   }
 
-  for (const t of fresh) targets.set(t.id, hydrateTarget(t, { checks: checks.get(t.id) ?? [], everOk: answered.has(t.id) }, now));
+  const lastChecks = await lastChecksOfPaused(fresh);
+  for (const t of fresh) targets.set(t.id, hydrateTarget(t, { checks: checks.get(t.id) ?? [], everOk: answered.has(t.id), lastChecks: lastChecks.get(t.id) }, now));
 }
 
 /** Relê a linha de base de todos os alvos numa consulta só (a cada 5 min). */
@@ -422,7 +443,9 @@ export function runProbeTick(options: { force?: boolean } = {}): Promise<void> {
  * histórico (medições e janelas) fica onde está e sai pela idade quando as medições forem religadas.
  */
 async function clearMeasuredState(): Promise<void> {
-  await ensureCatalogSeeded();
+  // Espera a gravação do catálogo que sobe junto, mas não depende dela: a limpeza só mexe em linhas que
+  // já existem. Se o banco recusar o catálogo, quem pedir de novo (o coletor, a página) grava depois.
+  await ensureCatalogSeeded().catch(() => undefined);
   const clear = async () => {
     const now = new Date();
     const services = await prisma.statusService.findMany({

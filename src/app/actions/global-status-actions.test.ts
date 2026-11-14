@@ -46,6 +46,15 @@ interface RollupRow {
   p95Ms: number | null;
 }
 
+/** Uma medição crua (ProbeCheck), com o que a ponta viva do histórico lê. */
+interface CheckRow {
+  targetId: string;
+  at: Date;
+  ok: boolean;
+  latencyMs: number | null;
+  lossPct: number | null;
+}
+
 const db = vi.hoisted(() => ({
   services: [] as unknown[],
   targets: [] as unknown[],
@@ -109,7 +118,11 @@ vi.mock("@/lib/prisma", () => {
         }),
       },
       probeCheck: {
-        findMany: record("probeCheck.findMany", () => []),
+        findMany: record("probeCheck.findMany", ({ where = {} }) => {
+          // A consulta da ponta viva sempre filtra pelos alvos e pelo trecho, com começo e fim.
+          const { targetId, at } = where as { targetId: { in: string[] }; at: { gte: Date; lte: Date } };
+          return (db.checks as CheckRow[]).filter((c) => targetId.in.includes(c.targetId) && c.at >= at.gte && c.at <= at.lte);
+        }),
         findFirst: record("probeCheck.findFirst", ({ where }) => (db.checks as { targetId: string }[]).find((c) => c.targetId === where?.targetId) ?? null),
       },
     },
@@ -281,6 +294,90 @@ describe("histórico das medições: uma leitura por minuto", () => {
   });
 });
 
+describe("histórico das medições: janelas gravadas e ponta viva", () => {
+  // T é 10:07:30: a janela em andamento começou às 10:05 e a anterior a ela, às 10:00.
+  const OPEN = Date.parse("2026-11-14T10:05:00Z");
+  const PREVIOUS = OPEN - 5 * MIN;
+  const rollup = (bucket: number, failures = 0): RollupRow => ({ targetId: "github-tcp", bucket: new Date(bucket), samples: 10, failures, p50Ms: 12, p95Ms: 20 });
+  /** `count` medições do TCP do GitHub a partir de `from`, uma a cada 30 s; as `failures` primeiras falham. */
+  const checks = (from: number, count: number, failures = 0): CheckRow[] =>
+    Array.from({ length: count }, (_, i) => ({ targetId: "github-tcp", at: new Date(from + i * 30_000), ok: i >= failures, latencyMs: i >= failures ? 12 : null, lossPct: null }));
+  /** O que a página mostra do TCP do GitHub: disponibilidade de 24 h e falhas somadas no gráfico. */
+  const tcp = async () => {
+    const target = (await getGlobalStatusDetail("github")).targets.find((t) => t.key === "tcp")!;
+    return { uptime24h: target.uptime24h, failures: target.spark ? target.spark.fail.reduce((sum, n) => sum + n, 0) : null };
+  };
+  const tailQuery = () => (db.calls.find((call) => call.op === "probeCheck.findMany")!.args as { where: { at: unknown } }).where.at;
+
+  it("as medições ainda sem janela gravada entram pela ponta viva", async () => {
+    // A janela das 10:00 fechou há 2 min 30 s e ainda não foi gravada.
+    db.rollups = [rollup(PREVIOUS - 5 * MIN)];
+    db.checks = [...checks(PREVIOUS, 10, 2), ...checks(OPEN, 5, 1)];
+    // 10 da janela gravada + 10 + 5 cruas, com 3 falhas.
+    expect(await tcp()).toEqual({ uptime24h: 88, failures: 3 });
+    expect(tailQuery()).toEqual({ gte: new Date(PREVIOUS), lte: new Date(T) });
+  });
+
+  it("a janela anterior à que está em andamento vale pelas medições cruas mesmo já gravada, sem contar duas vezes", async () => {
+    db.rollups = [rollup(PREVIOUS - 5 * MIN), rollup(PREVIOUS, 2)];
+    db.checks = [...checks(PREVIOUS, 10, 2), ...checks(OPEN, 5, 1)];
+    expect(await tcp()).toEqual({ uptime24h: 88, failures: 3 });
+    expect(tailQuery()).toEqual({ gte: new Date(PREVIOUS), lte: new Date(T) });
+  });
+
+  it("com as janelas atrasadas, a ponta viva cobre no máximo os últimos 30 min", async () => {
+    db.rollups = [rollup(OPEN - 2 * HOUR)];
+    db.checks = [...checks(OPEN - HOUR, 10, 10), ...checks(OPEN - 30 * MIN, 10, 1)];
+    // As medições de 1 h atrás (todas falhas) ficam de fora até o agendador gravar as janelas delas.
+    expect(await tcp()).toEqual({ uptime24h: 95, failures: 1 });
+    expect(tailQuery()).toEqual({ gte: new Date(OPEN - 30 * MIN), lte: new Date(T) });
+  });
+
+  describe("depois de o relógio do sistema voltar 1 h", () => {
+    it("as janelas gravadas com data do futuro não seguram a ponta viva: as medições novas aparecem", async () => {
+      // Instalação nova: só existem as janelas gravadas antes da volta, agora datadas de daqui a 45 min ou mais.
+      db.rollups = [rollup(OPEN + 45 * MIN), rollup(OPEN + 50 * MIN), rollup(OPEN + 55 * MIN)];
+      // Medidas depois da volta (2 falhas em 4) e, do futuro, as de antes da volta que ainda não tinham janela.
+      db.checks = [...checks(OPEN + 30_000, 4, 2), ...checks(OPEN + HOUR, 5)];
+      const seen = await tcp();
+      expect(seen.failures).toBe(2);
+      // 30 medições nas janelas de antes da volta e 4 depois dela, com 2 falhas.
+      expect(seen.uptime24h).toBeCloseTo((1 - 2 / 34) * 100, 6);
+      expect(tailQuery()).toEqual({ gte: new Date(OPEN - 30 * MIN), lte: new Date(T) });
+    });
+
+    it("a janela em andamento e a anterior valem pelas medições cruas, não pelas janelas gravadas antes da volta", async () => {
+      // O servidor já media nesta hora, que agora se repete: há janela gravada para cada 5 min, até 55 min à frente.
+      const before = Array.from({ length: 10 }, (_, i) => rollup(PREVIOUS - (i + 1) * 5 * MIN));
+      const ahead = Array.from({ length: 11 }, (_, i) => rollup(OPEN + (i + 1) * 5 * MIN));
+      db.rollups = [...before, rollup(PREVIOUS), rollup(OPEN), ...ahead];
+      db.checks = [
+        // 10:00 a 10:05: as 10 da primeira passagem (ok) e as 10 da segunda, com 4 falhas.
+        ...checks(PREVIOUS, 10), ...checks(PREVIOUS + 1_000, 10, 4),
+        // 10:05 em diante: 5 da primeira passagem e 5 da segunda, com 1 falha; depois de agora, só da primeira.
+        ...checks(OPEN, 5), ...checks(OPEN + 1_000, 5, 1), ...checks(T + 30_000, 5),
+      ];
+      const seen = await tcp();
+      // As 4 falhas da janela anterior não estão na janela gravada antes da volta (0 falhas): só aparecem pelas cruas.
+      expect(seen.failures).toBe(5);
+      // 100 medições nas janelas de antes, 110 nas datadas do futuro, 20 + 10 cruas, com 5 falhas.
+      expect(seen.uptime24h).toBeCloseTo((1 - 5 / 240) * 100, 6);
+    });
+
+    it("a janela em andamento já gravada antes da volta não esconde as que estão atrasadas", async () => {
+      // A das 10:05 está gravada desde a primeira passagem por esta hora; as de 09:50 a 10:00 ainda não foram gravadas.
+      db.rollups = [rollup(PREVIOUS - 15 * MIN), rollup(OPEN)];
+      db.checks = [...checks(PREVIOUS - 10 * MIN, 10, 3), ...checks(PREVIOUS, 10), ...checks(OPEN, 5, 1)];
+      const seen = await tcp();
+      expect(seen.failures).toBe(4);
+      // 10 medições na janela das 09:45 e 25 cruas, com 4 falhas.
+      expect(seen.uptime24h).toBeCloseTo((1 - 4 / 35) * 100, 6);
+      // A ponta viva começa logo depois da última janela fechada que está gravada, a das 09:45.
+      expect(tailQuery()).toEqual({ gte: new Date(PREVIOUS - 10 * MIN), lte: new Date(T) });
+    });
+  });
+});
+
 describe("com as medições desligadas (GLOBAL_STATUS_PROBES=off)", () => {
   beforeEach(() => {
     vi.stubEnv("GLOBAL_STATUS_PROBES", "off");
@@ -327,8 +424,8 @@ describe("com as medições desligadas (GLOBAL_STATUS_PROBES=off)", () => {
 describe("getGlobalStatusDetail com as medições ligadas", () => {
   it("lista os alvos do serviço na ordem do catálogo, com a última medição e o resumo de 24 h", async () => {
     db.checks = [
-      { targetId: "github-http", at: new Date(T - 20_000), ok: true, httpStatus: 200, dnsMs: 3, connectMs: 11, tlsMs: 14, ttfbMs: 40, totalMs: 68, lossPct: null, jitterMs: null, certDays: 71 },
-      { targetId: "github-tcp", at: new Date(T - 10_000), ok: true, httpStatus: null, dnsMs: 2, connectMs: 12, tlsMs: null, ttfbMs: null, totalMs: 14, lossPct: null, jitterMs: null, certDays: null },
+      { targetId: "github-http", at: new Date(T - 20_000), ok: true, latencyMs: 40, httpStatus: 200, dnsMs: 3, connectMs: 11, tlsMs: 14, ttfbMs: 40, totalMs: 68, lossPct: null, jitterMs: null, certDays: 71 },
+      { targetId: "github-tcp", at: new Date(T - 10_000), ok: true, latencyMs: 12, httpStatus: null, dnsMs: 2, connectMs: 12, tlsMs: null, ttfbMs: null, totalMs: 14, lossPct: null, jitterMs: null, certDays: null },
     ];
     // Gravados fora de ordem: quem ordena é o catálogo (HTTP antes do TCP).
     db.targets = [target("github", "tcp", "TCP"), target("github", "http", "HTTP")];

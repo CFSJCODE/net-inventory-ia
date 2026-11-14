@@ -155,6 +155,20 @@ describe("transitionNotices e rememberSeen: a página de consulta em consulta", 
     expect(titles(rounds)).toEqual([[], ["Sua Internet está fora"], ["Sua Internet voltou", "WhatsApp: fora do ar"], ["Netflix: degradado"]]);
   });
 
+  it("com a conexão fora, um serviço que ainda não aparece como pausado não vira aviso: a queda dele sai uma vez, depois da volta", () => {
+    const rounds = replay([
+      view("ok", [service("github", "OK")]),
+      // A conexão caiu com o GitHub já fora do ar, e a pausa ainda não está gravada nele (o banco recusou a gravação).
+      view("offline", [service("github", "DOWN")]),
+      // A rodada seguinte gravou a pausa.
+      view("offline", [paused("github")]),
+      view("ok", [paused("github")]),
+      view("ok", [service("github", "DOWN")]),
+      view("ok", [service("github", "DOWN")]),
+    ]);
+    expect(titles(rounds)).toEqual([[], ["Sua Internet está fora"], [], ["Sua Internet voltou"], ["GitHub: fora do ar"], []]);
+  });
+
   it("página aberta durante a falta de Internet: avisa a volta e não inventa queda de serviço", () => {
     const rounds = replay([
       view("offline", [paused("whatsapp"), paused("github", "DEGRADED")]),
@@ -223,6 +237,12 @@ describe("rememberSeen", () => {
     const during = rememberSeen(before, view("offline", [paused("github", "OK")]));
     expect(seenOf(during)).toEqual({ connection: "offline", states: { github: "DOWN" } });
     expect(seenOf(rememberSeen(null, view("dns", [paused("github")])))).toEqual({ connection: "dns", states: {} });
+  });
+
+  it("com a conexão fora nada muda no que a página lembra, nem para um serviço que ainda não aparece como pausado", () => {
+    const before = rememberSeen(null, view("ok", [service("github", "OK"), service("netflix", "DOWN")]));
+    const during = rememberSeen(before, view("offline", [service("github", "DOWN"), paused("netflix")]));
+    expect(seenOf(during)).toEqual({ connection: "offline", states: { github: "OK", netflix: "DOWN" } });
   });
 
   it("depois da volta, o serviço ainda pausado fica com o estado de antes; o já medido, com o novo", () => {

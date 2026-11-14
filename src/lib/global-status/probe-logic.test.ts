@@ -90,6 +90,7 @@ function target(over: Partial<TargetState> & Pick<TargetState, "id">): TargetSta
     reason: null,
     lastLatencyMs: null,
     everOk: false,
+    beforePause: null,
     ...over,
   };
 }
@@ -427,8 +428,8 @@ describe("passo forçado e medição fora de hora", () => {
 
 describe("lista de alvos em memória", () => {
   const loaded = (id: string, over: Partial<LoadedTarget> = {}): LoadedTarget => {
-    const { dueAt, ring, reason, everOk, ...info } = target({ id });
-    void dueAt; void ring; void reason; void everOk;
+    const { dueAt, ring, reason, everOk, beforePause, ...info } = target({ id });
+    void dueAt; void ring; void reason; void everOk; void beforePause;
     return { ...info, statusReason: null, ...over };
   };
 
@@ -442,7 +443,7 @@ describe("lista de alvos em memória", () => {
   it("na primeira carga todos são novos: primeiro vencimento espalhado e o estado gravado na linha", () => {
     const { targets, added } = reconcileTargets(new Map(), [loaded("a", { status: "DOWN", statusReason: "3 falhas seguidas", lastLatencyMs: null }), loaded("b", { status: "OK", lastLatencyMs: 18 })], T0);
     expect(added).toEqual(["a", "b"]);
-    expect(targets.get("a")).toMatchObject({ dueAt: T0, status: "DOWN", reason: "3 falhas seguidas", ring: [], everOk: false });
+    expect(targets.get("a")).toMatchObject({ dueAt: T0, status: "DOWN", reason: "3 falhas seguidas", ring: [], everOk: false, beforePause: null });
     expect(targets.get("b")).toMatchObject({ dueAt: T0 + 15 * SEC, status: "OK", lastLatencyMs: 18 });
   });
 
@@ -496,6 +497,42 @@ describe("lista de alvos em memória", () => {
     const hydrated = hydrateTarget(fresh, { checks: [{ ...check(true, 12), at: new Date(T0 - MIN) }], everOk: true }, T0);
     expect(hydrated).toMatchObject({ id: "ping-1", ring: [check(true, 12)], everOk: true, dueAt: fresh.dueAt });
     expect(fresh.ring).toEqual([]);
+  });
+
+  describe("alvo que o banco guarda como pausado (o servidor parou durante uma queda da conexão local)", () => {
+    const stored = target({ id: "http", key: "http", kind: "HTTP", intervalSec: 60, status: "UNKNOWN", reason: pausedReason("offline") });
+    // As últimas medições dele, mais nova primeiro, todas de antes da pausa e mais velhas que as que entram como recentes.
+    const wasDown = [check(false), check(false), check(false), check(true), check(true)];
+    const hydrate = (lastChecks: RecentCheck[] | undefined, state = stored) => hydrateTarget(state, { checks: [], everOk: false, lastChecks }, T0);
+
+    it("recebe o veredito de antes da pausa, recalculado das últimas medições dele, e segue pausado", () => {
+      expect(hydrate(wasDown)).toMatchObject({ status: "UNKNOWN", reason: pausedReason("offline"), ring: [], beforePause: { status: "DOWN", reason: "3 falhas seguidas" } });
+      expect(hydrate([check(false), check(false), check(true)]).beforePause).toEqual({ status: "DEGRADED", reason: "2 falhas seguidas" });
+      expect(hydrate([check(true), check(false), check(false)]).beforePause).toEqual({ status: "OK", reason: null });
+      // O certificado vencido não depende da linha de base, que não existe mais para aquela hora.
+      expect(hydrate([{ ...check(true), certDays: -3 }]).beforePause).toEqual({ status: "DEGRADED", reason: "certificado vencido" });
+      // Só as 5 mais novas contam: a sexta, mais velha, não muda o veredito.
+      expect(hydrate([check(true), check(true), check(true), check(true), check(true), check(false)]).beforePause).toEqual({ status: "OK", reason: null });
+    });
+
+    it("sem nenhuma medição guardada não há veredito a recuperar", () => {
+      expect(hydrate([]).beforePause).toBeNull();
+      expect(hydrate(undefined).beforePause).toBeNull();
+    });
+
+    it("um alvo que não está pausado não recebe veredito das medições velhas: para ele valem só as recentes", () => {
+      const down = target({ id: "http", status: "DOWN", reason: "3 falhas seguidas" });
+      expect(hydrate(wasDown, down)).toMatchObject({ status: "DOWN", ring: [], beforePause: null });
+      // Sem dados por outro motivo (a sonda não roda neste servidor) também não é pausa.
+      expect(hydrate(wasDown, target({ id: "ping", status: "UNKNOWN", reason: "ping indisponível neste servidor" })).beforePause).toBeNull();
+    });
+
+    it("a conexão volta: o alvo que estava fora do ar continua fora na primeira falha, sem passar por Sem dados, ok e degradado", () => {
+      const recorded = recordResult(hydrate(wasDown), down(), new Date(T0));
+      expect(recorded.update).toMatchObject({ status: "DOWN", statusReason: "3 falhas seguidas" });
+      // Sem o veredito recuperado, a mesma falha deixaria o alvo "Sem dados", e o serviço valeria pelo outro alvo.
+      expect(recordResult(hydrate([]), down(), new Date(T0)).update).toMatchObject({ status: "UNKNOWN", statusReason: null });
+    });
   });
 });
 
@@ -936,6 +973,31 @@ describe("pausa das medições", () => {
     expect(Array.from(paused.keys())).toEqual(ids(live));
   });
 
+  it("a pausa guarda o veredito que cada alvo de serviço tinha: é dele que o julgamento parte quando o alvo voltar a ser medido", () => {
+    const w = world();
+    const live = byId([
+      { ...w.github.http, status: "DOWN" as const, reason: "3 falhas seguidas" },
+      { ...w.github.tcp, status: "OK" as const, lastLatencyMs: 20 },
+      { ...w.cloudflare.http, status: "DEGRADED" as const, reason: "certificado vencido" },
+      // Nunca medido: Sem dados, sem veredito a guardar.
+      w.cloudflare.tcp,
+      { ...w.ping1, status: "DOWN" as const, reason: "3 falhas seguidas" },
+    ]);
+    const paused = pauseServiceTargets(live, pausedReason("offline"));
+    expect(paused.get("github-http")?.beforePause).toEqual({ status: "DOWN", reason: "3 falhas seguidas" });
+    expect(paused.get("github-tcp")?.beforePause).toEqual({ status: "OK", reason: null });
+    expect(paused.get("cloudflare-http")?.beforePause).toEqual({ status: "DEGRADED", reason: "certificado vencido" });
+    expect(paused.get("cloudflare-tcp")?.beforePause).toBeNull();
+    // O alvo de Internet não é pausado e não guarda nada.
+    expect(paused.get("ping-1")?.beforePause).toBeNull();
+
+    // De "sem Internet" para "sem DNS" a pausa é marcada de novo: fica a frase nova e o veredito de antes da primeira.
+    const moved = pauseServiceTargets(paused, pausedReason("dns"));
+    expect(moved.get("github-http")).toMatchObject({ status: "UNKNOWN", reason: "Medições pausadas: o DNS deste servidor não resolve nomes.", beforePause: { status: "DOWN", reason: "3 falhas seguidas" } });
+    expect(moved.get("github-tcp")?.beforePause).toEqual({ status: "OK", reason: null });
+    expect(moved.get("cloudflare-tcp")?.beforePause).toBeNull();
+  });
+
   it("no banco o alvo de serviço recebe o mesmo: Sem dados, a frase e nenhuma latência", () => {
     expect(pausedTargetData("offline")).toEqual({ status: "UNKNOWN", statusReason: "Medições pausadas: sem Internet neste servidor.", lastLatencyMs: null });
     expect(pausedTargetData("dns")).toEqual({ status: "UNKNOWN", statusReason: "Medições pausadas: o DNS deste servidor não resolve nomes.", lastLatencyMs: null });
@@ -1102,6 +1164,45 @@ describe("recordResult", () => {
         "DEGRADED: 2 falhas seguidas",
         "OK: null",
       ]);
+    });
+
+    describe("voltando de uma pausa sem medições recentes (o servidor reiniciou durante a queda da conexão local)", () => {
+      const paused = (beforePause: TargetState["beforePause"]) => failing({ status: "UNKNOWN", reason: pausedReason("offline"), beforePause });
+
+      it("o alvo que estava fora do ar antes da pausa continua fora enquanto só falhar", () => {
+        expect(feed(paused({ status: "DOWN", reason: "sem resposta nas últimas 5 medições" }), [down(), down(), down()])).toEqual([
+          "DOWN: sem resposta nas últimas 5 medições",
+          "DOWN: sem resposta nas últimas 5 medições",
+          "DOWN: 3 falhas seguidas",
+        ]);
+      });
+
+      it("a primeira resposta vale na hora, qualquer que fosse o veredito guardado", () => {
+        expect(feed(paused({ status: "DOWN", reason: "3 falhas seguidas" }), [up()])).toEqual(["OK: null"]);
+        expect(feed(paused({ status: "DOWN", reason: "3 falhas seguidas" }), [down(), up()])).toEqual(["DOWN: 3 falhas seguidas", "OK: null"]);
+      });
+
+      it("o que estava degradado segue degradado, com o motivo que tinha, até haver o que julgar", () => {
+        expect(feed(paused({ status: "DEGRADED", reason: "certificado vencido" }), [down(), down(), down()])).toEqual([
+          "DEGRADED: certificado vencido",
+          "DEGRADED: 2 falhas seguidas",
+          "DOWN: 3 falhas seguidas",
+        ]);
+      });
+
+      it("o que estava ok continua ok com uma falha só", () => {
+        expect(feed(paused({ status: "OK", reason: null }), [down(), down()])).toEqual(["OK: null", "DEGRADED: 2 falhas seguidas"]);
+      });
+
+      it("o veredito guardado vale só para o primeiro resultado depois da pausa", () => {
+        const before = paused({ status: "DOWN", reason: "3 falhas seguidas" });
+        expect(recordResult(before, down(), at).state.beforePause).toBeNull();
+        expect(recordResult(before, up(), at).state.beforePause).toBeNull();
+        // A sonda que não pôde rodar também encerra a pausa do alvo: ele fica Sem dados pelo motivo dela.
+        const unsupported = recordResult(before, { ok: false, latencyMs: null, unsupported: true, error: "falha interna da sonda" }, at);
+        expect(unsupported.state).toMatchObject({ status: "UNKNOWN", reason: "falha interna da sonda", beforePause: null });
+        expect(feed(unsupported.state, [down()])).toEqual(["UNKNOWN: null"]);
+      });
     });
 
     it("com alguma resposta entre as recentes o veredito é o de sempre, qualquer que fosse o estado", () => {
