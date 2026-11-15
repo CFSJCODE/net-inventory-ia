@@ -8,7 +8,9 @@ import { AGENT_VANTAGE_PREFIX, SERVER_VANTAGE, agentIdOf, isStale, probesEnabled
 import { getLocalConnectivity, runProbesNow } from "@/lib/global-status/probe-runner";
 import { defaultGateway } from "@/lib/global-status/probes";
 import { buildPhaseSeries, buildSeries, latencySummary, mainLatencyTarget, tailPoints, uptimeFromTotals, uptimeOf, type PhaseSeries, type RollupPoint, type SparkSeries } from "@/lib/global-status/series";
-import { isTraceableHost, traceRoute, type TraceResult } from "@/lib/global-status/traceroute";
+import { traceHost } from "@/lib/global-status/traceroute";
+import { ROUTE_ORIGIN, routesEnabled, traceServiceNow } from "@/lib/global-status/route-runner";
+import { CABLE_MAP_PAGE } from "@/lib/global-status/subsea-cables";
 import { BUCKET_MS, bucketStart } from "@/lib/global-status/stats";
 import { storedIsp } from "@/lib/global-status/internet-signals";
 import { getGlobalStatusSettings, normalizeGlobalStatusSettings, saveGlobalStatusSettings, type GlobalStatusSettings } from "@/lib/global-status/settings";
@@ -24,7 +26,7 @@ export interface StatusComponentRow {
 
 export interface StatusIncidentRow {
   id: string;
-  /** OFFICIAL = publicado pela fonte (provedor ou IODA); DETECTED = visto pelas medições deste servidor. */
+  /** OFFICIAL = publicado pela fonte (provedor ou IODA); DETECTED = visto pelas medições deste servidor; ROUTE = a rota até o serviço mudou. */
   origin: string;
   serviceSlug: string;
   serviceName: string;
@@ -312,7 +314,8 @@ export async function getGlobalStatus(): Promise<GlobalStatusData> {
         .sort((a, b) => STATUS_SEVERITY[b.status as ServiceStatus] - STATUS_SEVERITY[a.status as ServiceStatus])
         .slice(0, 6)
         .map((c) => ({ name: c.name, groupName: c.groupName, status: c.status as ServiceStatus })),
-      openIncidents: open.filter((i) => i.service.slug === s.slug).length,
+      // Mudança de rota é aviso, não incidente do serviço: fica no ticker, fora da contagem do card.
+      openIncidents: open.filter((i) => i.service.slug === s.slug && i.origin !== ROUTE_ORIGIN).length,
     })),
     incidents: open.map(incidentRow),
     connectivity,
@@ -348,11 +351,67 @@ export interface StatusServiceDetail {
   phases: PhaseSeries | null;
   /** true = o serviço tem um destino que o traceroute sob demanda aceita. */
   traceable: boolean;
+  /** A rota mais nova gravada até o destino (fase 5), com a inferência de onde o serviço é servido. */
+  route: StatusRouteDetail | null;
   /** Rota BGP do endereço medido, da última coleta do RIPEstat ("140.82.112.0/20 · AS36459 · vista por 243 de 244 coletores"). */
   bgp: { text: string; status: ServiceStatus } | null;
 }
 
-const EMPTY_DETAIL: StatusServiceDetail = { components: [], incidents: [], targets: [], vantages: null, phases: null, traceable: false, bgp: null };
+const EMPTY_DETAIL: StatusServiceDetail = { components: [], incidents: [], targets: [], vantages: null, phases: null, traceable: false, route: null, bgp: null };
+
+export interface StatusRouteHopRow {
+  ttl: number;
+  ip: string | null;
+  rttMs: number | null;
+  asn: number | null;
+  asName: string | null;
+  rdns: string | null;
+  city: string | null;
+  country: string | null;
+}
+
+export interface StatusRouteDetail {
+  at: string;
+  host: string;
+  destIp: string | null;
+  tool: string | null;
+  reached: boolean;
+  destRttMs: number | null;
+  /** DOMESTIC | OPERATOR_CACHE | INTERNATIONAL | UNDETERMINED */
+  verdict: string;
+  summary: string;
+  destCountry: string | null;
+  cableName: string | null;
+  candidates: string[];
+  /** HIGH | MEDIUM | LOW */
+  confidence: string | null;
+  error: string | null;
+  hops: StatusRouteHopRow[];
+  /** Página do mapa de cabos (atribuição dos dados dos cabos). */
+  cableSource: string;
+}
+
+async function loadRoute(serviceId: string): Promise<StatusRouteDetail | null> {
+  const t = await prisma.routeTrace.findFirst({ where: { serviceId }, orderBy: { at: "desc" }, include: { hops: { orderBy: { ttl: "asc" } } } });
+  if (!t) return null;
+  return {
+    at: t.at.toISOString(),
+    host: t.host,
+    destIp: t.destIp,
+    tool: t.tool,
+    reached: t.reached,
+    destRttMs: t.destRttMs,
+    verdict: t.verdict,
+    summary: t.summary,
+    destCountry: t.destCountry,
+    cableName: t.cableName,
+    candidates: t.candidates ? t.candidates.split(" · ").filter((c) => c && c !== t.cableName) : [],
+    confidence: t.confidence,
+    error: t.error,
+    hops: t.hops.map((h) => ({ ttl: h.ttl, ip: h.ip, rttMs: h.rttMs, asn: h.asn, asName: h.asName, rdns: h.rdns, city: h.city, country: h.country })),
+    cableSource: CABLE_MAP_PAGE,
+  };
+}
 /** Serviço da faixa "Internet no Brasil" cujos componentes são as rotas BGP dos outros serviços. */
 const BGP_SERVICE_SLUG = "rotas-bgp";
 const PHASE_STEP_MIN = 30;
@@ -371,24 +430,6 @@ async function agentLabels(ids: string[]): Promise<Map<string, string>> {
     // Sem a tabela do host .NET (instalação só com o motor): fica o nome genérico.
   }
   return labels;
-}
-
-/** Destino do traceroute de um serviço: o host do alvo TCP, ou o do HTTP; nunca o gateway nem o DNS do sistema. */
-function traceHost(targets: readonly { kind: string; host: string; url: string | null }[]): string | null {
-  for (const kind of ["TCP", "HTTP", "ICMP"]) {
-    const t = targets.find((x) => x.kind === kind);
-    if (!t) continue;
-    let host = t.host;
-    if (kind === "HTTP" && t.url) {
-      try {
-        host = new URL(t.url).hostname;
-      } catch {
-        continue;
-      }
-    }
-    if (isTraceableHost(host)) return host;
-  }
-  return null;
 }
 
 /** Alvo principal medido por ponto: o servidor (do histórico já carregado) e os agentes, cada um com a sua ponta viva. */
@@ -502,7 +543,10 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
       : [],
   ]);
   const uptime30d = new Map(totals30d.map((r) => [r.targetId, uptimeFromTotals(r._sum.samples, r._sum.failures)]));
-  const route = await prisma.statusComponent.findFirst({ where: { externalId: service.slug, service: { slug: BGP_SERVICE_SLUG } }, select: { name: true, status: true } });
+  const [route, trace] = await Promise.all([
+    prisma.statusComponent.findFirst({ where: { externalId: service.slug, service: { slug: BGP_SERVICE_SLUG } }, select: { name: true, status: true } }),
+    measuring && routesEnabled() ? loadRoute(service.id) : null,
+  ]);
 
   return {
     components: service.components.map((c) => ({ name: c.name, groupName: c.groupName, status: c.status as ServiceStatus })),
@@ -543,19 +587,21 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
     }),
     vantages: main && vantages ? { targetLabel: targetLabel({ kind: main.kind as ProbeKind, port: main.port }), rows: vantages } : null,
     phases: phaseChecks ? buildPhaseSeries(phaseChecks, { end, hours: SPARK_HOURS, stepMin: PHASE_STEP_MIN }) : null,
-    traceable: measuring && traceHost(targets) !== null,
+    traceable: measuring && routesEnabled() && traceHost(targets) !== null,
+    route: trace,
     // O nome do componente é "<serviço> · <rota>": no detalhe do próprio serviço fica só a rota.
     bgp: route ? { text: route.name.startsWith(`${service.name} · `) ? route.name.slice(service.name.length + 3) : route.name, status: route.status as ServiceStatus } : null,
   };
 }
 
-/** Traceroute sob demanda do servidor até o destino do serviço (não fica gravado; a rota com ASN e cabo é a fase 5). */
-export async function traceServiceRoute(slug: string): Promise<TraceResult> {
+/** Rastreia a rota até o serviço agora ("Rastrear rota"), grava e devolve a rota interpretada. */
+export async function traceServiceRoute(slug: string): Promise<StatusRouteDetail | null> {
   await requirePermission("network.operate");
-  const service = typeof slug === "string" && slug ? await prisma.statusService.findUnique({ where: { slug }, include: { targets: { where: { enabled: true } } } }) : null;
-  const host = service ? traceHost(service.targets) : null;
-  if (!host) return { ok: false, host: "", tool: null, hops: [], reached: false, error: "serviço sem destino para traceroute" };
-  return traceRoute(host);
+  if (typeof slug !== "string" || !slug || !routesEnabled()) return null;
+  const id = await traceServiceNow(slug);
+  if (!id) return null;
+  const trace = await prisma.routeTrace.findUnique({ where: { id }, select: { serviceId: true } });
+  return trace ? loadRoute(trace.serviceId) : null;
 }
 
 /** Consulta todas as fontes oficiais e mede todos os alvos agora, ignorando intervalos, agenda e cache. */

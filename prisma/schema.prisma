@@ -267,6 +267,7 @@ model StatusService {
   components     StatusComponent[]
   incidents      StatusIncident[]
   targets        ProbeTarget[]
+  routes         RouteTrace[]
 }
 
 /// Componente declarado pelo provedor (ex.: "Git Operations", "São Paulo, Brazil - (GRU)").
@@ -379,4 +380,60 @@ model ProbeRollup {
 
   @@id([targetId, vantage, bucket])
   @@index([bucket])
+}
+
+/// Rota do servidor até o destino de um serviço (fase 5): traceroute com ASN, rDNS e cidade de cada salto,
+/// e a inferência de onde o serviço é servido (no Brasil ou do outro lado de um cabo submarino). Mantida 7 dias.
+model RouteTrace {
+  id          String   @id @default(cuid())
+  serviceId   String
+  /// "server" (onde o painel roda).
+  vantage     String   @default("server")
+  at          DateTime @default(now())
+  /// Host rastreado e o IP em que ele resolveu.
+  host        String
+  destIp      String?
+  /// traceroute | tracepath | tracert
+  tool        String?
+  reached     Boolean  @default(false)
+  /// RTT até o destino usado na inferência (o do traceroute, ou o handshake TCP mais recente), em ms.
+  destRttMs   Float?
+  /// DOMESTIC | OPERATOR_CACHE | INTERNATIONAL | UNDETERMINED
+  verdict     String
+  /// Frase do veredito, pronta para a tela.
+  summary     String
+  /// País provável do destino (ISO 3166-1 alfa-2), quando a rota sai do Brasil.
+  destCountry String?
+  /// Cabo submarino provável (id e nome do mapa de cabos) e os outros candidatos, separados por " · ".
+  cableId     String?
+  cableName   String?
+  candidates  String?
+  /// HIGH | MEDIUM | LOW; null sem cabo.
+  confidence  String?
+  /// Sequência de ASNs da rota ("28573 4230 15169"), para detectar mudança.
+  asPath      String?
+  error       String?
+  service     StatusService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  hops        RouteHop[]
+
+  @@index([serviceId, at])
+  @@index([at])
+}
+
+/// Um salto de uma rota gravada.
+model RouteHop {
+  id       Int     @id @default(autoincrement())
+  traceId  String
+  ttl      Int
+  ip       String?
+  rttMs    Float?
+  asn      Int?
+  asName   String?
+  rdns     String?
+  /// Cidade deduzida do rDNS (ex.: "São Paulo") e o país (ISO alfa-2).
+  city     String?
+  country  String?
+  trace    RouteTrace @relation(fields: [traceId], references: [id], onDelete: Cascade)
+
+  @@index([traceId])
 }

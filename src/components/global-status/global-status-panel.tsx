@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Loader2, Radar, RefreshCw, Settings2 } from "lucide-react";
+import { ExternalLink, Loader2, Radar, RefreshCw, Route, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   getGlobalStatus,
@@ -100,7 +100,8 @@ function IncidentTicker({ incidents, onOpen }: { incidents: StatusIncidentRow[];
     );
   }
   const item = (i: StatusIncidentRow, copy: number) => {
-    const style = SERVICE_STATUS_STYLE[IMPACT_STATUS[i.impact] ?? "DEGRADED"];
+    // Mudança de rota é aviso, não falha: cor neutra.
+    const style = SERVICE_STATUS_STYLE[i.origin === "ROUTE" ? "UNKNOWN" : (IMPACT_STATUS[i.impact] ?? "DEGRADED")];
     return (
       <button
         key={`${copy}-${i.id}`}
@@ -113,6 +114,8 @@ function IncidentTicker({ incidents, onOpen }: { incidents: StatusIncidentRow[];
         {/* Detectado pelas medições daqui: radar; publicado pela fonte: o ponto de sempre. */}
         {i.origin === "DETECTED" ? (
           <Radar className={cn("size-3.5 shrink-0", style.text)} aria-label="Detectado pelas medições deste servidor" />
+        ) : i.origin === "ROUTE" ? (
+          <Route className={cn("size-3.5 shrink-0", style.text)} aria-label="A rota até o serviço mudou" />
         ) : (
           <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", style.dot)} />
         )}
@@ -370,7 +373,8 @@ function IncidentList({ incidents }: { incidents: StatusIncidentRow[] }) {
         <div key={i.id} className="rounded-lg border p-3 text-xs">
           <div className="flex items-start justify-between gap-2">
             <span className="font-medium text-foreground">{i.url ? <a href={i.url} target="_blank" rel="noreferrer" className="hover:underline">{i.title}</a> : i.title}</span>
-            <StatusPill status={i.resolvedAt ? "OK" : IMPACT_STATUS[i.impact] ?? "DEGRADED"} className="shrink-0" />
+            {/* Mudança de rota é aviso, não falha: sem o selo de estado. */}
+            {i.origin !== "ROUTE" && <StatusPill status={i.resolvedAt ? "OK" : IMPACT_STATUS[i.impact] ?? "DEGRADED"} className="shrink-0" />}
           </div>
           <div className="mt-1 text-muted-foreground">
             {i.origin === "DETECTED" && (
@@ -378,7 +382,12 @@ function IncidentList({ incidents }: { incidents: StatusIncidentRow[] }) {
                 <Radar className="size-3" /> Detectado ·{" "}
               </span>
             )}
-            {IMPACT_LABEL[i.impact] ?? i.impact} · {incidentStateLabel(i.state)} · início {formatDateTime(i.startedAt)}
+            {i.origin === "ROUTE" && (
+              <span className="inline-flex items-center gap-1">
+                <Route className="size-3" /> Rota ·{" "}
+              </span>
+            )}
+            {i.origin !== "ROUTE" && <>{IMPACT_LABEL[i.impact] ?? i.impact} · {incidentStateLabel(i.state)} · </>}início {formatDateTime(i.startedAt)}
             {i.resolvedAt && <> · resolvido {formatDateTime(i.resolvedAt)}</>}
           </div>
           {i.affected && <div className="mt-1 line-clamp-2 text-muted-foreground">{i.affected}</div>}
@@ -472,7 +481,7 @@ function ServiceDetailSheet({ service, measuring, onClose }: { service: StatusSe
                   {measuring && data.vantages && <VantageList vantages={data.vantages} />}
                   {measuring && data.phases && <PhaseChart phases={data.phases} />}
                   {data.bgp && <BgpRoute bgp={data.bgp} />}
-                  {data.traceable && <RouteSection key={`route-${service.slug}`} slug={service.slug} />}
+                  {(data.traceable || data.route) && <RouteSection key={`route-${service.slug}`} slug={service.slug} route={data.route} />}
                   {/* Sem fonte oficial só há os incidentes detectados pelas medições, e nenhum componente publicado. */}
                   {(service.hasSource || data.incidents.length > 0) && <IncidentList incidents={data.incidents} />}
                   {/* key: volta para "só os afetados" ao trocar de serviço. */}
