@@ -238,7 +238,7 @@ model StatusService {
   name           String
   /// CLOUD | CDN | DEV | AI | SOCIAL | STREAMING | INTERNET
   category       String
-  /// Fonte oficial: STATUSPAGE | GCP | AZURE_RSS | NONE
+  /// Fonte oficial: STATUSPAGE | GCP | AZURE_RSS | AWS | NONE
   sourceType     String    @default("NONE")
   /// Endereço base da API oficial (ex.: https://www.githubstatus.com).
   sourceUrl      String?

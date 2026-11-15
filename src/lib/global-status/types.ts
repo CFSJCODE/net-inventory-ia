@@ -3,7 +3,7 @@
 export type ServiceStatus = "OK" | "DEGRADED" | "DOWN" | "MAINTENANCE" | "UNKNOWN";
 export type IncidentImpact = "MINOR" | "MAJOR" | "CRITICAL" | "MAINTENANCE";
 export type ServiceCategory = "CLOUD" | "CDN" | "DEV" | "AI" | "SOCIAL" | "STREAMING" | "INTERNET";
-export type SourceType = "STATUSPAGE" | "GCP" | "AZURE_RSS" | "NONE";
+export type SourceType = "STATUSPAGE" | "GCP" | "AZURE_RSS" | "AWS" | "NONE";
 
 export interface NormalizedComponent {
   externalId: string;

@@ -1,6 +1,18 @@
 import { toDate, worstStatus, type IncidentImpact, type NormalizedComponent, type NormalizedIncident, type OfficialSnapshot, type ServiceStatus } from "../types";
 
-/** Adaptador do Google Cloud (`status.cloud.google.com/incidents.json`). */
+/**
+ * Adaptador do Google Cloud (`status.cloud.google.com/incidents.json`). O Firebase publica o mesmo
+ * formato em `status.firebase.google.com`, então o site e o nome vêm de quem chama.
+ */
+
+export interface GcpSite {
+  /** Raiz do painel de status, sem barra no fim (os `uri` dos incidentes são relativos a ela). */
+  url: string;
+  /** Nome do produto, usado quando o incidente não traz descrição. */
+  name: string;
+}
+
+const GOOGLE_CLOUD: GcpSite = { url: "https://status.cloud.google.com", name: "Google Cloud" };
 
 interface GcpIncident {
   id: string;
@@ -43,7 +55,7 @@ function affectedProducts(active: GcpIncident[]): NormalizedComponent[] {
 }
 
 /** Incidente normalizado, ou null quando é inválido ou foi resolvido há mais de 30 dias. */
-function toIncident(inc: GcpIncident, now: Date): NormalizedIncident | null {
+function toIncident(inc: GcpIncident, now: Date, site: GcpSite): NormalizedIncident | null {
   const startedAt = toDate(inc.begin);
   if (!inc.id || !startedAt) return null;
   const resolvedAt = toDate(inc.end);
@@ -52,20 +64,20 @@ function toIncident(inc: GcpIncident, now: Date): NormalizedIncident | null {
   const state = resolvedAt ? "resolved" : (inc.most_recent_update?.status ?? "investigating").toLowerCase();
   return {
     externalId: inc.id,
-    title: (inc.external_desc ?? "Incidente no Google Cloud").trim().split("\n")[0].slice(0, 300),
+    title: (inc.external_desc ?? `Incidente no ${site.name}`).trim().split("\n")[0].slice(0, 300),
     impact: SEVERITY[inc.severity ?? ""] ?? "MINOR",
     state,
-    url: inc.uri ? `https://status.cloud.google.com/${inc.uri}` : null,
+    url: inc.uri ? `${site.url}/${inc.uri}` : null,
     affected: products.length ? products.slice(0, 8).join(" · ") : null,
     startedAt,
     resolvedAt,
   };
 }
 
-export function parseGcpIncidents(data: GcpIncident[], now = new Date()): OfficialSnapshot {
+export function parseGcpIncidents(data: GcpIncident[], now = new Date(), site: GcpSite = GOOGLE_CLOUD): OfficialSnapshot {
   const list = Array.isArray(data) ? data : [];
   const active = list.filter((i) => !i.end);
-  const incidents = list.map((i) => toIncident(i, now)).filter((i): i is NormalizedIncident => i !== null);
+  const incidents = list.map((i) => toIncident(i, now, site)).filter((i): i is NormalizedIncident => i !== null);
   const status = active.length ? worstStatus(active.map((i) => impactStatus(i.status_impact))) : "OK";
   const description = active.length
     ? `${active.length} incidente${active.length > 1 ? "s" : ""} em andamento`
