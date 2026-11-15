@@ -915,7 +915,8 @@ describe("medições ligadas", () => {
         await rounds(1);
         expect(await storedConnectivity()).toEqual(CONNECTED);
         expect((await page.see()).connectivity).toEqual(CONNECTED);
-        expect(read).toHaveBeenCalledTimes(1);
+        // Só as leituras do estado da conexão (a configuração da página também é lida por findUnique).
+        expect(read.mock.calls.filter(([args]) => (args as { where?: { key?: string } } | undefined)?.where?.key === CONNECTIVITY_KEY)).toHaveLength(1);
         expect(page.notices).toEqual(ONLY_THE_CONNECTION);
       });
 

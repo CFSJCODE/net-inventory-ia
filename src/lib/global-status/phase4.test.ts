@@ -208,9 +208,9 @@ describe("alerta por e-mail do Status global", () => {
 
 describe("configuração", () => {
   it("volta ao padrão o que não faz sentido", () => {
-    expect(normalizeGlobalStatusSettings(null)).toEqual({ alerts: { enabled: false, level: "DOWN" }, ispAsn: null });
-    expect(normalizeGlobalStatusSettings({ alerts: { enabled: true, level: "DEGRADED" }, ispAsn: 28573 })).toEqual({ alerts: { enabled: true, level: "DEGRADED" }, ispAsn: 28573 });
-    expect(normalizeGlobalStatusSettings({ alerts: { enabled: "sim", level: "x" }, ispAsn: -1 })).toEqual({ alerts: { enabled: false, level: "DOWN" }, ispAsn: null });
+    expect(normalizeGlobalStatusSettings(null)).toEqual({ alerts: { enabled: false, level: "DOWN" }, ispAsn: null, probeWindow: 20 });
+    expect(normalizeGlobalStatusSettings({ alerts: { enabled: true, level: "DEGRADED" }, ispAsn: 28573, probeWindow: 50 })).toEqual({ alerts: { enabled: true, level: "DEGRADED" }, ispAsn: 28573, probeWindow: 50 });
+    expect(normalizeGlobalStatusSettings({ alerts: { enabled: "sim", level: "x" }, ispAsn: -1, probeWindow: 1000 })).toEqual({ alerts: { enabled: false, level: "DOWN" }, ispAsn: null, probeWindow: 20 });
     expect(normalizeGlobalStatusSettings({ ispAsn: "" }).ispAsn).toBeNull();
     expect(normalizeGlobalStatusSettings({ ispAsn: 1.5 }).ispAsn).toBeNull();
   });

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { ServiceStatus } from "./types";
+import { DEFAULT_WINDOW_SIZE, normalizeWindowSize } from "./window-stats";
 
 /**
  * Configuração do painel "Status global" (fase 4), feita na tela de configuração da página /status. Fica
@@ -17,14 +18,16 @@ export interface GlobalStatusSettings {
   alerts: GlobalStatusAlertSettings;
   /** ASN da operadora para o IODA; null = descobrir pelo IP público do servidor. */
   ispAsn: number | null;
+  /** N da janela deslizante da linha do tempo (p50/p95/p99, jitter, perda), de 5 a 200 medições. */
+  probeWindow: number;
 }
 
 export const SETTINGS_KEY = "globalStatus.settings";
-export const DEFAULT_GLOBAL_STATUS_SETTINGS: GlobalStatusSettings = { alerts: { enabled: false, level: "DOWN" }, ispAsn: null };
+export const DEFAULT_GLOBAL_STATUS_SETTINGS: GlobalStatusSettings = { alerts: { enabled: false, level: "DOWN" }, ispAsn: null, probeWindow: DEFAULT_WINDOW_SIZE };
 
 /** Valida o que veio da tela ou do banco; o que não fizer sentido volta ao padrão. */
 export function normalizeGlobalStatusSettings(input: unknown): GlobalStatusSettings {
-  const raw = (input && typeof input === "object" ? input : {}) as Partial<{ alerts: Partial<GlobalStatusAlertSettings>; ispAsn: unknown }>;
+  const raw = (input && typeof input === "object" ? input : {}) as Partial<{ alerts: Partial<GlobalStatusAlertSettings>; ispAsn: unknown; probeWindow: unknown }>;
   const asn = Number(raw.ispAsn);
   return {
     alerts: {
@@ -33,6 +36,7 @@ export function normalizeGlobalStatusSettings(input: unknown): GlobalStatusSetti
     },
     // ASN de 32 bits; 0 e os reservados para documentação não são operadoras.
     ispAsn: raw.ispAsn !== null && raw.ispAsn !== undefined && raw.ispAsn !== "" && Number.isInteger(asn) && asn > 0 && asn < 4_200_000_000 ? asn : null,
+    probeWindow: normalizeWindowSize(raw.probeWindow ?? DEFAULT_WINDOW_SIZE),
   };
 }
 

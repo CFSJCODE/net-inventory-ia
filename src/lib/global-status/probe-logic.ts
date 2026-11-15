@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import type { CatalogEntry } from "./catalog";
 import { BUCKET_MS, WINDOW_SIZE, aggregateChecks, bucketStart, evaluateTarget, type BucketStats, type CheckSample, type RecentCheck, type TargetVerdict } from "./stats";
+import { TRAIL_MAX, windowStats, type WindowSample } from "./window-stats";
 import {
   AUTO_GATEWAY,
   STATUS_SEVERITY,
@@ -105,6 +106,11 @@ export interface TargetState extends TargetInfo {
    * que voltam inteiras (ver `hydrateTarget`).
    */
   beforePause: TargetVerdict | null;
+  /**
+   * Fase 6: as últimas medições (até TRAIL_MAX), da mais velha para a mais nova, para o gatilho da janela
+   * deslizante (p95 da janela contra a base). Ausente = ainda sem histórico.
+   */
+  trail?: WindowSample[];
 }
 
 /** Uma medição de um passo: o alvo como estava ao medir, o instante em que a sonda começou e o resultado. */
@@ -304,6 +310,8 @@ export interface TargetHistory {
   everOk: boolean;
   /** Só para o alvo gravado como pausado: as últimas medições dele, de qualquer idade, mais nova primeiro. */
   lastChecks?: readonly RecentCheck[];
+  /** Fase 6: as últimas medições para o gatilho da janela, da mais velha para a mais nova. */
+  trail?: readonly WindowSample[];
 }
 
 /**
@@ -324,7 +332,7 @@ export interface TargetHistory {
  */
 export function hydrateTarget(state: TargetState, history: TargetHistory, now: number): TargetState {
   const ring = isPausedTarget(state) && history.lastChecks ? history.lastChecks.slice(0, WINDOW_SIZE) : initialRing(history.checks, state.intervalSec, now);
-  return { ...state, ring, everOk: history.everOk };
+  return { ...state, ring, everOk: history.everOk, ...(history.trail ? { trail: history.trail.slice(-TRAIL_MAX) } : {}) };
 }
 
 /**
@@ -399,10 +407,14 @@ export function decideConnectivity(evidence: ConnectivityEvidence): Connectivity
   return CONNECTED;
 }
 
-/** Os resultados de alvos de serviço como evidência. Sonda que não pôde rodar não prova nada e fica de fora. */
+/**
+ * Os resultados de alvos de serviço como evidência. Sonda que não pôde rodar não prova nada e fica de fora.
+ * O sucesso do DNS composto também fica de fora: o DNS local pode responder do cache com a saída para a
+ * Internet caída, e isso não prova que um serviço respondeu. A falha dele entra (diz que o nome não resolve).
+ */
 export function serviceEvidence(measurements: readonly Measurement[]): ServiceEvidence[] {
   return measurements
-    .filter((m) => !isInternetTarget(m.target) && !m.result.unsupported)
+    .filter((m) => !isInternetTarget(m.target) && !m.result.unsupported && !(m.target.kind === "DNS_MULTI" && m.result.ok))
     .map((m) => ({ serviceId: m.target.serviceId, ok: m.result.ok, failedAt: m.result.failedAt ?? null }));
 }
 
@@ -762,6 +774,12 @@ export interface CheckRow {
   jitterMs: number | null;
   certDays: number | null;
   error: string | null;
+  /** DNS: código da resposta (fase 6). Só presente quando a sonda informa. */
+  rcode?: string | null;
+  /** DNS: menor TTL devolvido, em segundos. */
+  ttlSec?: number | null;
+  /** DNS composto: JSON com a resposta de cada resolvedor (DnsAnswer[]). */
+  dnsAnswers?: string | null;
 }
 
 /** O que muda na linha do alvo a cada medição. */
@@ -786,6 +804,15 @@ const finite = (value: number | null | undefined): number | null => (typeof valu
 const whole = (value: number | null | undefined): number | null => (finite(value) === null ? null : Math.floor(value as number));
 const cutError = (error: string | null | undefined): string | null => (error ? error.slice(0, ERROR_MAX_LENGTH) : null);
 
+/** Campos de DNS da linha (só quando a sonda informa, para não mudar as linhas dos outros tipos). */
+function dnsFields(result: ProbeResult): Pick<CheckRow, "rcode" | "ttlSec" | "dnsAnswers"> {
+  const fields: Pick<CheckRow, "rcode" | "ttlSec" | "dnsAnswers"> = {};
+  if (result.rcode) fields.rcode = result.rcode;
+  if (whole(result.ttlSec) !== null) fields.ttlSec = whole(result.ttlSec);
+  if (result.dnsAnswers?.length) fields.dnsAnswers = JSON.stringify(result.dnsAnswers);
+  return fields;
+}
+
 /** Frase de um alvo de Internet que nunca respondeu: provavelmente a rede bloqueia esse tipo de tráfego. */
 export function neverAnsweredReason(kind: ProbeKind): string {
   if (kind === "ICMP") return "Sem resposta a ping até agora (o ICMP pode estar bloqueado nesta rede).";
@@ -800,6 +827,18 @@ function unmeasured(state: TargetState, at: Date, reason: string, error: string 
     row: null,
     update: { status: "UNKNOWN", statusReason: reason, lastCheckAt: at, lastLatencyMs: null, lastError: error },
   };
+}
+
+/**
+ * Gatilho da janela deslizante (fase 6) no estado do alvo: com o veredito normal "ok", o alvo fica
+ * degradado quando o p95 das últimas N medições passa de 1,5× a mediana das 100 anteriores (e da cauda
+ * normal delas; ver `windowStats`). Não vale para o certificado TLS, que mede uma vez a cada 6 h.
+ */
+export function windowVerdict(kind: ProbeKind, trail: readonly WindowSample[], windowSize?: number): TargetVerdict | null {
+  if (kind === "TLS") return null;
+  const stats = windowStats(trail, { size: windowSize });
+  if (!stats.degraded || stats.p95Ms === null || stats.ratio === null) return null;
+  return { status: "DEGRADED", reason: `p95 ${stats.ratio.toFixed(1).replace(".", ",")}× a mediana das 100 medições anteriores (${Math.round(stats.p95Ms)} ms)` };
 }
 
 /**
@@ -830,7 +869,7 @@ function judge(state: Pick<TargetState, "status" | "reason" | "beforePause">, ri
  *   de `evaluateTarget` com a linha de base do alvo, sem melhorar o estado enquanto só houver falhas
  *   (ver `judge`).
  */
-export function recordResult(state: TargetState, result: ProbeResult, at: Date, baseline: readonly number[] = []): RecordedResult {
+export function recordResult(state: TargetState, result: ProbeResult, at: Date, baseline: readonly number[] = [], windowSize?: number): RecordedResult {
   const error = cutError(result.error);
   if (result.unsupported) return unmeasured(state, at, error ?? "A sonda não pôde rodar neste servidor.", error);
   if (isInternetTarget(state) && !state.everOk && !result.ok) return unmeasured(state, at, neverAnsweredReason(state.kind), error);
@@ -839,10 +878,12 @@ export function recordResult(state: TargetState, result: ProbeResult, at: Date, 
   const latencyMs = ok ? finite(result.latencyMs) : null;
   const check: RecentCheck = { ok, latencyMs, lossPct: finite(result.lossPct), certDays: whole(result.certDays) };
   const ring = [check, ...state.ring].slice(0, WINDOW_SIZE);
-  const verdict = judge(state, ring, baseline);
+  const trail = [...(state.trail ?? []), { ok, latencyMs, lossPct: check.lossPct }].slice(-TRAIL_MAX);
+  const judged = judge(state, ring, baseline);
+  const verdict = judged.status === "OK" ? (windowVerdict(state.kind, trail, windowSize) ?? judged) : judged;
   const lastError = ok ? null : error;
   return {
-    state: { ...state, ring, status: verdict.status, reason: verdict.reason, lastLatencyMs: latencyMs, everOk: state.everOk || ok, beforePause: null },
+    state: { ...state, ring, trail, status: verdict.status, reason: verdict.reason, lastLatencyMs: latencyMs, everOk: state.everOk || ok, beforePause: null },
     row: {
       targetId: state.id,
       vantage: SERVER_VANTAGE,
@@ -859,6 +900,7 @@ export function recordResult(state: TargetState, result: ProbeResult, at: Date, 
       jitterMs: finite(result.jitterMs),
       certDays: check.certDays,
       error: lastError,
+      ...dnsFields(result),
     },
     update: { status: verdict.status, statusReason: verdict.reason, lastCheckAt: at, lastLatencyMs: latencyMs, lastError },
   };
@@ -941,7 +983,7 @@ export interface TickOutcome {
 }
 
 /** Aplica os resultados de um passo ao estado em memória e monta as gravações (`recordResult` e `summarizeService`). */
-export function recordTick(targets: ReadonlyMap<string, TargetState>, record: readonly Measurement[], baselines: ReadonlyMap<string, readonly number[]>): TickOutcome {
+export function recordTick(targets: ReadonlyMap<string, TargetState>, record: readonly Measurement[], baselines: ReadonlyMap<string, readonly number[]>, windowSize?: number): TickOutcome {
   const next = new Map(targets);
   const rows: CheckRow[] = [];
   const targetUpdates: TickOutcome["targetUpdates"] = [];
@@ -949,7 +991,7 @@ export function recordTick(targets: ReadonlyMap<string, TargetState>, record: re
   for (const m of record) {
     const state = next.get(m.target.id);
     if (!state) continue;
-    const recorded = recordResult(state, m.result, m.at, baselines.get(state.id));
+    const recorded = recordResult(state, m.result, m.at, baselines.get(state.id), windowSize);
     next.set(state.id, recorded.state);
     if (recorded.row) rows.push(recorded.row);
     targetUpdates.push({ id: state.id, data: recorded.update });

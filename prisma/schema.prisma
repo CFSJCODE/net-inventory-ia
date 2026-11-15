@@ -316,7 +316,7 @@ model ProbeTarget {
   serviceId     String
   /// Chave estável dentro do serviço (ex.: "http", "tcp443"); o catálogo atualiza sem duplicar.
   key           String
-  /// HTTP | TCP | ICMP | DNS | TLS
+  /// HTTP | TCP | ICMP | DNS | TLS | DNS_MULTI
   kind          String
   /// Host, IP, "auto:gateway" (gateway padrão) ou o servidor DNS consultado.
   host          String
@@ -358,6 +358,12 @@ model ProbeCheck {
   jitterMs   Float?
   certDays   Int?
   error      String?
+  /// DNS (fase 6): NOERROR | NODATA | NXDOMAIN | SERVFAIL | REFUSED | TIMEOUT | ERROR.
+  rcode      String?
+  /// DNS: menor TTL devolvido, em segundos.
+  ttlSec     Int?
+  /// DNS composto: JSON com a resposta de cada resolvedor (sistema, 8.8.8.8, 1.1.1.1).
+  dnsAnswers String?
   target     ProbeTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
 
   @@index([targetId, at])
