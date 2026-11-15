@@ -5,7 +5,7 @@ import { parseStatuspageSummary, statuspageVersion, type SpSummary } from "./ada
 import { parseGcpIncidents } from "./adapters/gcp";
 import { parseAzureRss } from "./adapters/azure-rss";
 import { decodeAwsBody, parseAwsEvents } from "./adapters/aws";
-import { iodaAlertsUrl, parseIodaAlerts, type IodaAlertsResponse } from "./adapters/ioda";
+import { IMPACT_LEVEL, IODA_WINDOW_S, iodaAlertsUrl, parseIodaAlerts, parseRunId, type CarriedRun, type IodaAlertsResponse } from "./adapters/ioda";
 import { bgpSnapshot } from "./adapters/ripestat";
 import { collectRoutes, ispLabel, resolveIsp } from "./internet-signals";
 import { getGlobalStatusSettings } from "./settings";
@@ -131,11 +131,20 @@ async function fetchIoda(service: StatusService): Promise<FetchResult> {
     base = base.replace(AUTO_ASN, `entityCode=${isp.asn}`);
     entity = ispLabel(isp);
   }
-  const body = (await (await get(iodaAlertsUrl(base, Date.now()))).json()) as IodaAlertsResponse;
+  const now = Date.now();
+  const body = (await (await get(iodaAlertsUrl(base, now))).json()) as IodaAlertsResponse;
+  // Quedas abertas que começaram antes da janela de 7 dias: o alerta que as abriu já não vem, e só um
+  // "normal" as fecha. Sem isto, uma queda longa sumiria da resposta e seria dada como resolvida.
+  const windowStart = Math.floor(now / 1000) - IODA_WINDOW_S;
+  const open = await prisma.statusIncident.findMany({ where: { serviceId: service.id, origin: "OFFICIAL", resolvedAt: null }, select: { externalId: true, impact: true, affected: true } });
+  const carried = open.flatMap((i): CarriedRun[] => {
+    const id = parseRunId(i.externalId);
+    return id && id.start < windowStart ? [{ ...id, level: IMPACT_LEVEL[i.impact] ?? "warning", affected: i.affected }] : [];
+  });
   const code = /entityCode=([^&]+)/.exec(base)?.[1];
   const kind = /entityType=([^&]+)/.exec(base)?.[1];
   const pageUrl = code && kind ? `https://ioda.inetintel.cc.gatech.edu/${kind}/${code}` : service.pageUrl;
-  const snapshot = parseIodaAlerts(body, { entity, pageUrl });
+  const snapshot = parseIodaAlerts(body, { entity, pageUrl, carried });
   // A operadora aparece no card pela frase: "AS28573 · CLARO S.A. · Sem alertas do IODA".
   if (entity !== service.name) snapshot.description = `${entity} · ${snapshot.description}`;
   return { kind: "snapshot", snapshot, version: null };

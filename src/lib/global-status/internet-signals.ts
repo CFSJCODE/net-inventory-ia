@@ -31,6 +31,8 @@ export interface IspInfo {
   name: string | null;
   /** Quando foi descoberta (ISO 8601). */
   at: string;
+  /** true = veio da tela de configuração, não da descoberta pelo IP público. */
+  manual?: boolean;
 }
 
 async function readIsp(): Promise<IspInfo | null> {
@@ -55,7 +57,9 @@ export function storedIsp(): Promise<IspInfo | null> {
  */
 export async function resolveIsp(manualAsn: number | null, nowMs = Date.now()): Promise<IspInfo> {
   const stored = await readIsp();
-  if (stored && (manualAsn === null || stored.asn === manualAsn) && nowMs - Date.parse(stored.at) < ISP_TTL_MS) return stored;
+  // O guardado só vale para o mesmo modo: voltar ao automático descobre de novo, sem herdar o ASN informado à mão.
+  const sameSource = manualAsn === null ? !stored?.manual : !!stored?.manual && stored.asn === manualAsn;
+  if (stored && sameSource && nowMs - Date.parse(stored.at) < ISP_TTL_MS) return stored;
   let asn = manualAsn;
   if (asn === null) {
     const ip = parseWhatsMyIp(await getJson(ripestatUrl("whats-my-ip")));
@@ -66,7 +70,7 @@ export async function resolveIsp(manualAsn: number | null, nowMs = Date.now()): 
   const name = await getJson<Parameters<typeof parseAsOverview>[0]>(ripestatUrl("as-overview", `AS${asn}`))
     .then(parseAsOverview)
     .catch(() => (stored?.asn === asn ? stored.name : null));
-  const info: IspInfo = { asn, name, at: new Date(nowMs).toISOString() };
+  const info: IspInfo = { asn, name, at: new Date(nowMs).toISOString(), ...(manualAsn !== null ? { manual: true } : {}) };
   const value = JSON.stringify(info);
   await prisma.appSetting.upsert({ where: { key: ISP_KEY }, create: { key: ISP_KEY, value }, update: { value } });
   return info;

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getEmailAlertConfig } from "@/lib/alerts/email-settings";
 import { deliver } from "@/lib/alerts/alert-monitor";
 import { renderEmail, type EmailTone } from "@/lib/alerts/email-template";
+import { measurementPaused } from "./probe-logic";
 import { getGlobalStatusSettings, type GlobalStatusAlertSettings } from "./settings";
 import { STATUS_SEVERITY, type ServiceStatus } from "./types";
 
@@ -17,7 +18,8 @@ import { STATUS_SEVERITY, type ServiceStatus } from "./types";
  *   minutos não vira e-mail.
  * - Todas as mudanças de uma rodada vão num e-mail só, e no máximo um e-mail a cada 10 min (o que
  *   mudar nesse intervalo vai no próximo).
- * - "Sem dados" e "manutenção" não são notícia. A faixa "Sua Internet" fica de fora: com a sua conexão
+ * - "Sem dados", "manutenção" e o card com as medições pausadas pela queda da conexão do servidor não
+ *   são notícia: fica valendo o último estado avisado. A faixa "Sua Internet" fica de fora: com a sua conexão
  *   fora, o e-mail nem sairia.
  */
 
@@ -40,6 +42,8 @@ export interface WatchedService {
   lastChangeAt: Date | null;
   /** Frase que explica o estado (medido ou oficial). */
   reason: string | null;
+  /** Medições paradas pela queda da conexão do servidor: o status do card não é um julgamento novo. */
+  paused?: boolean;
 }
 
 export interface StatusChange {
@@ -61,7 +65,8 @@ export function planStatusAlerts(services: readonly WatchedService[], notified: 
   for (const s of services) {
     const was = notified[s.slug];
     if (s.category === "INTERNET") continue;
-    if (!isNews(s.status)) {
+    // Com a conexão do servidor fora, o card mostra só o oficial: nem queda nem volta, fica o último avisado.
+    if (s.paused || !isNews(s.status)) {
       if (was) next[s.slug] = was;
       continue;
     }
@@ -139,7 +144,7 @@ export async function notifyStatusChanges(now = new Date()): Promise<void> {
 
   const rows = await prisma.statusService.findMany({
     where: { enabled: true },
-    select: { slug: true, name: true, category: true, status: true, lastChangeAt: true, measuredReason: true, officialStatus: true, officialState: true },
+    select: { slug: true, name: true, category: true, status: true, lastChangeAt: true, measuredStatus: true, measuredReason: true, officialStatus: true, officialState: true },
   });
   const services: WatchedService[] = rows.map((r) => ({
     slug: r.slug,
@@ -149,6 +154,7 @@ export async function notifyStatusChanges(now = new Date()): Promise<void> {
     lastChangeAt: r.lastChangeAt,
     // O motivo de quem puxou o estado para baixo: o medido quando é ele, senão a frase do provedor.
     reason: r.measuredReason ?? (r.officialState && r.officialState !== "OK" ? r.officialStatus : null),
+    paused: measurementPaused(r),
   }));
   const state = (await readState()) ?? { notified: {}, lastSentAt: null };
   const { changes, next } = planStatusAlerts(services, state.notified, settings.level, now);

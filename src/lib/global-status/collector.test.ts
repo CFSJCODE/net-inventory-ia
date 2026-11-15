@@ -450,6 +450,39 @@ describe("visão de fora: IODA e RIPEstat (fase 4)", () => {
     expect(stored.value).not.toContain("203.0.113.7");
   });
 
+  it("voltar ao automático depois de informar o ASN descobre de novo pelo IP", async () => {
+    await seed(OPERADORA);
+    await db.appSetting.create({ data: { key: "globalStatus.isp", value: JSON.stringify({ asn: 18881, name: "TELEFONICA BRASIL", at: new Date().toISOString(), manual: true }) } });
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(async (url) => {
+      if (url.includes("/whats-my-ip/")) return ripe({ ip: "203.0.113.7" });
+      if (url.includes("/network-info/")) return ripe({ asns: ["28573"], prefix: "203.0.113.0/24" });
+      if (url.includes("/as-overview/")) return ripe({ holder: "CLARO S.A." });
+      return json({ data: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await checkGlobalStatus(true);
+
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toContain("entityCode=28573&");
+    const stored = JSON.parse((await db.appSetting.findUniqueOrThrow({ where: { key: "globalStatus.isp" } })).value);
+    expect(stored).toMatchObject({ asn: 28573 });
+    expect(stored.manual).toBeUndefined();
+  });
+
+  it("queda aberta há mais de 7 dias não é dada como resolvida só por ter saído da janela", async () => {
+    await seed(BRASIL);
+    const service = await db.statusService.findUniqueOrThrow({ where: { slug: "internet-brasil" } });
+    const start = Math.floor(Date.now() / 1000) - 9 * 86400;
+    await db.statusIncident.create({ data: { serviceId: service.id, origin: "OFFICIAL", externalId: `bgp:${start}`, title: "Internet no Brasil: queda no sinal rotas bgp", impact: "MAJOR", state: "investigating", url: null, affected: "Rotas BGP", startedAt: new Date(start * 1000) } });
+    vi.stubGlobal("fetch", vi.fn(async () => json({ data: [] })));
+
+    await checkGlobalStatus(true);
+
+    const br = await db.statusService.findUniqueOrThrow({ where: { slug: "internet-brasil" }, include: { incidents: true } });
+    expect(br.officialState).toBe("DEGRADED");
+    expect(br.incidents.map((i) => [i.externalId, i.resolvedAt])).toEqual([[`bgp:${start}`, null]]);
+  });
+
   it("operadora informada na configuração: não descobre pelo IP", async () => {
     await seed(OPERADORA);
     await db.appSetting.create({ data: { key: "globalStatus.settings", value: JSON.stringify({ ispAsn: 18881 }) } });

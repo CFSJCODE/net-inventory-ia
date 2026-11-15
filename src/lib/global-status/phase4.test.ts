@@ -50,7 +50,31 @@ describe("IODA", () => {
 
   it("um aviso que vira crítico sobe o nível da mesma queda", () => {
     const runs = iodaRuns([{ datasource: "bgp", time: 1, level: "warning", value: 90, historyValue: 100 }, { datasource: "bgp", time: 2, level: "critical", value: 50, historyValue: 100 }]);
-    expect(runs).toEqual([{ datasource: "bgp", start: 1, end: null, level: "critical", value: 50, historyValue: 100 }]);
+    expect(runs).toEqual([{ datasource: "bgp", start: 1, end: null, level: "critical", current: "critical", value: 50, historyValue: 100 }]);
+  });
+
+  it("crítico que melhora para aviso: o estado de agora é degradado, o impacto fica no pior", () => {
+    const body = {
+      data: [
+        { datasource: "bgp", time: 1, level: "critical" },
+        { datasource: "ping-slash24", time: 2, level: "critical" },
+        { datasource: "bgp", time: 3, level: "warning" },
+      ],
+    };
+    const snap = parseIodaAlerts(body, { entity: "Brasil", pageUrl: null });
+    expect(snap.status).toBe("DEGRADED");
+    expect(snap.components?.find((c) => c.externalId === "bgp")?.status).toBe("DEGRADED");
+    expect(snap.incidents.find((i) => i.externalId === "bgp:1")?.impact).toBe("MAJOR");
+  });
+
+  it("queda aberta que começou antes da janela segue aberta sem alertas novos, e fecha com o 'normal'", () => {
+    const carried = [{ datasource: "bgp", start: 5, level: "critical" as const, affected: "Rotas BGP: 9 contra 38 do normal (−76%)" }];
+    const still = parseIodaAlerts({ data: [] }, { entity: "Brasil", pageUrl: null, carried });
+    expect(still.status).toBe("DEGRADED");
+    expect(still.incidents).toEqual([expect.objectContaining({ externalId: "bgp:5", resolvedAt: null, impact: "MAJOR", affected: "Rotas BGP: 9 contra 38 do normal (−76%)" })]);
+    const closed = parseIodaAlerts({ data: [{ datasource: "bgp", time: 900, level: "normal" }] }, { entity: "Brasil", pageUrl: null, carried });
+    expect(closed.status).toBe("OK");
+    expect(closed.incidents[0].resolvedAt).toEqual(new Date(900_000));
   });
 
   it("resposta sem lista de alertas é erro (o card não vira 'normal' por engano)", () => {
@@ -152,6 +176,12 @@ describe("alerta por e-mail do Status global", () => {
     expect(planStatusAlerts([svc("github", "DOWN")], { github: "DEGRADED" }, "DEGRADED", T).changes[0]).toMatchObject({ kind: "alert", from: "DEGRADED", to: "DOWN" });
     expect(planStatusAlerts([svc("github", "DEGRADED")], { github: "DEGRADED" }, "DEGRADED", T).changes).toEqual([]);
     expect(planStatusAlerts([svc("github", "DEGRADED")], { github: "DOWN" }, "DEGRADED", T).changes).toEqual([]);
+  });
+
+  it("com as medições pausadas pela queda da conexão do servidor, nem volta nem queda: fica o último avisado", () => {
+    const { changes, next } = planStatusAlerts([svc("github", "OK", STABLE_MS, { paused: true })], { github: "DOWN" }, "DOWN", T);
+    expect(changes).toEqual([]);
+    expect(next).toEqual({ github: "DOWN" });
   });
 
   it("sem dados, manutenção e a faixa 'Sua Internet' não são notícia", () => {
