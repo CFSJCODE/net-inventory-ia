@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { mapWithConcurrency } from "@/lib/network/concurrency";
 import { CABLE_COUNTRY_ISO } from "./route-cities";
+import { serialized } from "./write-queue";
 
 /**
  * Cabos submarinos que chegam ao Brasil (fase 5), do Submarine Cable Map da TeleGeography
@@ -17,9 +18,11 @@ import { CABLE_COUNTRY_ISO } from "./route-cities";
 export const CABLE_MAP_BASE = "https://www.submarinecablemap.com/api/v3";
 export const CABLE_MAP_PAGE = "https://www.submarinecablemap.com/";
 export const CABLES_KEY = "globalStatus.cables";
+/** A última falha ao buscar ou gravar os cabos ({ at, error }), para diagnóstico sem acesso aos logs do motor. */
+export const CABLES_ERROR_KEY = "globalStatus.cablesError";
 const REFRESH_MS = 7 * 24 * 60 * 60_000;
-/** Uma falha ao buscar espera 6 h antes de tentar de novo (o cache velho, se houver, segue valendo). */
-const RETRY_MS = 6 * 60 * 60_000;
+/** Uma falha ao buscar espera 30 min antes de tentar de novo (o cache velho, se houver, segue valendo). */
+const RETRY_MS = 30 * 60_000;
 const FETCH_TIMEOUT_MS = 30_000;
 const USER_AGENT = "NetInventory-StatusMonitor/1.0 (+https://github.com/CFSJCODE/net-inventory-ia)";
 
@@ -128,14 +131,28 @@ export async function brazilCables(nowMs = Date.now()): Promise<Cable[]> {
     const cables = buildCables(country, details, geo, new Date(nowMs).getUTCFullYear());
     if (!cables.length) throw new Error("Mapa de cabos: nenhum cabo do Brasil na resposta");
     const stored: Stored = { at: nowMs, cables };
-    const value = JSON.stringify(stored);
-    await prisma.appSetting.upsert({ where: { key: CABLES_KEY }, create: { key: CABLES_KEY, value }, update: { value } });
+    // Vale para o processo já; uma falha ao gravar não joga fora o que foi baixado.
     g.__subseaCables = stored;
     g.__subseaCablesFailedAt = undefined;
+    const value = JSON.stringify(stored);
+    await serialized(() => prisma.appSetting.upsert({ where: { key: CABLES_KEY }, create: { key: CABLES_KEY, value }, update: { value } })).catch((err) => recordFailure(nowMs, `gravar: ${errorText(err)}`));
     return cables;
   } catch (err) {
     g.__subseaCablesFailedAt = nowMs;
-    console.warn(`[global-status] mapa de cabos indisponível: ${err instanceof Error ? err.message : String(err)}`);
+    await recordFailure(nowMs, errorText(err));
     return current?.cables ?? [];
   }
+}
+
+function errorText(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause = (err as Error & { cause?: unknown }).cause;
+  return cause instanceof Error ? `${err.message} (${cause.message})` : err.message;
+}
+
+/** Avisa no log e guarda a falha no banco: o host .NET não repassa a saída do motor ao journal. Nunca lança. */
+async function recordFailure(nowMs: number, error: string): Promise<void> {
+  console.warn(`[global-status] mapa de cabos indisponível: ${error}`);
+  const value = JSON.stringify({ at: nowMs, error: error.slice(0, 500) });
+  await serialized(() => prisma.appSetting.upsert({ where: { key: CABLES_ERROR_KEY }, create: { key: CABLES_ERROR_KEY, value }, update: { value } })).catch(() => undefined);
 }
