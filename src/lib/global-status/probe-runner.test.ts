@@ -361,6 +361,9 @@ describe("medições ligadas", () => {
 
   it("ao subir, arma o primeiro passo e não apaga nada do que está gravado", async () => {
     await leaveMeasuredState();
+    // Também o estado da conexão de uma queda que o processo anterior deixou gravada: é dele que este começa.
+    const outage = { state: "offline", since: T0.toISOString(), reason: "O gateway padrão não responde." };
+    await db.appSetting.create({ data: { key: CONNECTIVITY_KEY, value: JSON.stringify(outage) } });
     const transaction = vi.spyOn(db, "$transaction");
     vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] });
 
@@ -374,6 +377,8 @@ describe("medições ligadas", () => {
     await serialized(async () => undefined);
     expect(transaction).not.toHaveBeenCalled();
     expect(await serviceOf("github")).toMatchObject({ status: "DOWN", measuredStatus: "DOWN", measuredReason: "HTTP: 3 falhas seguidas", latencyMs: 480 });
+    expect(await storedConnectivity()).toEqual(outage);
+    expect(await getLocalConnectivity()).toEqual(outage);
     expect(fixture.runProbe).not.toHaveBeenCalled();
   });
 
@@ -871,7 +876,8 @@ describe("medições ligadas", () => {
         const out = await outage(openPage());
         restart();
         fixture.runProbe.mockClear();
-        await rounds(1);
+        // O passo que o timer roda, sem força: é a primeira rodada do processo que a torna de verificação.
+        await runProbeTick();
 
         // Resolvedores, gateway e três canários: com a conexão fora nenhum serviço é medido.
         expect([...new Set(fixture.runProbe.mock.calls.map(([spec]) => (spec as { kind: string }).kind))].sort()).toEqual(["DNS", "ICMP", "TCP"]);

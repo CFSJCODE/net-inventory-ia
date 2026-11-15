@@ -4,6 +4,7 @@ import { DEFAULT_INTERVAL_SEC, STATUS_CATALOG, type CatalogEntry } from "./catal
 import { parseStatuspageSummary, statuspageVersion, type SpSummary } from "./adapters/statuspage";
 import { parseGcpIncidents } from "./adapters/gcp";
 import { parseAzureRss } from "./adapters/azure-rss";
+import { decodeAwsBody, parseAwsEvents } from "./adapters/aws";
 import { CLEARED_TARGET_DATA, endpointChanged, probesEnabled, unsourcedServiceData } from "./probe-logic";
 import { combineStatus, type OfficialSnapshot, type ServiceStatus } from "./types";
 import { serialized } from "./write-queue";
@@ -15,7 +16,7 @@ import { serialized } from "./write-queue";
  * Frequências (bem abaixo de qualquer limite dos provedores):
  * - Statuspage: `status.json` (≈200 bytes) a cada 2 min; `summary.json` só quando a página muda
  *   (`page.updated_at`) ou a cada 10 min.
- * - Google Cloud e Azure: a cada 5 min, com ETag/Last-Modified (resposta 304 não baixa nada).
+ * - Google Cloud, Firebase, Azure e AWS: a cada 5 min, com ETag/Last-Modified (resposta 304 não baixa nada).
  * Erro 429/5xx dobra o intervalo daquela fonte até 30 min; volta ao normal no primeiro sucesso.
  */
 
@@ -93,17 +94,22 @@ async function fetchStatuspage(service: StatusService, state: SourceState, force
   return { kind: "snapshot", snapshot: parseStatuspageSummary(summary), version: statuspageVersion(summary) };
 }
 
-async function fetchWithEtag(service: StatusService, url: string, parse: (body: string) => OfficialSnapshot): Promise<FetchResult> {
+async function fetchWithEtag(
+  service: StatusService,
+  url: string,
+  parse: (body: string) => OfficialSnapshot,
+  decode: (res: Response) => Promise<string> = (res) => res.text(),
+): Promise<FetchResult> {
   const res = await get(url, officialUnknown(service) ? null : service.sourceVersion);
   if (res.status === 304) return { kind: "unchanged" };
-  const body = await res.text();
+  const body = await decode(res);
   const etag = res.headers.get("etag");
   const modified = res.headers.get("last-modified");
   return { kind: "snapshot", snapshot: parse(body), version: etag ? `etag:${etag}` : modified ? `lm:${modified}` : null };
 }
 
 async function fetchService(service: StatusService, state: SourceState, force: boolean): Promise<FetchResult | null> {
-  const slow = service.sourceType === "GCP" || service.sourceType === "AZURE_RSS";
+  const slow = service.sourceType === "GCP" || service.sourceType === "AZURE_RSS" || service.sourceType === "AWS";
   if (!force && slow && Date.now() - state.lastFetchAt < SLOW_SOURCE_MS) return null;
   switch (service.sourceType) {
     case "STATUSPAGE":
@@ -111,11 +117,15 @@ async function fetchService(service: StatusService, state: SourceState, force: b
     case "GCP": {
       state.lastFetchAt = Date.now();
       const base = service.sourceUrl!.replace(/\/$/, "");
-      return fetchWithEtag(service, `${base}/incidents.json`, (body) => parseGcpIncidents(JSON.parse(body)));
+      return fetchWithEtag(service, `${base}/incidents.json`, (body) => parseGcpIncidents(JSON.parse(body), new Date(), { url: base, name: service.name }));
     }
     case "AZURE_RSS":
       state.lastFetchAt = Date.now();
       return fetchWithEtag(service, service.sourceUrl!, parseAzureRss);
+    case "AWS":
+      state.lastFetchAt = Date.now();
+      // O JSON da AWS vem em UTF-16: res.text() leria como UTF-8 e quebraria o parse.
+      return fetchWithEtag(service, service.sourceUrl!, (body) => parseAwsEvents(JSON.parse(body)), async (res) => decodeAwsBody(await res.arrayBuffer()));
     default:
       return null;
   }

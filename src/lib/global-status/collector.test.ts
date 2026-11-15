@@ -342,6 +342,54 @@ describe("status do card gravado pelo coletor", () => {
   });
 });
 
+describe("fontes oficiais além da Statuspage", () => {
+  const collector = globalThis as { __globalStatusSources?: unknown; __globalStatusRun?: unknown };
+  const AWS: CatalogEntry = { slug: "aws", name: "Amazon Web Services (AWS)", category: "CLOUD", sourceType: "AWS", sourceUrl: "https://health.aws.amazon.com/public/currentevents", pageUrl: "https://health.aws.amazon.com/health/status", targets: web("https://aws.amazon.com/robots.txt") };
+  const FIREBASE: CatalogEntry = { slug: "firebase", name: "Firebase", category: "DEV", sourceType: "GCP", sourceUrl: "https://status.firebase.google.com", pageUrl: "https://status.firebase.google.com/", targets: web("https://firebase.google.com/robots.txt") };
+
+  beforeEach(() => {
+    collector.__globalStatusSources = undefined;
+    collector.__globalStatusRun = undefined;
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubEnv("GLOBAL_STATUS_PROBES", "off");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("AWS: o JSON em UTF-16 é decodificado e as regiões afetadas viram componentes", async () => {
+    await seed(AWS);
+    const event = { arn: "arn:aws:health:sa-east-1::event/EC2/x", date: String(Date.now() / 1000 - 3600), status: "3", region_name: "São Paulo", service_name: "Amazon EC2", summary: "Increased Error Rates", event_log: [] };
+    const body = Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(JSON.stringify([event]), "utf16le").swap16()]);
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => new Response(body, { status: 200, headers: { "content-type": "application/json;charset=utf-16" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await checkGlobalStatus(true);
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://health.aws.amazon.com/public/currentevents");
+    const aws = await db.statusService.findUniqueOrThrow({ where: { slug: "aws" }, include: { components: true, incidents: true } });
+    expect(aws).toMatchObject({ officialState: "DEGRADED", status: "DEGRADED", lastError: null });
+    expect(aws.components.map((c) => [c.externalId, c.status])).toEqual([["sa-east-1", "DOWN"]]);
+    expect(aws.incidents.map((i) => i.title)).toEqual(["Amazon EC2: Increased Error Rates"]);
+  });
+
+  it("Firebase: lê o incidents.json do próprio painel e o link do incidente aponta para ele", async () => {
+    await seed(FIREBASE);
+    const incident = { id: "abc", begin: new Date(Date.now() - 3600_000).toISOString(), end: null, external_desc: "Hosting com erros", status_impact: "SERVICE_DISRUPTION", severity: "medium", uri: "incidents/abc", affected_products: [{ id: "h", title: "Hosting" }] };
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => new Response(JSON.stringify([incident]), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await checkGlobalStatus(true);
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://status.firebase.google.com/incidents.json");
+    const firebase = await db.statusService.findUniqueOrThrow({ where: { slug: "firebase" }, include: { incidents: true } });
+    expect(firebase).toMatchObject({ officialState: "DEGRADED" });
+    expect(firebase.incidents.map((i) => i.url)).toEqual(["https://status.firebase.google.com/incidents/abc"]);
+  });
+});
+
 describe("ensureCatalogSeeded", () => {
   it("quem pede ao mesmo tempo espera a mesma gravação, e ela roda uma vez por processo", async () => {
     fixture.catalog.splice(0, fixture.catalog.length, GITHUB, WHATSAPP);

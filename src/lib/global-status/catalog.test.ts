@@ -56,6 +56,23 @@ describe("catálogo: fonte oficial", () => {
   });
 });
 
+describe("catálogo: provedores de nuvem, desenvolvimento e IA pedidos", () => {
+  it("tem os provedores com a fonte oficial certa (ou nenhuma, quando o provedor não publica uma aberta)", () => {
+    const source = Object.fromEntries(STATUS_CATALOG.map((s) => [s.slug, s.sourceType]));
+    expect(source).toMatchObject({
+      aws: "AWS",
+      "oracle-cloud": "NONE",
+      "ibm-cloud": "NONE",
+      "huawei-cloud": "NONE",
+      digitalocean: "STATUSPAGE",
+      supabase: "STATUSPAGE",
+      vercel: "STATUSPAGE",
+      firebase: "GCP",
+      claude: "STATUSPAGE",
+    });
+  });
+});
+
 describe("catálogo: alvos dos serviços", () => {
   it("cobre redes sociais e streaming", () => {
     expect(services.filter((s) => s.category === "SOCIAL").length).toBeGreaterThanOrEqual(6);

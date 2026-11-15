@@ -19,7 +19,7 @@ export interface CatalogEntry {
   name: string;
   category: ServiceCategory;
   sourceType: SourceType;
-  /** Base da API oficial (Statuspage: raiz do site; Google: status.cloud.google.com; Azure: URL do feed); null sem fonte oficial. */
+  /** Base da API oficial (Statuspage: raiz do site; Google e Firebase: raiz do painel (status.cloud.google.com); Azure: URL do feed; AWS: URL do JSON de eventos); null sem fonte oficial. */
   sourceUrl: string | null;
   /** Página pública de status, para o link no card; null quando o serviço não publica uma. */
   pageUrl: string | null;
@@ -74,8 +74,17 @@ export const STATUS_CATALOG: CatalogEntry[] = [
   { slug: "akamai", name: "Akamai", category: "CDN", sourceType: "STATUSPAGE", sourceUrl: "https://www.akamaistatus.com", pageUrl: "https://www.akamaistatus.com/", targets: web("https://www.akamai.com/") },
   { slug: "azure", name: "Microsoft Azure", category: "CLOUD", sourceType: "AZURE_RSS", sourceUrl: "https://azure.status.microsoft/en-us/status/feed/", pageUrl: "https://azure.status.microsoft/pt-br/status", targets: web("https://management.azure.com/metadata/endpoints?api-version=2022-09-01", "portal.azure.com") },
   { slug: "google-cloud", name: "Google Cloud", category: "CLOUD", sourceType: "GCP", sourceUrl: "https://status.cloud.google.com", pageUrl: "https://status.cloud.google.com/", targets: web("https://console.cloud.google.com/") },
+  { slug: "aws", name: "Amazon Web Services (AWS)", category: "CLOUD", sourceType: "AWS", sourceUrl: "https://health.aws.amazon.com/public/currentevents", pageUrl: "https://health.aws.amazon.com/health/status", targets: web("https://aws.amazon.com/robots.txt") },
+  { slug: "oracle-cloud", name: "Oracle Cloud Infrastructure", category: "CLOUD", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: web("https://www.oracle.com/robots.txt") },
+  { slug: "ibm-cloud", name: "IBM Cloud", category: "CLOUD", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: web("https://cloud.ibm.com/robots.txt") },
+  { slug: "huawei-cloud", name: "Huawei Cloud", category: "CLOUD", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: web("https://www.huaweicloud.com/robots.txt") },
+  { slug: "digitalocean", name: "DigitalOcean", category: "CLOUD", sourceType: "STATUSPAGE", sourceUrl: "https://status.digitalocean.com", pageUrl: "https://status.digitalocean.com/", targets: web("https://www.digitalocean.com/robots.txt") },
   { slug: "github", name: "GitHub", category: "DEV", sourceType: "STATUSPAGE", sourceUrl: "https://www.githubstatus.com", pageUrl: "https://www.githubstatus.com/", targets: web("https://github.com/.well-known/security.txt") },
+  { slug: "supabase", name: "Supabase", category: "DEV", sourceType: "STATUSPAGE", sourceUrl: "https://status.supabase.com", pageUrl: "https://status.supabase.com/", targets: web("https://supabase.com/robots.txt") },
+  { slug: "vercel", name: "Vercel", category: "DEV", sourceType: "STATUSPAGE", sourceUrl: "https://www.vercel-status.com", pageUrl: "https://www.vercel-status.com/", targets: web("https://vercel.com/robots.txt") },
+  { slug: "firebase", name: "Firebase", category: "DEV", sourceType: "GCP", sourceUrl: "https://status.firebase.google.com", pageUrl: "https://status.firebase.google.com/", targets: web("https://firebase.google.com/robots.txt") },
   { slug: "openai", name: "OpenAI", category: "AI", sourceType: "STATUSPAGE", sourceUrl: "https://status.openai.com", pageUrl: "https://status.openai.com/", targets: web("https://api.openai.com/v1/models") },
+  { slug: "claude", name: "Claude", category: "AI", sourceType: "STATUSPAGE", sourceUrl: "https://status.claude.com", pageUrl: "https://status.claude.com/", targets: web("https://claude.ai/robots.txt") },
   { slug: "whatsapp", name: "WhatsApp", category: "SOCIAL", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: web("https://web.whatsapp.com/robots.txt", "g.whatsapp.net") },
   { slug: "instagram", name: "Instagram", category: "SOCIAL", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: web("https://www.instagram.com/robots.txt") },
   { slug: "facebook", name: "Facebook", category: "SOCIAL", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: web("https://www.facebook.com/security.txt") },
