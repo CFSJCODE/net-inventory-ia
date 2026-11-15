@@ -1178,6 +1178,9 @@ describe.skipIf(!certificate)("HTTPS e TLS com certificado autoassinado (precisa
   });
 
   it("probeTls manda o SNI com o nome e não manda com IP", async () => {
+    // O servidor registra o handshake um instante depois de a sonda dar a medição por terminada: sem esperar as conexões
+    // do teste anterior fecharem, o SNI de uma delas entraria na lista deste teste.
+    expect(await waitFor(() => secure!.sockets.size === 0)).toBe(true);
     serverNames.length = 0;
     expect(await probeTls("localhost", port())).toMatchObject({ ok: true });
     expect(await probeTls("127.0.0.1", port())).toMatchObject({ ok: true, dnsMs: null });
@@ -1352,6 +1355,22 @@ describe("probeDns", () => {
     expect(setServers).not.toHaveBeenCalled();
     if (result.ok) expect(result.latencyMs).toBe(result.dnsMs);
     else expect(result).toMatchObject({ latencyMs: null, failedAt: "dns" });
+  });
+
+  it.each([
+    ["sem lista do sistema", () => mocks.getSystemDnsServers.mockResolvedValue([])],
+    ["com a consulta ao sistema falhando", () => mocks.getSystemDnsServers.mockRejectedValue(new Error("PowerShell indisponível"))],
+  ])("auto:system %s: pergunta a um resolvedor só, com os padrões, e a resposta dele vale", async (_case, arrange) => {
+    arrange();
+    const setServers = vi.spyOn(Resolver.prototype, "setServers");
+    const resolve4 = vi.spyOn(Resolver.prototype, "resolve4").mockResolvedValue(["192.0.2.1"]);
+
+    const result = await probeDns(AUTO_SYSTEM_DNS, "example.com", { timeoutMs: 300 });
+
+    expect(resolve4.mock.calls).toEqual([["example.com"]]);
+    expect(setServers).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.latencyMs).toBe(result.dnsMs);
   });
 
   it("auto:system continua nos padrões se a consulta ao sistema falhar", async () => {

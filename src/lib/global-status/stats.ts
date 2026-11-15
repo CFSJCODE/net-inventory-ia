@@ -127,13 +127,14 @@ export function latencyLimit(baseline: number[]): { median: number; limit: numbe
  *   mediana da janela, isto é, 3 das 5 medições acima do limite: um pico isolado não alarma).
  *
  * Uma medição sem resposta nenhuma é falha e só conta na regra das falhas seguidas: assim uma falha
- * isolada não muda o estado em nenhum tipo de alvo, e o alvo volta a "ok" na primeira resposta depois
- * de uma queda, sem ficar minutos em "perda de 60%" por causa das falhas que ainda estão na janela.
+ * isolada não muda o estado em nenhum tipo de alvo (nem apaga o certificado vencido que a medição
+ * anterior viu), e o alvo volta a "ok" na primeira resposta depois de uma queda, sem ficar minutos em
+ * "perda de 60%" por causa das falhas que ainda estão na janela.
  */
 export function evaluateTarget(recent: RecentCheck[], baseline: number[]): TargetVerdict {
   const window = recent.slice(0, WINDOW_SIZE);
   if (!window.length) return { status: "UNKNOWN", reason: null };
-  return failureVerdict(window) ?? certVerdict(window[0]) ?? lossVerdict(window) ?? latencyVerdict(window, baseline) ?? { status: "OK", reason: null };
+  return failureVerdict(window) ?? certVerdict(window) ?? lossVerdict(window) ?? latencyVerdict(window, baseline) ?? { status: "OK", reason: null };
 }
 
 // Cada regra abaixo devolve o veredito quando se aplica, ou null para a regra seguinte decidir.
@@ -150,13 +151,18 @@ function failureVerdict(window: RecentCheck[]): TargetVerdict | null {
 }
 
 /**
- * Certificado da medição mais nova já vencido. Só o vencido muda o estado: os serviços medidos são de
- * terceiros, quem renova é o provedor, e há quem renove na última semana (em 14/11/2026 WhatsApp,
- * Instagram e Facebook estavam a 7 dias do vencimento, funcionando normalmente). Um aviso de "vence em N
- * dias" deixaria degradado um serviço sem problema nenhum; os dias restantes aparecem no detalhe do alvo.
+ * Certificado já vencido na medição mais nova que chegou até ele. Uma falha que não chegou ao
+ * certificado (prazo estourado, conexão recusada) não diz nada sobre ele e é pulada: vale o que a
+ * medição anterior viu. Já uma resposta, ou uma falha que traz o certificado (um HTTP 5xx), decide
+ * sozinha, com ou sem vencimento.
+ *
+ * Só o vencido muda o estado: os serviços medidos são de terceiros, quem renova é o provedor, e há quem
+ * renove na última semana (em 14/11/2026 WhatsApp, Instagram e Facebook estavam a 7 dias do vencimento,
+ * funcionando normalmente). Um aviso de "vence em N dias" deixaria degradado um serviço sem problema
+ * nenhum; os dias restantes aparecem no detalhe do alvo.
  */
-function certVerdict(latest: RecentCheck): TargetVerdict | null {
-  const days = latest.certDays;
+function certVerdict(window: RecentCheck[]): TargetVerdict | null {
+  const days = window.find((c) => c.ok || c.certDays !== null)?.certDays ?? null;
   if (days === null || !(days < 0)) return null;
   return { status: "DEGRADED", reason: "certificado vencido" };
 }

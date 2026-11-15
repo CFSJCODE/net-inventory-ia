@@ -12,7 +12,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: fixture.prisma }));
 vi.mock("./catalog", async (importOriginal) => ({ ...(await importOriginal<typeof import("./catalog")>()), STATUS_CATALOG: fixture.catalog }));
 
 import { dropTempDb, migrateTempDb } from "./__fixtures__/temp-db";
-import { ensureCatalogSeeded, seedStatusCatalog } from "./collector";
+import { checkGlobalStatus, ensureCatalogSeeded, seedStatusCatalog } from "./collector";
 
 const db = fixture.prisma;
 const T0 = new Date("2026-11-14T12:00:00Z");
@@ -193,6 +193,17 @@ describe("seedStatusCatalog", () => {
       expect(await serviceOf("discord")).toMatchObject({ officialState: null, status: "UNKNOWN" });
     });
 
+    it("uma fonte que só tinha falhado, sem nunca responder, também sai: o erro da última consulta não fica num serviço sem fonte", async () => {
+      await seed(GITHUB, DISCORD);
+      const discord = await serviceOf("discord");
+      // As duas primeiras falhas de uma fonte só gravam o erro: o estado oficial segue vazio.
+      await db.statusService.update({ where: { id: discord.id }, data: { lastError: "HTTP 503 em discordstatus.com" } });
+
+      await seed(GITHUB, { ...DISCORD, sourceType: "NONE", sourceUrl: null, pageUrl: null });
+
+      expect(await serviceOf("discord")).toMatchObject({ id: discord.id, sourceType: "NONE", officialState: null, lastError: null });
+    });
+
     it("um estado oficial que ficou gravado num serviço já sem fonte (catálogo trocado antes desta limpeza existir) também sai", async () => {
       await seed(WHATSAPP);
       const whatsapp = await serviceOf("whatsapp");
@@ -265,6 +276,69 @@ describe("seedStatusCatalog", () => {
     expect(await serviceOf("github")).toMatchObject({ name: "GitHub" });
     expect((await db.statusService.findMany({ orderBy: { position: "asc" } })).map((s) => s.slug)).toEqual(["github", "discord"]);
     expect(await historyOf(discord.targets[0].id)).toEqual({ checks: 3, rollups: 1 });
+  });
+});
+
+describe("status do card gravado pelo coletor", () => {
+  const collector = globalThis as { __globalStatusSources?: unknown; __globalStatusRun?: unknown };
+  const operational = { page: { updated_at: "2026-11-14T12:00:00Z" }, status: { indicator: "none", description: "All Systems Operational" }, components: [], incidents: [], scheduled_maintenances: [] };
+  /** A fonte oficial responde que está tudo normal. */
+  const sourceAnswers = () => vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(operational), { status: 200, headers: { "content-type": "application/json" } })));
+  /** A fonte oficial está fora: toda consulta devolve 503. */
+  const sourceFails = () => vi.stubGlobal("fetch", vi.fn(async () => new Response("erro", { status: 503 })));
+
+  beforeEach(async () => {
+    collector.__globalStatusSources = undefined;
+    collector.__globalStatusRun = undefined;
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await seed(GITHUB);
+    // Provedor dizendo normal e as medições dizendo fora do ar: o card está vermelho.
+    await db.statusService.update({ where: { slug: "github" }, data: { officialState: "OK", status: "DOWN", measuredStatus: "DOWN", measuredReason: "HTTP: 3 falhas seguidas", latencyMs: 480 } });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  describe("com as medições ligadas", () => {
+    it("um snapshot oficial deixa o card com o pior entre o oficial e o medido", async () => {
+      sourceAnswers();
+      await checkGlobalStatus(true);
+      expect(await serviceOf("github")).toMatchObject({ officialState: "OK", officialStatus: "Todos os sistemas operando", status: "DOWN", lastError: null });
+    });
+
+    it("a terceira falha seguida da fonte deixa o oficial \"Sem dados\" e o card só com o medido", async () => {
+      sourceFails();
+      await checkGlobalStatus(true);
+      await checkGlobalStatus(true);
+      expect(await serviceOf("github")).toMatchObject({ officialState: "OK", status: "DOWN" });
+      await checkGlobalStatus(true);
+      expect(await serviceOf("github")).toMatchObject({ officialState: "UNKNOWN", status: "DOWN", lastError: "HTTP 503 em www.githubstatus.com" });
+    });
+  });
+
+  // O medido gravado é de antes de desligar (a limpeza ao subir pode não ter rodado) e ninguém mais o atualiza.
+  describe("com as medições desligadas (GLOBAL_STATUS_PROBES=off)", () => {
+    beforeEach(() => {
+      vi.stubEnv("GLOBAL_STATUS_PROBES", "off");
+    });
+
+    it("um snapshot oficial deixa o card só com o oficial", async () => {
+      sourceAnswers();
+      await checkGlobalStatus(true);
+      const github = await serviceOf("github");
+      expect(github).toMatchObject({ officialState: "OK", status: "OK" });
+      expect(github.lastChangeAt).not.toBeNull();
+    });
+
+    it("a terceira falha seguida da fonte deixa o card \"Sem dados\", e não \"fora do ar\"", async () => {
+      sourceFails();
+      await checkGlobalStatus(true);
+      await checkGlobalStatus(true);
+      await checkGlobalStatus(true);
+      expect(await serviceOf("github")).toMatchObject({ officialState: "UNKNOWN", status: "UNKNOWN" });
+    });
   });
 });
 
