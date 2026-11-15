@@ -85,11 +85,11 @@ function LaneStats({ timeline }: { timeline: Timeline }) {
   return (
     <div className="flex flex-col gap-1.5">
       {LANE_ORDER.filter((lane) => timeline.summary[lane].available).map((lane) => {
-        const { stats, source } = timeline.summary[lane];
+        const { stats, source, series } = timeline.summary[lane];
         return (
           <div key={lane} className="flex flex-col gap-0.5">
             <span className="text-foreground">
-              {LANE_LABEL[lane]} <span className="text-muted-foreground">· {source}</span>
+              {LANE_LABEL[lane]} <span className="text-muted-foreground">· {source}{series && ` · estatística de ${series}, o destino em pior situação`}</span>
             </span>
             <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground">
               <Reading label="p50" value={formatLatency(stats.p50Ms)} />

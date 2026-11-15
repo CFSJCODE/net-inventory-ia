@@ -111,6 +111,28 @@ describe("buildTimeline", () => {
     expect(tl.lanes.https.at(-1)!.state).toBe("ok");
   });
 
+  it("WAN com destinos de RTT diferentes mas estáveis não é degradação (base e jitter por destino)", () => {
+    const lanes = discordScenario();
+    const rtt: Record<string, number> = { "1.1.1.1": 10, "8.8.8.8": 20, "9.9.9.9": 80 };
+    lanes.wan.samples = Object.entries(rtt).flatMap(([host, ms]) => series(120, () => ({ ok: true, latencyMs: ms, lossPct: 0, series: host })));
+    const tl = buildTimeline(lanes, { start: T0, end: T0 + 60 * MIN, stepMs: MIN }, { size: 20 });
+    expect(tl.lanes.wan.every((c) => c.state === "ok")).toBe(true);
+    expect(tl.summary.wan.stats.degraded).toBe(false);
+    expect(tl.summary.wan.stats.jitterMs).toBe(0);
+  });
+
+  it("WAN: um destino que piora sozinho é apontado", () => {
+    const lanes = discordScenario();
+    lanes.wan.samples = [
+      ...series(60, () => ({ ok: true, latencyMs: 10, lossPct: 0, series: "1.1.1.1" })),
+      ...series(60, (i) => ({ ok: true, latencyMs: i >= 50 ? 90 : 20, lossPct: 0, series: "8.8.8.8" })),
+    ];
+    const tl = buildTimeline(lanes, { start: T0, end: T0 + 60 * MIN, stepMs: MIN }, { size: 20 });
+    expect(tl.summary.wan.series).toBe("8.8.8.8");
+    expect(tl.summary.wan.stats.degraded).toBe(true);
+    expect(tl.lanes.wan.at(-1)!.state).toBe("warn");
+  });
+
   it("faixa sem medição fica 'none' e não é culpada", () => {
     const lanes = discordScenario();
     lanes.dns.samples = [];
@@ -127,7 +149,15 @@ describe("diagnose e describeCell", () => {
   });
 
   it("WAN instável com LAN normal", () => {
-    expect(diagnose({ gateway: "ok", wan: "warn", dns: "ok", https: "warn" })).toContain("WAN instável");
+    expect(diagnose({ gateway: "ok", wan: "warn", dns: "ok", https: "warn" })).toBe("LAN normal; a WAN está instável: a saída para a Internet está com perda ou atraso.");
+  });
+
+  it("faixa sem medição não é chamada de normal, e a culpa vira provável", () => {
+    const text = diagnose({ gateway: "none", wan: "none", dns: "none", https: "bad" }, null, "Discord");
+    expect(text).toBe("Discord não responde por HTTPS: o problema provavelmente está no serviço. Sem medição de LAN, WAN e DNS para confirmar.");
+    expect(text).not.toContain("normais");
+    expect(diagnose({ gateway: "none", wan: "ok", dns: "ok", https: "ok" })).toBe("Sem problemas nas leituras disponíveis: WAN, DNS e HTTPS normais. Sem medição de LAN para confirmar.");
+    expect(diagnose({ gateway: "none", wan: "ok", dns: "ok", https: "warn" }, null, "Discord")).toBe("WAN e DNS normais; o HTTPS de Discord está lento ou instável. Sem medição de LAN para confirmar.");
   });
 
   it("frase de um passo HTTPS traz as etapas", () => {

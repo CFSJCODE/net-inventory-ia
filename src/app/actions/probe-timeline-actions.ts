@@ -11,8 +11,12 @@ import { BASELINE_POINTS } from "@/lib/global-status/window-stats";
 /** Serviço com o gateway e o DNS do sistema; e os resolvedores públicos cujo ping é a faixa WAN. */
 const LOCAL_SLUG = "rede-local";
 const WAN_SLUGS = ["dns-cloudflare", "dns-google", "dns-quad9"];
-/** Histórico carregado antes do início, para a janela e a base já estarem cheias no primeiro passo (100 medições de 1 min + folga). */
-const LOOKBACK_MS = Math.round(BASELINE_POINTS * 1.2) * 60_000;
+/**
+ * Histórico carregado antes do início, para a janela e a base já estarem cheias no primeiro passo: o
+ * maior entre N e as 100 da base, em medições de 1 min, com 20% de folga. Assim a estatística atual não
+ * muda com o período escolhido na tela.
+ */
+const lookbackMs = (windowSize: number) => Math.round(Math.max(windowSize, BASELINE_POINTS) * 1.2) * 60_000;
 
 export interface TimelineRequest {
   slug: string;
@@ -44,12 +48,13 @@ async function loadChecks(targetIds: string[], vantage: string, from: Date, to: 
   return prisma.probeCheck.findMany({
     where: { targetId: { in: targetIds }, vantage, at: { gte: from, lte: to } },
     orderBy: { at: "asc" },
-    select: { at: true, ok: true, latencyMs: true, lossPct: true, error: true, httpStatus: true, dnsMs: true, connectMs: true, tlsMs: true, ttfbMs: true, totalMs: true, rcode: true, ttlSec: true, dnsAnswers: true },
+    select: { targetId: true, at: true, ok: true, latencyMs: true, lossPct: true, error: true, httpStatus: true, dnsMs: true, connectMs: true, tlsMs: true, ttfbMs: true, totalMs: true, rcode: true, ttlSec: true, dnsAnswers: true },
   });
 }
 
-function toSample(c: CheckRow): LaneSample {
+function toSample(c: CheckRow, series?: string): LaneSample {
   return {
+    series,
     at: c.at.getTime(),
     ok: c.ok,
     latencyMs: c.latencyMs,
@@ -91,23 +96,24 @@ export async function getProbeTimeline(request: TimelineRequest): Promise<Timeli
 
   const end = new Date();
   const start = end.getTime() - hours * 3_600_000;
-  const from = new Date(start - LOOKBACK_MS);
-  const [settings, gatewayChecks, wanChecks, dnsChecks, httpChecks] = await Promise.all([
-    getGlobalStatusSettings(),
+  const settings = await getGlobalStatusSettings();
+  const from = new Date(start - lookbackMs(settings.probeWindow));
+  const [gatewayChecks, wanChecks, dnsChecks, httpChecks] = await Promise.all([
     loadChecks(gateway ? [gateway.id] : [], vantage, from, end),
     loadChecks(wan.map((t) => t.id), vantage, from, end),
     loadChecks(dns ? [dns.id] : [], vantage, from, end),
     loadChecks([http.id], vantage, from, end),
   ]);
 
+  const wanHost = new Map(wan.map((t) => [t.id, t.host]));
   const lanes: Record<LaneKey, LaneInput> = {
-    gateway: { source: "ping no gateway padrão", samples: gatewayChecks.map(toSample) },
-    wan: { source: `ping em ${wan.map((t) => t.host).join(", ") || "resolvedores públicos"}`, samples: wanChecks.map(toSample) },
+    gateway: { source: "ping no gateway padrão", samples: gatewayChecks.map((c) => toSample(c)) },
+    wan: { source: `ping em ${wan.map((t) => t.host).join(", ") || "resolvedores públicos"}`, samples: wanChecks.map((c) => toSample(c, wanHost.get(c.targetId))) },
     dns: {
       source: composite ? `${composite.host === "auto:multi" ? `DNS do sistema, ${MULTI_DNS_RESOLVERS.join(" e ")}` : composite.host}` : "DNS do sistema (example.com)",
-      samples: dnsChecks.map(toSample),
+      samples: dnsChecks.map((c) => toSample(c)),
     },
-    https: { source: http.host, samples: httpChecks.map(toSample) },
+    https: { source: http.host, samples: httpChecks.map((c) => toSample(c)) },
   };
   const timeline = buildTimeline(lanes, { start, end: end.getTime(), stepMs: stepForHours(hours) }, { size: settings.probeWindow, serviceName: service.name });
   return { timeline, reason: null };

@@ -828,6 +828,20 @@ describe("evidência de um passo", () => {
     ]);
   });
 
+  it("DNS composto que responde (do cache local) não prova conexão; a falha dele entra como falha de DNS", () => {
+    const dnsx = target({ id: "github-dnsx", key: "dnsx", kind: "DNS_MULTI", host: "auto:multi", url: "github.example", port: null, intervalSec: 60 });
+    expect(serviceEvidence([measured(dnsx, up(2)), measured(w.github.tcp, down())])).toEqual([{ serviceId: "github", ok: false, failedAt: "connect" }]);
+    expect(serviceEvidence([measured(dnsx, down("dns", "DNS do sistema: sem resposta"))])).toEqual([{ serviceId: "github", ok: false, failedAt: "dns" }]);
+  });
+
+  it("WAN fora com o DNS local respondendo do cache: o passo vira offline, não queda dos serviços", () => {
+    const services = ["github", "cloudflare", "netflix"].map((slug) => target({ id: `${slug}-dnsx`, serviceId: slug, serviceSlug: slug, key: "dnsx", kind: "DNS_MULTI", host: "auto:multi", url: `${slug}.example`, port: null, intervalSec: 60 }));
+    const due = [...services, w.github.tcp, w.github.http, w.cloudflare.tcp, w.netflix.http];
+    const all = [...w.all, ...services];
+    const { decision } = runTick(all, due, (t) => (t.kind === "DNS_MULTI" ? up(1) : t.category === "INTERNET" ? noReply : down()));
+    expect(decision.state).toBe("offline");
+  });
+
   it("só há suspeita sobre a conexão quando algum serviço foi medido e nenhum respondeu", () => {
     expect(needsEvidenceRound([])).toBe(false);
     expect(needsEvidenceRound([{ serviceId: "a", ok: true, failedAt: null }, { serviceId: "b", ok: false, failedAt: "connect" }])).toBe(false);

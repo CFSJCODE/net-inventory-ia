@@ -42,6 +42,11 @@ export interface LaneSample {
   httpStatus?: number | null;
   /** Só DNS composto. */
   answers?: DnsAnswer[] | null;
+  /**
+   * Destino da medição quando a faixa junta vários (a WAN pinga 1.1.1.1, 8.8.8.8 e 9.9.9.9). A janela, a
+   * base e o jitter são calculados por destino: RTTs estáveis mas diferentes entre si não são degradação.
+   */
+  series?: string;
   rcode?: string | null;
   ttlSec?: number | null;
 }
@@ -102,6 +107,8 @@ export interface LaneSummary {
   /** O que a faixa mede, por extenso. */
   source: string;
   stats: WindowStats;
+  /** Faixa com vários destinos: o destino cujas estatísticas aparecem em `stats` (o em pior situação). */
+  series: string | null;
   failures: number;
   samples: number;
   /** Estado da faixa agora (último passo com medição, se for dos 3 últimos). */
@@ -172,7 +179,8 @@ function buildCells(samples: LaneSample[], rolling: WindowStats[], steps: number
     const okSamples = inStep.filter((s) => s.ok);
     const losses = okSamples.map((s) => s.lossPct).filter(finite);
     const lossPct = losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : null;
-    const degraded = last?.degraded ?? false;
+    // Qualquer destino degradado no passo (numa faixa de um destino só, é o mesmo que olhar a última medição).
+    const degraded = rolling.slice(from, i).some((r) => r.degraded);
     const cell: TimelineCell = {
       state: cellState(inStep.length, failures, lossPct, degraded),
       samples: inStep.length,
@@ -237,6 +245,33 @@ function stageSummaries(samples: LaneSample[], size: number): { stages: StageSum
   return { stages, blamed };
 }
 
+/** Estatística da janela em cada medição, calculada dentro do destino de cada uma (na ordem de `samples`). */
+function rollingBySeries(samples: LaneSample[], options: WindowOptions): WindowStats[] {
+  const out: WindowStats[] = new Array(samples.length);
+  const groups = new Map<string, number[]>();
+  samples.forEach((s, index) => {
+    const key = s.series ?? "";
+    const list = groups.get(key);
+    if (list) list.push(index);
+    else groups.set(key, [index]);
+  });
+  for (const indexes of groups.values()) {
+    const stats = rollingWindowStats(indexes.map((k) => samples[k]), options);
+    indexes.forEach((k, j) => (out[k] = stats[j]));
+  }
+  return out;
+}
+
+/** Estatística atual da faixa: a do destino em pior situação (degradado primeiro, depois a maior razão p95 ÷ base). */
+function worstSeriesStats(samples: LaneSample[], options: WindowOptions): { stats: WindowStats; series: string | null } {
+  const keys = [...new Set(samples.map((s) => s.series ?? ""))];
+  if (keys.length <= 1) return { stats: windowStats(samples, options), series: null };
+  const ranked = keys
+    .map((key) => ({ key, stats: windowStats(samples.filter((s) => (s.series ?? "") === key), options) }))
+    .sort((a, b) => Number(b.stats.degraded) - Number(a.stats.degraded) || (b.stats.ratio ?? 0) - (a.stats.ratio ?? 0));
+  return { stats: ranked[0].stats, series: ranked[0].key || null };
+}
+
 /** Estado atual de uma faixa: o último passo com medição, desde que seja um dos 3 últimos. */
 function currentState(cells: TimelineCell[]): CellState {
   for (let k = cells.length - 1; k >= Math.max(0, cells.length - 3); k--) if (cells[k].state !== "none") return cells[k].state;
@@ -265,27 +300,50 @@ export function describeCell(lane: LaneKey, cell: TimelineCell): string {
   return `${cell.state === "ok" ? "estável" : "instável"}: ${parts.join(", ")}`;
 }
 
-/** Onde está o problema, pela primeira faixa ruim na ordem LAN → WAN → DNS → HTTPS. */
+const SHORT: Record<LaneKey, string> = { gateway: "LAN", wan: "WAN", dns: "DNS", https: "HTTPS" };
+
+function joinNames(names: string[]): string {
+  return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} e ${names.at(-1)}`;
+}
+
+/**
+ * Onde está o problema, pela primeira faixa ruim na ordem LAN → WAN → DNS → HTTPS. Só chama de "normal"
+ * a faixa que está ok; uma faixa sem medição é dita como tal, e aí a camada culpada vira "provável".
+ */
 export function diagnose(states: Record<LaneKey, CellState>, blamed?: StageSummary | null, serviceName = "o serviço"): string {
   const first = LANE_ORDER.find((lane) => states[lane] === "bad" || states[lane] === "warn");
+  const before = first ? LANE_ORDER.slice(0, LANE_ORDER.indexOf(first)) : LANE_ORDER;
+  const okNames = before.filter((l) => states[l] === "ok").map((l) => SHORT[l]);
+  const missing = before.filter((l) => states[l] === "none").map((l) => SHORT[l]);
+  const missingNote = missing.length ? ` Sem medição de ${joinNames(missing)} para confirmar.` : "";
+  const prefix = okNames.length ? `${joinNames(okNames)} ${okNames.length > 1 ? "normais" : "normal"}` : "";
+  const certain = missing.length === 0;
+
   if (!first) {
-    if (LANE_ORDER.every((lane) => states[lane] === "none")) return "Ainda sem medições neste período.";
-    return "As quatro leituras estão estáveis: LAN, WAN, DNS e HTTPS normais.";
+    if (!okNames.length) return "Ainda sem medições neste período.";
+    return certain ? "As quatro leituras estão estáveis: LAN, WAN, DNS e HTTPS normais." : `Sem problemas nas leituras disponíveis: ${prefix}.${missingNote}`;
   }
   const severe = states[first] === "bad";
+  const lead = (text: string) => (prefix ? `${prefix}; ${text}` : `${text.charAt(0).toUpperCase()}${text.slice(1)}`);
+  const verdict = (layer: string) => (certain ? `o problema está ${layer}` : `o problema provavelmente está ${layer}`);
+  let text: string;
   switch (first) {
     case "gateway":
-      return severe ? "O gateway da LAN não responde: o problema está na rede local, antes da Internet." : "A LAN está instável (perda ou latência no gateway): comece pela rede local.";
+      text = severe ? `o gateway da LAN não responde: ${verdict("na rede local, antes da Internet")}.` : "a LAN está instável (perda ou latência no gateway): comece pela rede local.";
+      break;
     case "wan":
-      return severe ? "LAN normal, mas a Internet não responde: o problema está na saída (operadora ou modem)." : "LAN normal, WAN instável: a saída para a Internet está com perda ou atraso.";
+      text = severe ? `a Internet não responde: ${verdict("na saída (operadora ou modem)")}.` : "a WAN está instável: a saída para a Internet está com perda ou atraso.";
+      break;
     case "dns":
-      return severe ? `LAN e WAN normais, mas o nome de ${serviceName} não resolve: o problema é de DNS.` : `LAN e WAN normais; o DNS de ${serviceName} está lento ou falhando em parte.`;
+      text = severe ? `o nome de ${serviceName} não resolve: ${verdict("no DNS")}.` : `o DNS de ${serviceName} está lento ou falhando em parte.`;
+      break;
     default: {
       const stage = blamed ? ` A etapa que mais cresceu foi ${STAGE_LABEL[blamed.stage]} (${fmtRatio(blamed.ratio ?? 1)} o normal, ${fmtMs(blamed.currentMs)}).` : "";
-      const where = blamed?.stage === "ttfbMs" ? " O atraso é no servidor do serviço." : "";
-      return severe ? `LAN, WAN e DNS normais, mas ${serviceName} não responde por HTTPS: o problema é do serviço.${stage}` : `LAN, WAN e DNS normais; o HTTPS de ${serviceName} está lento ou instável.${stage}${where}`;
+      const where = blamed?.stage === "ttfbMs" ? (certain ? " O atraso é no servidor do serviço." : " O atraso parece ser no servidor do serviço.") : "";
+      text = severe ? `${serviceName} não responde por HTTPS: ${verdict("no serviço")}.${stage}` : `o HTTPS de ${serviceName} está lento ou instável.${stage}${where}`;
     }
   }
+  return `${lead(text)}${missingNote}`;
 }
 
 /**
@@ -307,14 +365,14 @@ export function buildTimeline(
   const summary = {} as Record<LaneKey, LaneSummary>;
   for (const lane of LANE_ORDER) {
     const samples = [...lanes[lane].samples].filter((s) => s.at <= range.end).sort((a, b) => a.at - b.at);
-    const rolling = rollingWindowStats(samples, options);
+    const rolling = rollingBySeries(samples, options);
     cells[lane] = buildCells(samples, rolling, steps, stepMs, lane);
     const inRange = samples.filter((s) => s.at >= first);
     const base: LaneSummary = {
       lane,
       available: inRange.length > 0,
       source: lanes[lane].source,
-      stats: windowStats(samples, options),
+      ...worstSeriesStats(samples, options),
       failures: inRange.filter((s) => !s.ok).length,
       samples: inRange.length,
       state: currentState(cells[lane]),

@@ -399,10 +399,14 @@ export function decideConnectivity(evidence: ConnectivityEvidence): Connectivity
   return CONNECTED;
 }
 
-/** Os resultados de alvos de serviço como evidência. Sonda que não pôde rodar não prova nada e fica de fora. */
+/**
+ * Os resultados de alvos de serviço como evidência. Sonda que não pôde rodar não prova nada e fica de fora.
+ * O sucesso do DNS composto também fica de fora: o DNS local pode responder do cache com a saída para a
+ * Internet caída, e isso não prova que um serviço respondeu. A falha dele entra (diz que o nome não resolve).
+ */
 export function serviceEvidence(measurements: readonly Measurement[]): ServiceEvidence[] {
   return measurements
-    .filter((m) => !isInternetTarget(m.target) && !m.result.unsupported)
+    .filter((m) => !isInternetTarget(m.target) && !m.result.unsupported && !(m.target.kind === "DNS_MULTI" && m.result.ok))
     .map((m) => ({ serviceId: m.target.serviceId, ok: m.result.ok, failedAt: m.result.failedAt ?? null }));
 }
 
