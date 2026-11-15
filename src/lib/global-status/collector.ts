@@ -5,6 +5,7 @@ import { parseStatuspageSummary, statuspageVersion, type SpSummary } from "./ada
 import { parseGcpIncidents } from "./adapters/gcp";
 import { parseAzureRss } from "./adapters/azure-rss";
 import { decodeAwsBody, parseAwsEvents } from "./adapters/aws";
+import { parseNetflixNotifications } from "./adapters/netflix";
 import { IMPACT_LEVEL, IODA_WINDOW_S, iodaAlertsUrl, parseIodaAlerts, parseRunId, type CarriedRun, type IodaAlertsResponse } from "./adapters/ioda";
 import { bgpSnapshot } from "./adapters/ripestat";
 import { collectRoutes, ispLabel, resolveIsp } from "./internet-signals";
@@ -21,7 +22,7 @@ import { serialized } from "./write-queue";
  * Frequências (bem abaixo de qualquer limite dos provedores):
  * - Statuspage: `status.json` (≈200 bytes) a cada 2 min; `summary.json` só quando a página muda
  *   (`page.updated_at`) ou a cada 10 min.
- * - Google Cloud, Firebase, Azure e AWS: a cada 5 min, com ETag/Last-Modified (resposta 304 não baixa nada).
+ * - Google Cloud, Firebase, Azure, AWS e Netflix: a cada 5 min, com ETag/Last-Modified (resposta 304 não baixa nada).
  * - IODA (Internet no Brasil e da sua operadora): a cada 10 min; os alertas têm minutos de atraso natural.
  * - RIPEstat (rotas BGP dos serviços): a cada hora; os dados do RIS mudam em horas.
  * Erro 429/5xx dobra o intervalo daquela fonte até 30 min; volta ao normal no primeiro sucesso.
@@ -30,7 +31,7 @@ import { serialized } from "./write-queue";
 export const TICK_MS = 2 * 60_000;
 const SUMMARY_MAX_AGE_MS = 10 * 60_000;
 /** Intervalo mínimo das fontes que não são Statuspage (a Statuspage tem a consulta leve de 2 min). */
-const SOURCE_INTERVAL_MS: Partial<Record<string, number>> = { GCP: 5 * 60_000, AZURE_RSS: 5 * 60_000, AWS: 5 * 60_000, IODA: 10 * 60_000, RIPESTAT: 60 * 60_000 };
+const SOURCE_INTERVAL_MS: Partial<Record<string, number>> = { GCP: 5 * 60_000, AZURE_RSS: 5 * 60_000, AWS: 5 * 60_000, NETFLIX: 5 * 60_000, IODA: 10 * 60_000, RIPESTAT: 60 * 60_000 };
 const FORCED_ROUTES_MS = 10 * 60_000;
 /** Marcador do catálogo no lugar do ASN: a operadora é descoberta pelo IP público do servidor. */
 export const AUTO_ASN = "entityCode=auto";
@@ -169,6 +170,9 @@ async function fetchService(service: StatusService, state: SourceState, force: b
       state.lastFetchAt = Date.now();
       // O JSON da AWS vem em UTF-16: res.text() leria como UTF-8 e quebraria o parse.
       return fetchWithEtag(service, service.sourceUrl!, (body) => parseAwsEvents(JSON.parse(body)), async (res) => decodeAwsBody(await res.arrayBuffer()));
+    case "NETFLIX":
+      state.lastFetchAt = Date.now();
+      return fetchWithEtag(service, service.sourceUrl!, (body) => parseNetflixNotifications(JSON.parse(body)));
     case "IODA":
       state.lastFetchAt = Date.now();
       return fetchIoda(service);

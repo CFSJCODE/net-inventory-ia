@@ -82,6 +82,7 @@ describe("catálogo: provedores de nuvem, desenvolvimento e IA pedidos", () => {
       vercel: "STATUSPAGE",
       firebase: "GCP",
       claude: "STATUSPAGE",
+      netflix: "NETFLIX",
     });
   });
 });
