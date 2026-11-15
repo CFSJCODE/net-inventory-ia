@@ -33,6 +33,15 @@ const WHATSAPP: CatalogEntry = { slug: "whatsapp", name: "WhatsApp", category: "
 
 const serviceOf = (slug: string) => db.statusService.findUniqueOrThrow({ where: { slug }, include: { targets: { orderBy: { key: "asc" } } } });
 
+const CONNECTED = { state: "ok", since: null, reason: null };
+/** O estado da conexão que o agendador deixa gravado para o processo seguinte; null quando ainda não gravou nenhum. */
+const CONNECTIVITY_KEY = "globalStatus.connectivity";
+const storedConnectivity = async () => {
+  // findFirst, e não findUnique: assim os testes contam só as leituras do agendador.
+  const row = await db.appSetting.findFirst({ where: { key: CONNECTIVITY_KEY } });
+  return row ? (JSON.parse(row.value) as unknown) : null;
+};
+
 /** O que as medições deixaram gravado antes de serem desligadas. */
 async function leaveMeasuredState(): Promise<void> {
   // Provedor diz normal, medição dizia fora do ar: o card ficou vermelho.
@@ -76,7 +85,7 @@ async function poll() {
   const services = await db.statusService.findMany({ orderBy: { position: "asc" } });
   return {
     services: services.map((s) => ({ slug: s.slug, name: s.name, category: s.category, officialStatus: s.officialStatus, ...servedMeasure(s, true) })),
-    connectivity: getLocalConnectivity(),
+    connectivity: await getLocalConnectivity(),
   };
 }
 
@@ -144,7 +153,11 @@ async function withInternetStrip(): Promise<void> {
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 }
 
-/** A conexão do servidor cai e a pausa é gravada; o servidor fica 30 min parado e, quando sobe, a conexão já voltou. */
+/**
+ * A conexão do servidor cai e a pausa é gravada; o servidor fica 30 min parado e, quando sobe, a conexão
+ * já voltou. O processo novo começa com ela fora, como o anterior deixou gravado: a primeira rodada dele
+ * só confere a conexão e vê a volta, e os serviços voltam a ser medidos na seguinte.
+ */
 async function outageWithRestart(page: ReturnType<typeof openPage>): Promise<void> {
   link = "fora";
   await rounds(1);
@@ -152,6 +165,8 @@ async function outageWithRestart(page: ReturnType<typeof openPage>): Promise<voi
   restart();
   await ageChecks(30);
   link = "ok";
+  await rounds(1);
+  await page.see();
 }
 
 /** As três rodadas seguintes à volta da conexão: o que o card do GitHub mostra depois de cada uma. */
@@ -170,6 +185,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.statusService.deleteMany();
+  await db.appSetting.deleteMany();
   state.__globalStatusSeed = undefined;
   state.__globalStatusProbes = undefined;
   link = "ok";
@@ -238,6 +254,24 @@ describe("medições desligadas (GLOBAL_STATUS_PROBES=off)", () => {
     ]);
   });
 
+  it("o estado da conexão que ficou gravado dessa falta de Internet não chega à página e é apagado, e só ele", async () => {
+    await db.appSetting.createMany({
+      data: [
+        { key: CONNECTIVITY_KEY, value: JSON.stringify({ state: "offline", since: T0.toISOString(), reason: "O gateway padrão não responde." }) },
+        { key: "alerts.state", value: "{}" },
+      ],
+    });
+    // A página consulta antes de a limpeza rodar: com as medições desligadas, o que elas deixaram gravado não vale.
+    expect(await getLocalConnectivity()).toEqual(CONNECTED);
+    const transaction = vi.spyOn(db, "$transaction");
+
+    startProbeRunner();
+    await cleared(transaction);
+
+    // Sem isso, religar as medições depois retomaria uma queda que já passou.
+    expect((await db.appSetting.findMany()).map((row) => row.key)).toEqual(["alerts.state"]);
+  });
+
   it("o histórico (medições e janelas) fica onde está", async () => {
     await leaveMeasuredState();
     const transaction = vi.spyOn(db, "$transaction");
@@ -259,7 +293,7 @@ describe("medições desligadas (GLOBAL_STATUS_PROBES=off)", () => {
     await runProbesNow();
     expect(fixture.runProbe).not.toHaveBeenCalled();
     expect(await db.probeCheck.count()).toBe(0);
-    expect(getLocalConnectivity()).toEqual({ state: "ok", since: null, reason: null });
+    expect(await getLocalConnectivity()).toEqual(CONNECTED);
   });
 
   it("subir duas vezes no mesmo processo limpa uma vez só", async () => {
@@ -406,6 +440,8 @@ describe("medições ligadas", () => {
       // O banco guarda o GitHub como pausado; as últimas medições dele são as de antes da queda, e voltam como as recentes.
       restart();
       await ageChecks(30);
+      // A página consulta antes do primeiro passo do processo novo, e depois dele: a conexão segue fora.
+      expect((await page.see()).connectivity.state).toBe("offline");
       await rounds(1);
       expect((await page.see()).connectivity.state).toBe("offline");
       link = "ok";
@@ -426,6 +462,9 @@ describe("medições ligadas", () => {
       restart();
       await ageChecks(30);
       link = "ok";
+      // A primeira rodada do processo novo só confere a conexão; os serviços voltam a ser medidos na seguinte.
+      await rounds(1);
+      await page.see();
 
       expect(await githubAfterReturn(page)).toEqual([STILL_DOWN, STILL_DOWN, STILL_DOWN]);
       expect(page.notices).toEqual(ONLY_THE_CONNECTION);
@@ -442,6 +481,8 @@ describe("medições ligadas", () => {
       link = "ok";
       // O Discord, normal antes da queda, parou de responder enquanto o servidor estava parado.
       fixture.runProbe.mockImplementation(async (spec: { kind: string; host: string }) => (spec.host === "discord.com" ? { ok: false, latencyMs: null, error: "prazo esgotado", failedAt: "connect" } : githubHttpDown(spec)));
+      await rounds(1);
+      await page.see();
       await githubAfterReturn(page);
 
       expect(page.notices).toEqual([...ONLY_THE_CONNECTION, "Discord: degradado", "Discord: fora do ar"]);
@@ -550,34 +591,36 @@ describe("medições ligadas", () => {
       await page.see();
     }
 
-    /** A conexão volta sem o servidor ter parado. */
-    async function returnWithoutRestart(page: ReturnType<typeof openPage>): Promise<void> {
+    /** A conexão volta: a rodada seguinte, que só confere a conexão, vê a volta. */
+    async function connectionReturns(page: ReturnType<typeof openPage>): Promise<void> {
       link = "ok";
       await rounds(1);
       await page.see();
     }
 
     /** O servidor para durante a queda e sobe `minutes` depois, com a conexão já de volta. */
-    async function returnWhileStopped(minutes: number): Promise<void> {
+    async function returnWhileStopped(page: ReturnType<typeof openPage>, minutes: number): Promise<void> {
       restart();
       await spaceChecks(minutes);
-      link = "ok";
+      await connectionReturns(page);
     }
 
     /** O servidor para durante a queda, sobe `minutes` depois com a conexão ainda fora, e ela volta em seguida. */
     async function restartStillOffline(page: ReturnType<typeof openPage>, minutes: number): Promise<void> {
       restart();
       await spaceChecks(minutes);
+      // A página consulta antes do primeiro passo do processo novo, e depois dele: a conexão segue fora.
+      expect((await page.see()).connectivity.state).toBe("offline");
       await rounds(1);
       expect((await page.see()).connectivity.state).toBe("offline");
-      await returnWithoutRestart(page);
+      await connectionReturns(page);
     }
 
     describe("e para de responder depois da volta", () => {
       it("sem reinício: a página avisa da conexão e, depois, só da queda de verdade", async () => {
         const page = openPage();
         await slowThenOutage(page);
-        await returnWithoutRestart(page);
+        await connectionReturns(page);
         githubTcp = "mudo";
 
         expect(await githubAfterReturn(page)).toEqual(SLOW_THEN_DOWN);
@@ -587,7 +630,7 @@ describe("medições ligadas", () => {
       it.each(STOPPED)("a conexão voltou enquanto o servidor estava parado, %s: os mesmos avisos, sem \"normalizado\" nem \"degradado\" falsos", async (_, minutes) => {
         const page = openPage();
         await slowThenOutage(page);
-        await returnWhileStopped(minutes);
+        await returnWhileStopped(page, minutes);
         githubTcp = "mudo";
 
         expect(await githubAfterReturn(page)).toEqual(SLOW_THEN_DOWN);
@@ -609,7 +652,7 @@ describe("medições ligadas", () => {
       it("sem reinício: a página só avisa da conexão, e o GitHub segue degradado sem aviso novo", async () => {
         const page = openPage();
         await slowThenOutage(page);
-        await returnWithoutRestart(page);
+        await connectionReturns(page);
 
         expect(await githubAfterReturn(page)).toEqual([SLOW, SLOW, SLOW]);
         expect(page.notices).toEqual(ONLY_THE_CONNECTION);
@@ -618,7 +661,7 @@ describe("medições ligadas", () => {
       it.each(STOPPED)("a conexão voltou enquanto o servidor estava parado, %s: o card não passa por \"normal\" até juntar três medições lentas de novo", async (_, minutes) => {
         const page = openPage();
         await slowThenOutage(page);
-        await returnWhileStopped(minutes);
+        await returnWhileStopped(page, minutes);
 
         expect(await githubAfterReturn(page)).toEqual([SLOW, SLOW, SLOW]);
         expect(page.notices).toEqual(ONLY_THE_CONNECTION);
@@ -713,7 +756,7 @@ describe("medições ligadas", () => {
       link = "fora";
       const transaction = vi.spyOn(db, "$transaction").mockRejectedValueOnce(new Error("database is locked")).mockRejectedValueOnce(new Error("database is locked"));
       await rounds(1);
-      expect(getLocalConnectivity().state).toBe("offline");
+      expect((await getLocalConnectivity()).state).toBe("offline");
       expect(await paused()).toEqual([false, false, false]);
       expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("medições não gravadas (o estado em memória segue valendo): database is locked"));
       return transaction;
@@ -733,10 +776,176 @@ describe("medições ligadas", () => {
       await loseConnectionWithRefusedWrite();
       link = "ok";
       await rounds(1);
-      expect(getLocalConnectivity().state).toBe("ok");
+      expect((await getLocalConnectivity()).state).toBe("ok");
       await rounds(2);
       expect(await paused()).toEqual([false, false, false]);
       expect((await serviceOf("github")).measuredStatus).toBe("OK");
+    });
+  });
+
+  describe("estado da conexão gravado: o processo que sobe começa de onde o anterior parou", () => {
+    beforeEach(() => {
+      fixture.runProbe.mockImplementation(async () => answering());
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    });
+
+    /** O processo de antes: tudo responde, a página está aberta, e a conexão do servidor cai. Devolve a faixa como a página a viu. */
+    async function outage(page: ReturnType<typeof openPage>) {
+      await rounds(2);
+      await page.see();
+      link = "fora";
+      await rounds(1);
+      return (await page.see()).connectivity;
+    }
+
+    it("a volta fica gravada mesmo num passo sem mais nada a gravar: quem sobe logo depois dela começa com a conexão de pé", async () => {
+      const page = openPage();
+      await outage(page);
+      link = "ok";
+      await rounds(1);
+      await page.see();
+      // O servidor para antes de qualquer serviço ser medido de novo: os três seguem gravados como pausados.
+      expect((await db.statusService.findMany()).map((s) => servedMeasure(s, true).measurementPaused)).toEqual([true, true, true]);
+      restart();
+
+      expect((await page.see()).connectivity).toEqual(CONNECTED);
+      await rounds(1);
+      expect((await page.see()).services.map((s) => `${s.slug} ${s.status}`)).toEqual(["github OK", "discord OK", "whatsapp OK"]);
+      expect(page.notices).toEqual(ONLY_THE_CONNECTION);
+      // Subir com a conexão de pé não é notícia: o aviso de "parou com a conexão fora" é só da queda.
+      expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining("parou com a conexão local fora"));
+    });
+
+    describe("com a faixa \"Sua Internet\"", () => {
+      const GATEWAY_SILENT = "O gateway padrão não responde.";
+
+      beforeEach(async () => {
+        await withInternetStrip();
+      });
+
+      it("a queda é gravada com a hora e o motivo, e a volta também", async () => {
+        const page = openPage();
+        await rounds(2);
+        // A conexão segue como estava quando o processo subiu: nada a gravar.
+        expect(await storedConnectivity()).toBeNull();
+
+        const out = await outage(page);
+        expect(out).toEqual({ state: "offline", since: expect.any(String), reason: GATEWAY_SILENT });
+        expect(Date.now() - new Date(out.since!).getTime()).toBeLessThan(5_000);
+        expect(await storedConnectivity()).toEqual(out);
+
+        link = "ok";
+        await rounds(1);
+        expect(await storedConnectivity()).toEqual(CONNECTED);
+      });
+
+      it("o banco recusa a primeira tentativa de gravar a queda: a segunda grava a pausa e o estado da conexão juntos", async () => {
+        await rounds(2);
+        link = "fora";
+        vi.spyOn(db, "$transaction").mockRejectedValueOnce(new Error("database is locked"));
+        await rounds(1);
+
+        expect(await storedConnectivity()).toMatchObject({ state: "offline", reason: GATEWAY_SILENT });
+        expect(await storedConnectivity()).toEqual(await getLocalConnectivity());
+        expect((await serviceOf("github")).measuredReason).toBe("Medições pausadas: sem Internet neste servidor.");
+        expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining("medições não gravadas"));
+      });
+
+      it("o servidor reinicia durante a queda: a página vê a mesma faixa, desde a mesma hora, antes e depois do primeiro passo, e nenhum aviso novo", async () => {
+        const page = openPage();
+        const out = await outage(page);
+        restart();
+
+        expect((await page.see()).connectivity).toEqual(out);
+        await rounds(1);
+        expect((await page.see()).connectivity).toEqual(out);
+        expect(console.warn).toHaveBeenCalledWith(`[global-status] o servidor parou com a conexão local fora: ${GATEWAY_SILENT}`);
+
+        link = "ok";
+        await rounds(1);
+        await page.see();
+        expect(page.notices).toEqual(ONLY_THE_CONNECTION);
+      });
+
+      it("o primeiro passo do processo que sobe durante a queda é uma rodada de verificação, mesmo sem a página ter consultado antes", async () => {
+        const out = await outage(openPage());
+        restart();
+        fixture.runProbe.mockClear();
+        await rounds(1);
+
+        // Resolvedores, gateway e três canários: com a conexão fora nenhum serviço é medido.
+        expect([...new Set(fixture.runProbe.mock.calls.map(([spec]) => (spec as { kind: string }).kind))].sort()).toEqual(["DNS", "ICMP", "TCP"]);
+        expect(await getLocalConnectivity()).toEqual(out);
+      });
+
+      it("a conexão voltou enquanto o servidor estava parado: a página só vê a volta depois do primeiro passo, uma vez", async () => {
+        const page = openPage();
+        const out = await outage(page);
+        restart();
+        link = "ok";
+
+        expect((await page.see()).connectivity).toEqual(out);
+        await rounds(1);
+        expect((await page.see()).connectivity).toEqual(CONNECTED);
+        await rounds(1);
+        await page.see();
+        expect(page.notices).toEqual(ONLY_THE_CONNECTION);
+      });
+
+      it("o estado gravado é lido uma vez por processo: depois vale o que o agendador decidiu, mesmo que o banco recuse a gravação da volta", async () => {
+        const page = openPage();
+        const out = await outage(page);
+        restart();
+        const read = vi.spyOn(db.appSetting, "findUnique");
+        await page.see();
+        link = "ok";
+        vi.spyOn(db, "$transaction").mockRejectedValueOnce(new Error("database is locked")).mockRejectedValueOnce(new Error("database is locked"));
+        await rounds(1);
+
+        // Em memória a conexão voltou; o banco ainda guarda a queda, e a página vê a volta.
+        expect(await storedConnectivity()).toEqual(out);
+        expect((await page.see()).connectivity).toEqual(CONNECTED);
+        // O passo seguinte grava a volta que ficou pendente.
+        await rounds(1);
+        expect(await storedConnectivity()).toEqual(CONNECTED);
+        expect((await page.see()).connectivity).toEqual(CONNECTED);
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(page.notices).toEqual(ONLY_THE_CONNECTION);
+      });
+
+      it("o banco recusa a leitura ao subir: o passo não mede nada às cegas, e o seguinte retoma a queda", async () => {
+        const page = openPage();
+        const out = await outage(page);
+        restart();
+        vi.spyOn(db.appSetting, "findUnique").mockRejectedValueOnce(new Error("database is locked"));
+        const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        fixture.runProbe.mockClear();
+
+        await rounds(1);
+        expect(error).toHaveBeenCalledWith("[global-status] falha nas medições: database is locked", expect.any(Error));
+        expect(fixture.runProbe).not.toHaveBeenCalled();
+
+        await rounds(1);
+        expect((await page.see()).connectivity).toEqual(out);
+        expect(page.notices).toEqual(["Sua Internet está fora"]);
+      });
+
+      it("o banco recusa a leitura quando a página consulta: a consulta responde com o que o agendador sabe, e a seguinte lê de novo", async () => {
+        const out = await outage(openPage());
+        restart();
+        vi.spyOn(db.appSetting, "findUnique").mockRejectedValueOnce(new Error("database is locked"));
+
+        expect(await getLocalConnectivity()).toEqual(CONNECTED);
+        expect(await getLocalConnectivity()).toEqual(out);
+      });
+
+      it("um valor gravado que não é um estado da conexão vale como nada gravado: o processo começa com a conexão de pé", async () => {
+        await db.appSetting.create({ data: { key: CONNECTIVITY_KEY, value: "{ isto não é JSON" } });
+
+        expect(await getLocalConnectivity()).toEqual(CONNECTED);
+        await rounds(1);
+        expect((await serviceOf("github")).measuredStatus).toBe("OK");
+      });
     });
   });
 

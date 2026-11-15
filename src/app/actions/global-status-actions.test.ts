@@ -72,7 +72,7 @@ const mocks = vi.hoisted(() => ({
   ensureCatalogSeeded: vi.fn(async () => undefined),
   checkGlobalStatus: vi.fn(async () => undefined),
   runProbesNow: vi.fn(async () => undefined),
-  getLocalConnectivity: vi.fn(() => ({ state: "ok", since: null, reason: null })),
+  getLocalConnectivity: vi.fn(async () => ({ state: "ok", since: null, reason: null })),
   defaultGateway: vi.fn(async () => "192.168.0.1" as string | null),
 }));
 
@@ -190,8 +190,8 @@ beforeEach(() => {
   db.rollupError = null;
   history.__globalStatusHistory = undefined;
   vi.clearAllMocks();
-  // clearAllMocks não desfaz um mockReturnValue: sem isto, a conexão "offline" de um teste valeria nos seguintes.
-  mocks.getLocalConnectivity.mockReturnValue({ state: "ok", since: null, reason: null });
+  // clearAllMocks não desfaz um mockResolvedValue: sem isto, a conexão "offline" de um teste valeria nos seguintes.
+  mocks.getLocalConnectivity.mockResolvedValue({ state: "ok", since: null, reason: null });
   at(T);
 });
 
@@ -219,10 +219,11 @@ describe("getGlobalStatus com as medições ligadas", () => {
 
   it("marca o serviço cujas medições estão paradas pela conexão local", async () => {
     db.services = [service("github", { measuredStatus: "UNKNOWN", measuredReason: "Medições pausadas: sem Internet neste servidor.", latencyMs: null })];
-    mocks.getLocalConnectivity.mockReturnValue({ state: "offline", since: new Date(T - MIN).toISOString(), reason: "O gateway 192.168.0.1 não responde." } as never);
+    const offline = { state: "offline", since: new Date(T - MIN).toISOString(), reason: "O gateway 192.168.0.1 não responde." };
+    mocks.getLocalConnectivity.mockResolvedValue(offline as never);
     const data = await getGlobalStatus();
     expect(data.services[0]).toMatchObject({ status: "OK", measuredStatus: "UNKNOWN", measurementPaused: true, latencyMs: null });
-    expect(data.connectivity.state).toBe("offline");
+    expect(data.connectivity).toEqual(offline);
   });
 
   it("um \"Sem dados\" medido que não é pausa não é marcado", async () => {

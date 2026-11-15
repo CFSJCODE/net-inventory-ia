@@ -10,6 +10,7 @@ import {
   cleanupCutoffs,
   clearedServiceData,
   closedWindows,
+  connectivityValue,
   decideConnectivity,
   dueAfterRun,
   endpointChanged,
@@ -52,6 +53,7 @@ import {
   serviceEvidence,
   settlePausedRound,
   sortByCatalog,
+  storedConnectivity,
   summarizeService,
   unsourcedServiceData,
   type ConnectivityEvidence,
@@ -1075,6 +1077,51 @@ describe("estado da conexão local", () => {
 
   it("ao voltar limpa desde quando e a frase", () => {
     expect(nextConnectivity({ state: "dns", since, reason: DNS_REASON }, { state: "ok", reason: null }, T0 + MIN)).toEqual({ connectivity: ok, change: "restored" });
+  });
+
+  describe("gravado para o processo seguinte", () => {
+    const offline: LocalConnectivity = { state: "offline", since, reason: "O gateway 192.168.0.1 não responde." };
+    const dns: LocalConnectivity = { state: "dns", since, reason: DNS_REASON };
+
+    it("o processo que sobe começa do estado que o anterior gravou: sem Internet, sem DNS ou ok", () => {
+      for (const state of [offline, dns, ok]) expect(storedConnectivity(connectivityValue(state))).toEqual(state);
+    });
+
+    it("estados iguais dão o mesmo texto: os campos do estado, sempre na mesma ordem, e mais nada", () => {
+      const shuffled = { reason: offline.reason, extra: 1, since, state: "offline" } as LocalConnectivity;
+      expect(connectivityValue(shuffled)).toBe(`{"state":"offline","since":"${since}","reason":"O gateway 192.168.0.1 não responde."}`);
+      expect(connectivityValue(ok)).toBe('{"state":"ok","since":null,"reason":null}');
+    });
+
+    it("o estado que acabou de ser lido dá o mesmo texto que estava gravado: não há o que gravar de novo", () => {
+      for (const state of [offline, dns, ok]) {
+        const value = connectivityValue(state);
+        expect(connectivityValue(storedConnectivity(value))).toBe(value);
+      }
+    });
+
+    it.each([
+      ["nada gravado ainda", null],
+      ["nada gravado ainda (sem valor)", undefined],
+      ["texto vazio", ""],
+      ["texto que não é JSON", "{ estado: fora"],
+      ["JSON nulo", "null"],
+      ["JSON que é um número", "5"],
+      ["JSON que é uma lista", "[]"],
+      ["estado desconhecido", JSON.stringify({ ...offline, state: "down" })],
+      ["queda sem a hora", JSON.stringify({ ...offline, since: null })],
+      ["queda com hora que não é uma data", JSON.stringify({ ...offline, since: "ontem" })],
+      ["queda com hora que não é texto", JSON.stringify({ ...offline, since: T0 })],
+      ["queda sem o motivo", JSON.stringify({ ...offline, reason: null })],
+      ["queda com motivo que não é texto", JSON.stringify({ ...offline, reason: { html: "<b>fora</b>" } })],
+      ["ok com sobras de uma queda", JSON.stringify({ ...offline, state: "ok" })],
+    ])("%s: o processo começa em ok", (_, value) => {
+      expect(storedConnectivity(value)).toEqual(ok);
+    });
+
+    it("campos a mais no valor gravado não passam adiante", () => {
+      expect(storedConnectivity(JSON.stringify({ ...offline, extra: "x" }))).toEqual(offline);
+    });
   });
 });
 

@@ -259,7 +259,7 @@ export async function getGlobalStatus(): Promise<GlobalStatusData> {
   await ensureCatalogSeeded();
   const probes = probesEnabled(process.env.GLOBAL_STATUS_PROBES);
 
-  const [services, counts, problems, open, history] = await Promise.all([
+  const [services, counts, problems, open, history, connectivity] = await Promise.all([
     prisma.statusService.findMany({ where: probes ? { enabled: true } : { enabled: true, sourceType: { not: "NONE" } }, orderBy: { position: "asc" } }),
     prisma.statusComponent.groupBy({ by: ["serviceId", "status"], _count: { _all: true } }),
     prisma.statusComponent.findMany({ where: { status: { not: "OK" } }, orderBy: { position: "asc" } }),
@@ -269,6 +269,7 @@ export async function getGlobalStatus(): Promise<GlobalStatusData> {
       orderBy: { startedAt: "desc" },
     }),
     probes ? getHistory() : NO_HISTORY,
+    getLocalConnectivity(),
   ]);
 
   const countsBy = new Map<string, Record<ServiceStatus, number>>();
@@ -304,7 +305,7 @@ export async function getGlobalStatus(): Promise<GlobalStatusData> {
       openIncidents: open.filter((i) => i.service.slug === s.slug).length,
     })),
     incidents: open.map(incidentRow),
-    connectivity: getLocalConnectivity(),
+    connectivity,
   };
 }
 

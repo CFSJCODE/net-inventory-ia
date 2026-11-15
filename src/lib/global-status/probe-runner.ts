@@ -7,12 +7,14 @@ import {
   BASELINE_REFRESH_MS,
   BASELINE_WINDOW_MS,
   CLEARED_TARGET_DATA,
+  CONNECTIVITY_SETTING,
   SERVER_VANTAGE,
   TARGET_CACHE_MS,
   advanceAgenda,
   buildRollups,
   cleanupCutoffs,
   clearedServiceData,
+  connectivityValue,
   groupBaseline,
   hydrateTarget,
   isInternetTarget,
@@ -39,6 +41,7 @@ import {
   serviceData,
   settlePausedRound,
   sortByCatalog,
+  storedConnectivity,
   type ConnectivityDecision,
   type LoadedTarget,
   type Measurement,
@@ -87,6 +90,10 @@ interface RunnerState {
   baselines: Map<string, number[]>;
   baselinesAt: number;
   connectivity: LocalConnectivity;
+  /** O estado da conexão que o banco guarda (`connectivityValue`), até onde este processo sabe; null antes da leitura ao subir. */
+  savedConnectivity: string | null;
+  /** Leitura, ao subir, do estado da conexão que o processo anterior deixou gravado (uma por processo). */
+  resumed?: Promise<void>;
   /** Marcação de pausa que o banco ainda não aceitou: o passo seguinte tenta gravar de novo. */
   pendingPause: PausedState | null;
   pausedRoundAt: number;
@@ -111,6 +118,7 @@ function runner(): RunnerState {
     baselines: new Map(),
     baselinesAt: 0,
     connectivity: { state: "ok", since: null, reason: null },
+    savedConnectivity: null,
     pendingPause: null,
     pausedRoundAt: 0,
     rotation: 0,
@@ -155,6 +163,27 @@ async function gatewayIp(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Começa do estado da conexão que o processo anterior deixou gravado (ver `storedConnectivity`): quem
+ * sobe durante uma queda segue com ela fora, com o mesmo motivo e desde a mesma hora, e o primeiro
+ * passo é uma rodada de verificação em vez de medir os serviços. Uma leitura por processo, antes de
+ * qualquer passo e de qualquer resposta à página; se o banco recusar, quem pedir em seguida lê de novo.
+ */
+function resumeConnectivity(r: RunnerState): Promise<void> {
+  r.resumed ??= prisma.appSetting
+    .findUnique({ where: { key: CONNECTIVITY_SETTING } })
+    .then((row) => {
+      r.connectivity = storedConnectivity(row?.value);
+      r.savedConnectivity = connectivityValue(r.connectivity);
+      if (r.connectivity.state !== "ok") console.warn(`[global-status] o servidor parou com a conexão local fora: ${r.connectivity.reason}`);
+    })
+    .catch((err) => {
+      r.resumed = undefined;
+      throw err;
+    });
+  return r.resumed;
 }
 
 /** Relê do banco os alvos habilitados dos serviços habilitados (a cada 5 min, ou num passo forçado). */
@@ -252,6 +281,7 @@ async function refreshBaselines(r: RunnerState, now: number): Promise<void> {
 /** Um passo: mede o que venceu, decide se as falhas são dos serviços ou da conexão local, grava e faz a manutenção. */
 async function tick(r: RunnerState, force: boolean): Promise<void> {
   await ensureCatalogSeeded();
+  await resumeConnectivity(r);
   const now = Date.now();
   await refreshTargets(r, now, force);
   await refreshBaselines(r, now);
@@ -305,7 +335,12 @@ async function tick(r: RunnerState, force: boolean): Promise<void> {
     }
     // A marcação de pausa fica pendente até o banco aceitar: se a gravação falhar, a próxima rodada repete.
     r.pendingPause = pauseToWrite(r.pendingPause, connectivity, change);
-    if (await persist(r, outcome, r.pendingPause)) r.pendingPause = null;
+    // O estado da conexão vai junto enquanto difere do que o banco guarda: é dele que o próximo processo começa.
+    const value = connectivityValue(connectivity);
+    if (await persist(r, outcome, r.pendingPause, value === r.savedConnectivity ? null : value)) {
+      r.pendingPause = null;
+      r.savedConnectivity = value;
+    }
   }
   await maintain(r);
 }
@@ -314,16 +349,16 @@ async function tick(r: RunnerState, force: boolean): Promise<void> {
  * Grava o passo numa chamada só da fila de escrita. Falhou: tenta mais uma vez depois de 500 ms e, se
  * falhar de novo, descarta as medições do passo. Devolve se ficou gravado (ou se não havia o que gravar).
  */
-async function persist(r: RunnerState, outcome: TickOutcome, pause: PausedState | null): Promise<boolean> {
-  if (!pause && !outcome.targetUpdates.length) return true;
+async function persist(r: RunnerState, outcome: TickOutcome, pause: PausedState | null, connectivity: string | null): Promise<boolean> {
+  if (!pause && !connectivity && !outcome.targetUpdates.length) return true;
   return serialized(async () => {
     try {
-      await writeTick(outcome, pause);
+      await writeTick(outcome, pause, connectivity);
       return true;
     } catch {
       await sleep(WRITE_RETRY_MS);
       try {
-        await writeTick(outcome, pause);
+        await writeTick(outcome, pause, connectivity);
         return true;
       } catch (err) {
         const message = `[global-status] medições não gravadas (o estado em memória segue valendo): ${errorText(err)}`;
@@ -334,8 +369,11 @@ async function persist(r: RunnerState, outcome: TickOutcome, pause: PausedState 
   });
 }
 
-/** Uma transação com as medições, os alvos e os serviços do passo e, ao entrar em pausa, a marcação de todos os serviços. */
-async function writeTick(outcome: TickOutcome, pause: PausedState | null): Promise<void> {
+/**
+ * Uma transação com as medições, os alvos e os serviços do passo; ao entrar em pausa, a marcação de
+ * todos os serviços; e o estado da conexão (`connectivity`), quando o banco ainda não guarda o atual.
+ */
+async function writeTick(outcome: TickOutcome, pause: PausedState | null, connectivity: string | null): Promise<void> {
   const now = new Date();
   const touched = outcome.services.map((s) => s.serviceId);
   // Lidos aqui dentro da fila: o coletor pode ter mudado o estado oficial e o status desde o começo do passo.
@@ -358,6 +396,7 @@ async function writeTick(outcome: TickOutcome, pause: PausedState | null): Promi
     writes.push(prisma.probeTarget.updateMany({ where: { serviceId: { in: paused.map((s) => s.id) } }, data: pausedTargetData(pause) }));
     for (const s of paused) writes.push(prisma.statusService.updateMany({ where: { id: s.id }, data: pausedServiceData(s, pause, now) }));
   }
+  if (connectivity) writes.push(prisma.appSetting.upsert({ where: { key: CONNECTIVITY_SETTING }, create: { key: CONNECTIVITY_SETTING, value: connectivity }, update: { value: connectivity } }));
   if (writes.length) await prisma.$transaction(writes);
 }
 
@@ -446,6 +485,7 @@ export function runProbeTick(options: { force?: boolean } = {}): Promise<void> {
 /**
  * Com as medições desligadas, apaga o que elas deixaram nos serviços e nos alvos: ninguém mais atualiza
  * o estado medido, e sem isso o último (um "fora do ar", por exemplo) ficaria nos cards para sempre. O
+ * estado gravado da conexão sai junto: religadas, as medições não retomam uma queda de antes. O
  * histórico (medições e janelas) fica onde está e sai pela idade quando as medições forem religadas.
  */
 async function clearMeasuredState(): Promise<void> {
@@ -460,6 +500,7 @@ async function clearMeasuredState(): Promise<void> {
     });
     const writes: Prisma.PrismaPromise<unknown>[] = services.map((s) => prisma.statusService.updateMany({ where: { id: s.id }, data: clearedServiceData(s, now) }));
     writes.push(prisma.probeTarget.updateMany({ where: { OR: [{ status: { not: "UNKNOWN" } }, { statusReason: { not: null } }, { lastLatencyMs: { not: null } }, { lastError: { not: null } }] }, data: CLEARED_TARGET_DATA }));
+    writes.push(prisma.appSetting.deleteMany({ where: { key: CONNECTIVITY_SETTING } }));
     await prisma.$transaction(writes);
   };
   // Como as gravações de um passo: uma segunda tentativa depois de 500 ms (o banco pode estar ocupado ao subir).
@@ -502,7 +543,14 @@ export function runProbesNow(): Promise<void> {
   return r.forced;
 }
 
-/** Estado da conexão do próprio servidor, para a faixa "Sua Internet". */
-export function getLocalConnectivity(): LocalConnectivity {
-  return { ...(g.__globalStatusProbes?.connectivity ?? { state: "ok", since: null, reason: null }) };
+/**
+ * Estado da conexão do próprio servidor, para a faixa "Sua Internet". Num processo que acabou de subir
+ * espera a leitura do estado gravado (ver `resumeConnectivity`): a página não vê "ok" antes de o
+ * agendador saber como o processo anterior parou. Com as medições desligadas não há o que ler.
+ */
+export async function getLocalConnectivity(): Promise<LocalConnectivity> {
+  const r = runner();
+  // Uma leitura que o banco recusa não derruba a consulta da página: vale o que o agendador sabe, e quem pedir depois lê de novo.
+  if (probesEnabled(process.env.GLOBAL_STATUS_PROBES)) await resumeConnectivity(r).catch(() => undefined);
+  return { ...r.connectivity };
 }

@@ -6,6 +6,7 @@ import {
   STATUS_SEVERITY,
   combineStatus,
   targetLabel,
+  toDate,
   worstStatus,
   type LocalConnectivity,
   type ProbeKind,
@@ -545,6 +546,37 @@ export function nextConnectivity(current: LocalConnectivity, decision: Connectiv
     return { connectivity: { state: decision.state, since: new Date(now).toISOString(), reason: decision.reason }, change: "lost" };
   }
   return { connectivity: { state: decision.state, since: current.since, reason: decision.reason }, change: current.state === decision.state ? "none" : "moved" };
+}
+
+/** Chave de AppSetting onde fica gravado o estado da conexão local, para o processo seguinte começar dele. */
+export const CONNECTIVITY_SETTING = "globalStatus.connectivity";
+
+/**
+ * O estado da conexão como é gravado. Os campos saem sempre nesta ordem: dois estados iguais dão o
+ * mesmo texto, e é comparando os textos que o agendador sabe se o banco já guarda o estado atual.
+ */
+export function connectivityValue(connectivity: LocalConnectivity): string {
+  return JSON.stringify({ state: connectivity.state, since: connectivity.since, reason: connectivity.reason });
+}
+
+/**
+ * O estado da conexão com que um processo começa: o que o anterior deixou gravado. Se todo processo
+ * começasse em "ok", o que sobe durante uma queda diria "ok" até o primeiro passo decidir, e a página
+ * aberta desde antes mostraria "Sua Internet voltou" e, em seguida, "Sua Internet está fora" de novo,
+ * com a queda contada a partir do reinício.
+ *
+ * Só vale um estado fora como o agendador grava (com a hora da queda e o motivo). Qualquer outra coisa
+ * (nada gravado ainda, valor corrompido) é "ok", que é como o processo começava antes de haver o que ler.
+ */
+export function storedConnectivity(value: string | null | undefined): LocalConnectivity {
+  try {
+    const { state, since, reason } = JSON.parse(value ?? "") as Record<keyof LocalConnectivity, unknown>;
+    const at = toDate(since);
+    if ((state === "offline" || state === "dns") && at && typeof reason === "string") return { state, since: at.toISOString(), reason };
+  } catch {
+    // Valor corrompido: vale como "ok".
+  }
+  return { state: "ok", since: null, reason: null };
 }
 
 // ---------------------------------------------------------------- pausa
