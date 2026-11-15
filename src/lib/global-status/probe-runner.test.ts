@@ -1024,3 +1024,58 @@ describe("medições ligadas", () => {
     });
   });
 });
+
+describe("incidentes detectados pelas medições (fase 4)", () => {
+  const detected = () => db.statusIncident.findMany({ where: { origin: "DETECTED" }, include: { service: { select: { slug: true } } }, orderBy: { startedAt: "asc" } });
+
+  beforeEach(async () => {
+    await withInternetStrip();
+    fixture.runProbe.mockImplementation(async (spec: { kind: string; host: string }) => githubHttpDown(spec));
+  });
+
+  it("abre um incidente só para o serviço que caiu, sobe de degradado para grave e não abre nada para a faixa 'Sua Internet'", async () => {
+    await rounds(2);
+    expect((await detected()).map((i) => [i.service.slug, i.impact, i.state])).toEqual([["github", "MINOR", "investigating"]]);
+    await rounds(3);
+    const [incident, ...others] = await detected();
+    expect(others).toEqual([]);
+    expect(incident).toMatchObject({ impact: "MAJOR", state: "investigating", title: "Fora do ar nas medições deste servidor", resolvedAt: null });
+    expect(incident.affected).toMatch(/^HTTP: /);
+  });
+
+  it("a queda da conexão do servidor não abre nem fecha incidente", async () => {
+    await rounds(3);
+    const before = await detected();
+    link = "fora";
+    await rounds(2);
+    expect(await detected()).toEqual(before);
+  });
+
+  it("ao voltar fica 'monitorando' e fecha 10 min depois, na hora da volta", async () => {
+    await rounds(3);
+    fixture.runProbe.mockImplementation(async () => answering());
+    await rounds(1);
+    const [monitoring] = await detected();
+    expect(monitoring).toMatchObject({ state: "monitoring", resolvedAt: null });
+
+    // A volta foi há 11 min: a próxima rodada normal fecha o incidente.
+    const back = new Date(Date.now() - 11 * 60_000);
+    await db.$executeRaw`UPDATE "StatusIncident" SET "updatedAt" = ${back.getTime()} WHERE "id" = ${monitoring.id}`;
+    await rounds(1);
+    const [resolved] = await detected();
+    expect(resolved.state).toBe("resolved");
+    expect(resolved.resolvedAt?.getTime()).toBe(back.getTime());
+  });
+
+  it("desligar as medições fecha os incidentes detectados que ficaram abertos", async () => {
+    await rounds(3);
+    restart();
+    vi.stubEnv("GLOBAL_STATUS_PROBES", "off");
+    const transaction = vi.spyOn(db, "$transaction");
+    startProbeRunner();
+    await cleared(transaction);
+    const [incident] = await detected();
+    expect(incident.state).toBe("resolved");
+    expect(incident.resolvedAt).not.toBeNull();
+  });
+});

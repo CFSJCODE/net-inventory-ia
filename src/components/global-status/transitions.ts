@@ -8,6 +8,8 @@ import type { LocalConnectivity, ServiceCategory, ServiceStatus } from "@/lib/gl
 
 /** Os serviços desta categoria medem a conexão do próprio servidor: ficam na faixa "Sua Internet", não nos cards. */
 export const INTERNET_CATEGORY: ServiceCategory = "INTERNET";
+/** Visão de fora (IODA e rotas BGP): fica na faixa "Internet no Brasil", não nos cards; as mudanças dela viram aviso. */
+export const REGIONAL_CATEGORY: ServiceCategory = "REGIONAL";
 
 /** O que a página lembra entre as consultas: o último estado julgado de cada serviço e o da conexão do servidor. */
 export interface SeenStatus {

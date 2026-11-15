@@ -10,6 +10,10 @@ import { defaultGateway } from "@/lib/global-status/probes";
 import { buildPhaseSeries, buildSeries, latencySummary, mainLatencyTarget, tailPoints, uptimeFromTotals, uptimeOf, type PhaseSeries, type RollupPoint, type SparkSeries } from "@/lib/global-status/series";
 import { isTraceableHost, traceRoute, type TraceResult } from "@/lib/global-status/traceroute";
 import { BUCKET_MS, bucketStart } from "@/lib/global-status/stats";
+import { storedIsp } from "@/lib/global-status/internet-signals";
+import { getGlobalStatusSettings, normalizeGlobalStatusSettings, saveGlobalStatusSettings, type GlobalStatusSettings } from "@/lib/global-status/settings";
+import { serialized } from "@/lib/global-status/write-queue";
+import { getEmailAlertConfig } from "@/lib/alerts/email-settings";
 import { AUTO_GATEWAY, STATUS_SEVERITY, targetAddress, targetLabel, type LocalConnectivity, type ProbeKind, type ServiceStatus, type TargetStatus } from "@/lib/global-status/types";
 
 export interface StatusComponentRow {
@@ -20,6 +24,8 @@ export interface StatusComponentRow {
 
 export interface StatusIncidentRow {
   id: string;
+  /** OFFICIAL = publicado pela fonte (provedor ou IODA); DETECTED = visto pelas medições deste servidor. */
+  origin: string;
   serviceSlug: string;
   serviceName: string;
   title: string;
@@ -121,9 +127,10 @@ export interface GlobalStatusData {
   connectivity: LocalConnectivity;
 }
 
-function incidentRow(i: { id: string; title: string; impact: string; state: string; url: string | null; affected: string | null; startedAt: Date; resolvedAt: Date | null; service: { slug: string; name: string } }): StatusIncidentRow {
+function incidentRow(i: { id: string; origin: string; title: string; impact: string; state: string; url: string | null; affected: string | null; startedAt: Date; resolvedAt: Date | null; service: { slug: string; name: string } }): StatusIncidentRow {
   return {
     id: i.id,
+    origin: i.origin,
     serviceSlug: i.service.slug,
     serviceName: i.service.name,
     title: i.title,
@@ -341,9 +348,13 @@ export interface StatusServiceDetail {
   phases: PhaseSeries | null;
   /** true = o serviço tem um destino que o traceroute sob demanda aceita. */
   traceable: boolean;
+  /** Rota BGP do endereço medido, da última coleta do RIPEstat ("140.82.112.0/20 · AS36459 · vista por 243 de 244 coletores"). */
+  bgp: { text: string; status: ServiceStatus } | null;
 }
 
-const EMPTY_DETAIL: StatusServiceDetail = { components: [], incidents: [], targets: [], vantages: null, phases: null, traceable: false };
+const EMPTY_DETAIL: StatusServiceDetail = { components: [], incidents: [], targets: [], vantages: null, phases: null, traceable: false, bgp: null };
+/** Serviço da faixa "Internet no Brasil" cujos componentes são as rotas BGP dos outros serviços. */
+const BGP_SERVICE_SLUG = "rotas-bgp";
 const PHASE_STEP_MIN = 30;
 
 /** Nome dos agentes pelo id, da tabela Agents do host .NET (só existe no banco canônico; fora dele, nomes genéricos). */
@@ -491,6 +502,7 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
       : [],
   ]);
   const uptime30d = new Map(totals30d.map((r) => [r.targetId, uptimeFromTotals(r._sum.samples, r._sum.failures)]));
+  const route = await prisma.statusComponent.findFirst({ where: { externalId: service.slug, service: { slug: BGP_SERVICE_SLUG } }, select: { name: true, status: true } });
 
   return {
     components: service.components.map((c) => ({ name: c.name, groupName: c.groupName, status: c.status as ServiceStatus })),
@@ -532,6 +544,8 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
     vantages: main && vantages ? { targetLabel: targetLabel({ kind: main.kind as ProbeKind, port: main.port }), rows: vantages } : null,
     phases: phaseChecks ? buildPhaseSeries(phaseChecks, { end, hours: SPARK_HOURS, stepMin: PHASE_STEP_MIN }) : null,
     traceable: measuring && traceHost(targets) !== null,
+    // O nome do componente é "<serviço> · <rota>": no detalhe do próprio serviço fica só a rota.
+    bgp: route ? { text: route.name.startsWith(`${service.name} · `) ? route.name.slice(service.name.length + 3) : route.name, status: route.status as ServiceStatus } : null,
   };
 }
 
@@ -553,4 +567,55 @@ export async function refreshGlobalStatusNow(): Promise<void> {
     // As medições novas entram na próxima consulta da página, sem esperar o minuto do cache.
     g.__globalStatusHistory = undefined;
   }
+}
+
+/** O que a tela de configuração do Status global mostra e edita. */
+export interface GlobalStatusConfig {
+  settings: GlobalStatusSettings;
+  /** A operadora descoberta pelo IP público do servidor (ou a informada), da última consulta. */
+  isp: { asn: number; name: string | null } | null;
+  /** O e-mail sai pela configuração de Alertas → Configurar e-mails: chave do Resend e destinatário. */
+  email: { ready: boolean; to: string | null };
+  services: { slug: string; name: string; category: string; enabled: boolean }[];
+}
+
+async function loadConfig(): Promise<GlobalStatusConfig> {
+  await ensureCatalogSeeded();
+  const [settings, isp, email, services] = await Promise.all([
+    getGlobalStatusSettings(),
+    storedIsp(),
+    getEmailAlertConfig(),
+    prisma.statusService.findMany({ orderBy: { position: "asc" }, select: { slug: true, name: true, category: true, enabled: true } }),
+  ]);
+  return {
+    settings,
+    isp: isp && { asn: isp.asn, name: isp.name },
+    email: { ready: !!email.apiKey && !!email.to.trim(), to: email.to.trim() || null },
+    services,
+  };
+}
+
+export async function getGlobalStatusConfig(): Promise<GlobalStatusConfig> {
+  await requirePermission("settings.manage");
+  return loadConfig();
+}
+
+/** Grava a configuração e quais serviços são acompanhados (os desligados somem da página e param de ser consultados e medidos). */
+export async function saveGlobalStatusConfig(input: { settings: GlobalStatusSettings; enabled: Record<string, boolean> }): Promise<GlobalStatusConfig> {
+  await requirePermission("settings.manage");
+  const settings = normalizeGlobalStatusSettings(input?.settings);
+  const enabled = input?.enabled && typeof input.enabled === "object" ? input.enabled : {};
+  const known = new Set(STATUS_CATALOG.map((e) => e.slug));
+  const on = Object.keys(enabled).filter((slug) => known.has(slug) && enabled[slug] === true);
+  const off = Object.keys(enabled).filter((slug) => known.has(slug) && enabled[slug] === false);
+  await serialized(() =>
+    prisma.$transaction([
+      prisma.statusService.updateMany({ where: { slug: { in: on } }, data: { enabled: true } }),
+      prisma.statusService.updateMany({ where: { slug: { in: off } }, data: { enabled: false } }),
+    ]),
+  );
+  await saveGlobalStatusSettings(settings);
+  // A página e o histórico refletem os serviços novos já na próxima consulta.
+  g.__globalStatusHistory = undefined;
+  return loadConfig();
 }

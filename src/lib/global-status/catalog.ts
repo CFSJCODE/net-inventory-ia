@@ -51,6 +51,9 @@ function resolver(ip: string): CatalogTarget[] {
   ];
 }
 
+/** Alertas do IODA (Georgia Tech) por país ou ASN; aberto, sem chave. */
+const IODA_ALERTS = "https://api.ioda.inetintel.cc.gatech.edu/v2/outages/alerts";
+
 /**
  * Serviços acompanhados. A ordem é a de exibição dentro de cada categoria.
  *
@@ -68,6 +71,10 @@ function resolver(ip: string): CatalogTarget[] {
  *
  * Categoria INTERNET: a conexão do próprio servidor (gateway, DNS do sistema) e três resolvedores
  * públicos. São a base da faixa "Sua Internet" e as testemunhas que separam queda local de queda do serviço.
+ *
+ * Categoria REGIONAL (fase 4): a visão de fora, na faixa "Internet no Brasil". Alertas do IODA para o
+ * país e para a operadora deste servidor ("entityCode=auto": o ASN é descoberto pelo IP público, ou
+ * vem da tela de configuração) e a visibilidade BGP do prefixo de cada serviço medido (RIPEstat).
  */
 export const STATUS_CATALOG: CatalogEntry[] = [
   { slug: "cloudflare", name: "Cloudflare", category: "CDN", sourceType: "STATUSPAGE", sourceUrl: "https://www.cloudflarestatus.com", pageUrl: "https://www.cloudflarestatus.com/", targets: web("https://www.cloudflare.com/cdn-cgi/trace") },
@@ -115,6 +122,17 @@ export const STATUS_CATALOG: CatalogEntry[] = [
   { slug: "dns-cloudflare", name: "Cloudflare DNS (1.1.1.1)", category: "INTERNET", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: resolver("1.1.1.1") },
   { slug: "dns-google", name: "Google DNS (8.8.8.8)", category: "INTERNET", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: resolver("8.8.8.8") },
   { slug: "dns-quad9", name: "Quad9 (9.9.9.9)", category: "INTERNET", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: resolver("9.9.9.9") },
+  {
+    slug: "internet-brasil",
+    name: "Internet no Brasil",
+    category: "REGIONAL",
+    sourceType: "IODA",
+    sourceUrl: `${IODA_ALERTS}?entityType=country&entityCode=BR`,
+    pageUrl: "https://ioda.inetintel.cc.gatech.edu/country/BR",
+    targets: [],
+  },
+  { slug: "sua-operadora", name: "Sua operadora", category: "REGIONAL", sourceType: "IODA", sourceUrl: `${IODA_ALERTS}?entityType=asn&entityCode=auto`, pageUrl: "https://ioda.inetintel.cc.gatech.edu/", targets: [] },
+  { slug: "rotas-bgp", name: "Rotas BGP dos serviços", category: "REGIONAL", sourceType: "RIPESTAT", sourceUrl: "https://stat.ripe.net", pageUrl: "https://stat.ripe.net/", targets: [] },
 ];
 
 export const CATEGORY_LABEL: Record<ServiceCategory, string> = {
@@ -125,6 +143,7 @@ export const CATEGORY_LABEL: Record<ServiceCategory, string> = {
   SOCIAL: "Redes sociais e comunidades",
   STREAMING: "Streaming",
   INTERNET: "Internet",
+  REGIONAL: "Internet no Brasil",
 };
 
-export const CATEGORY_ORDER: ServiceCategory[] = ["CLOUD", "CDN", "AI", "DEV", "SOCIAL", "STREAMING", "INTERNET"];
+export const CATEGORY_ORDER: ServiceCategory[] = ["CLOUD", "CDN", "AI", "DEV", "SOCIAL", "STREAMING", "INTERNET", "REGIONAL"];
