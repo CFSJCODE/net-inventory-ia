@@ -45,6 +45,22 @@ describe("windowStats", () => {
     expect(s.degraded).toBe(false);
   });
 
+  it("serviço de tempo naturalmente variável (p95 normal já acima de 1,5× a mediana) não fica degradado à toa", () => {
+    // Mesma distribuição antes e na janela: 80% em 80 ms e 20% em 200 ms (p95 = 2,5× a mediana).
+    const mix = (n: number) => Array.from({ length: n }, (_, i) => ok(i % 5 === 0 ? 200 : 80));
+    const s = windowStats(mix(120), { size: 20 });
+    expect(s.ratio!).toBeGreaterThan(1.5);
+    expect(s.degraded).toBe(false);
+    // Quando a cauda passa da cauda de sempre, degrada.
+    expect(windowStats([...mix(100), ...repeat(20, ok(300))], { size: 20 }).degraded).toBe(true);
+  });
+
+  it("a base são as medições anteriores à janela", () => {
+    const s = windowStats([...repeat(100, ok(40)), ...repeat(20, ok(500))], { size: 20 });
+    expect(s.baselineMs).toBe(40);
+    expect(s.baselineP95Ms).toBe(40);
+  });
+
   it("sem base suficiente (menos de 30 pontos) não dispara", () => {
     expect(windowStats([...repeat(10, ok(40)), ...repeat(10, ok(400))], { size: 10 }).degraded).toBe(false);
   });

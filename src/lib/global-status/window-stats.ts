@@ -10,12 +10,15 @@ import { jitter, median, percentile } from "./stats";
  *   p_q(W)   = percentil q das latências de W (interpolação linear, como em `percentile`);
  *   jitter   = média de |xᵢ − xᵢ₋₁| nas latências consecutivas de W (RFC 3550, sem o filtro 1/16);
  *   perda    = média em W de 100 para cada medição sem resposta e da perda medida (ping) nas demais;
- *   base     = mediana das últimas B latências (B = 100 por padrão), incluindo as de W;
- *   degradado ⇔ |base| ≥ B_min ∧ p95(W) > max(1,5 · base, base + Δ_min).
+ *   base     = as B latências (B = 100 por padrão) das medições ANTERIORES à janela;
+ *   degradado ⇔ |base| ≥ B_min ∧ p95(W) > max(1,5 · mediana(base), mediana(base) + Δ_min, p95(base)).
  *
  * A mediana como base resiste a picos (um pico isolado não a desloca), e o p95 da janela pega a cauda
  * que piora antes da mediana. O Δ_min (10 ms) evita alarme de ruído em alvos de 1 ms, como o gateway da
- * LAN, em que 2 ms já seria "o dobro do normal".
+ * LAN, em que 2 ms já seria "o dobro do normal". A base fica fora da janela (senão a própria piora
+ * entraria na referência), e o p95 da base é o limite mínimo: um serviço cujo tempo de resposta varia
+ * muito por natureza (p95 normal já acima de 1,5× a mediana) só degrada quando a cauda passa da cauda
+ * de sempre. Quando a piora dura, ela vai entrando na base e, depois de B medições, vira o novo normal.
  *
  * Custo: O(n · (N log N + B log B)) para a série inteira; com n ≈ 1.440 medições por dia, N = 20 e
  * B = 100, são algumas centenas de milhares de comparações, desprezível.
@@ -26,6 +29,8 @@ export const MIN_WINDOW_SIZE = 5;
 export const MAX_WINDOW_SIZE = 200;
 export const BASELINE_POINTS = 100;
 export const DEGRADE_FACTOR = 1.5;
+/** Medições guardadas por alvo para o gatilho (janela máxima + base). */
+export const TRAIL_MAX = MAX_WINDOW_SIZE + BASELINE_POINTS;
 /** Pontos mínimos na base para o gatilho valer (com menos, qualquer variação parece anomalia). */
 export const MIN_BASELINE_POINTS = 30;
 /** Diferença mínima entre o p95 e a base para degradar, em ms. */
@@ -57,8 +62,10 @@ export interface WindowStats {
   p99Ms: number | null;
   jitterMs: number | null;
   lossPct: number | null;
-  /** Mediana das últimas B latências; null sem nenhuma. */
+  /** Mediana das B latências anteriores à janela; null sem nenhuma. */
   baselineMs: number | null;
+  /** p95 dessas mesmas latências. */
+  baselineP95Ms: number | null;
   /** p95 ÷ base; null sem os dois. */
   ratio: number | null;
   degraded: boolean;
@@ -87,15 +94,17 @@ export function windowStats(samples: readonly WindowSample[], options: WindowOpt
   const size = normalizeWindowSize(options.size ?? DEFAULT_WINDOW_SIZE);
   const window = samples.slice(-size);
   const lats = latenciesOf(window);
-  const baseline = latenciesOf(samples).slice(-(options.baselinePoints ?? BASELINE_POINTS));
+  const baseline = latenciesOf(samples.slice(0, Math.max(0, samples.length - size))).slice(-(options.baselinePoints ?? BASELINE_POINTS));
   const baselineMs = median(baseline);
+  const baselineP95Ms = percentile(baseline, 95);
   const p95Ms = percentile(lats, 95);
   const ratio = p95Ms !== null && baselineMs !== null && baselineMs > 0 ? p95Ms / baselineMs : null;
   const factor = options.factor ?? DEGRADE_FACTOR;
   const minDelta = options.minDeltaMs ?? MIN_DEGRADE_DELTA_MS;
   // Com poucas respostas na janela, o p95 é praticamente o máximo: exige ao menos 5 (ou a janela toda, se menor).
   const enough = baseline.length >= (options.minBaselinePoints ?? MIN_BASELINE_POINTS) && lats.length >= Math.min(5, size);
-  const degraded = enough && p95Ms !== null && baselineMs !== null && p95Ms > Math.max(factor * baselineMs, baselineMs + minDelta);
+  const limit = baselineMs === null ? null : Math.max(factor * baselineMs, baselineMs + minDelta, baselineP95Ms ?? 0);
+  const degraded = enough && p95Ms !== null && limit !== null && p95Ms > limit;
   return {
     samples: window.length,
     answered: lats.length,
@@ -105,6 +114,7 @@ export function windowStats(samples: readonly WindowSample[], options: WindowOpt
     jitterMs: jitter(lats),
     lossPct: lossOf(window),
     baselineMs,
+    baselineP95Ms,
     ratio,
     degraded,
   };
@@ -112,8 +122,8 @@ export function windowStats(samples: readonly WindowSample[], options: WindowOpt
 
 /** A estatística da janela em cada ponto da série (o i-ésimo item usa as medições até a i-ésima). */
 export function rollingWindowStats(samples: readonly WindowSample[], options: WindowOptions = {}): WindowStats[] {
-  const keep = Math.max(normalizeWindowSize(options.size ?? DEFAULT_WINDOW_SIZE), options.baselinePoints ?? BASELINE_POINTS);
-  // Basta olhar para trás até juntar B latências (e N medições); o histórico mais velho não muda nada.
+  const keep = normalizeWindowSize(options.size ?? DEFAULT_WINDOW_SIZE) + (options.baselinePoints ?? BASELINE_POINTS);
+  // Basta olhar para trás até juntar N + B latências (e medições); o histórico mais velho não muda nada.
   const out: WindowStats[] = [];
   for (let i = 0; i < samples.length; i++) {
     let from = i;

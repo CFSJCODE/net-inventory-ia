@@ -219,7 +219,8 @@ export function ProbeTimeline({ slug, vantages }: { slug: string; vantages: Stat
           <DnsResolvers timeline={timeline} />
           <HttpsStages timeline={timeline} />
           <p className="text-muted-foreground">
-            Janela de {timeline.windowSize} medições; amarelo quando o p95 passa de 1,5× a mediana das últimas 100.
+            Janela de {timeline.windowSize} medições; amarelo quando o p95 passa de 1,5× a mediana das 100 medições anteriores e da variação
+            normal delas. A mesma regra deixa o card do serviço degradado e entra no alerta por e-mail.
           </p>
         </div>
       )}

@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import type { CatalogEntry } from "./catalog";
 import { BUCKET_MS, WINDOW_SIZE, aggregateChecks, bucketStart, evaluateTarget, type BucketStats, type CheckSample, type RecentCheck, type TargetVerdict } from "./stats";
+import { TRAIL_MAX, windowStats, type WindowSample } from "./window-stats";
 import {
   AUTO_GATEWAY,
   STATUS_SEVERITY,
@@ -105,6 +106,11 @@ export interface TargetState extends TargetInfo {
    * que voltam inteiras (ver `hydrateTarget`).
    */
   beforePause: TargetVerdict | null;
+  /**
+   * Fase 6: as últimas medições (até TRAIL_MAX), da mais velha para a mais nova, para o gatilho da janela
+   * deslizante (p95 da janela contra a base). Ausente = ainda sem histórico.
+   */
+  trail?: WindowSample[];
 }
 
 /** Uma medição de um passo: o alvo como estava ao medir, o instante em que a sonda começou e o resultado. */
@@ -304,6 +310,8 @@ export interface TargetHistory {
   everOk: boolean;
   /** Só para o alvo gravado como pausado: as últimas medições dele, de qualquer idade, mais nova primeiro. */
   lastChecks?: readonly RecentCheck[];
+  /** Fase 6: as últimas medições para o gatilho da janela, da mais velha para a mais nova. */
+  trail?: readonly WindowSample[];
 }
 
 /**
@@ -324,7 +332,7 @@ export interface TargetHistory {
  */
 export function hydrateTarget(state: TargetState, history: TargetHistory, now: number): TargetState {
   const ring = isPausedTarget(state) && history.lastChecks ? history.lastChecks.slice(0, WINDOW_SIZE) : initialRing(history.checks, state.intervalSec, now);
-  return { ...state, ring, everOk: history.everOk };
+  return { ...state, ring, everOk: history.everOk, ...(history.trail ? { trail: history.trail.slice(-TRAIL_MAX) } : {}) };
 }
 
 /**
@@ -822,6 +830,18 @@ function unmeasured(state: TargetState, at: Date, reason: string, error: string 
 }
 
 /**
+ * Gatilho da janela deslizante (fase 6) no estado do alvo: com o veredito normal "ok", o alvo fica
+ * degradado quando o p95 das últimas N medições passa de 1,5× a mediana das 100 anteriores (e da cauda
+ * normal delas; ver `windowStats`). Não vale para o certificado TLS, que mede uma vez a cada 6 h.
+ */
+export function windowVerdict(kind: ProbeKind, trail: readonly WindowSample[], windowSize?: number): TargetVerdict | null {
+  if (kind === "TLS") return null;
+  const stats = windowStats(trail, { size: windowSize });
+  if (!stats.degraded || stats.p95Ms === null || stats.ratio === null) return null;
+  return { status: "DEGRADED", reason: `p95 ${stats.ratio.toFixed(1).replace(".", ",")}× a mediana das 100 medições anteriores (${Math.round(stats.p95Ms)} ms)` };
+}
+
+/**
  * Veredito depois de uma medição. Enquanto as medições recentes são só falhas, ele nunca melhora o
  * estado que o alvo já tinha. Isso acontece com um alvo novo, ou depois de uma parada longa do
  * servidor (as medições antigas não entram na conta): a primeira falha sozinha não julga nada, e um
@@ -849,7 +869,7 @@ function judge(state: Pick<TargetState, "status" | "reason" | "beforePause">, ri
  *   de `evaluateTarget` com a linha de base do alvo, sem melhorar o estado enquanto só houver falhas
  *   (ver `judge`).
  */
-export function recordResult(state: TargetState, result: ProbeResult, at: Date, baseline: readonly number[] = []): RecordedResult {
+export function recordResult(state: TargetState, result: ProbeResult, at: Date, baseline: readonly number[] = [], windowSize?: number): RecordedResult {
   const error = cutError(result.error);
   if (result.unsupported) return unmeasured(state, at, error ?? "A sonda não pôde rodar neste servidor.", error);
   if (isInternetTarget(state) && !state.everOk && !result.ok) return unmeasured(state, at, neverAnsweredReason(state.kind), error);
@@ -858,10 +878,12 @@ export function recordResult(state: TargetState, result: ProbeResult, at: Date, 
   const latencyMs = ok ? finite(result.latencyMs) : null;
   const check: RecentCheck = { ok, latencyMs, lossPct: finite(result.lossPct), certDays: whole(result.certDays) };
   const ring = [check, ...state.ring].slice(0, WINDOW_SIZE);
-  const verdict = judge(state, ring, baseline);
+  const trail = [...(state.trail ?? []), { ok, latencyMs, lossPct: check.lossPct }].slice(-TRAIL_MAX);
+  const judged = judge(state, ring, baseline);
+  const verdict = judged.status === "OK" ? (windowVerdict(state.kind, trail, windowSize) ?? judged) : judged;
   const lastError = ok ? null : error;
   return {
-    state: { ...state, ring, status: verdict.status, reason: verdict.reason, lastLatencyMs: latencyMs, everOk: state.everOk || ok, beforePause: null },
+    state: { ...state, ring, trail, status: verdict.status, reason: verdict.reason, lastLatencyMs: latencyMs, everOk: state.everOk || ok, beforePause: null },
     row: {
       targetId: state.id,
       vantage: SERVER_VANTAGE,
@@ -961,7 +983,7 @@ export interface TickOutcome {
 }
 
 /** Aplica os resultados de um passo ao estado em memória e monta as gravações (`recordResult` e `summarizeService`). */
-export function recordTick(targets: ReadonlyMap<string, TargetState>, record: readonly Measurement[], baselines: ReadonlyMap<string, readonly number[]>): TickOutcome {
+export function recordTick(targets: ReadonlyMap<string, TargetState>, record: readonly Measurement[], baselines: ReadonlyMap<string, readonly number[]>, windowSize?: number): TickOutcome {
   const next = new Map(targets);
   const rows: CheckRow[] = [];
   const targetUpdates: TickOutcome["targetUpdates"] = [];
@@ -969,7 +991,7 @@ export function recordTick(targets: ReadonlyMap<string, TargetState>, record: re
   for (const m of record) {
     const state = next.get(m.target.id);
     if (!state) continue;
-    const recorded = recordResult(state, m.result, m.at, baselines.get(state.id));
+    const recorded = recordResult(state, m.result, m.at, baselines.get(state.id), windowSize);
     next.set(state.id, recorded.state);
     if (recorded.row) rows.push(recorded.row);
     targetUpdates.push({ id: state.id, data: recorded.update });

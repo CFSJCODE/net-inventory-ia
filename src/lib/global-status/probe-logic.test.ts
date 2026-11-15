@@ -43,6 +43,7 @@ import {
   realignAgenda,
   reconcileTargets,
   recordResult,
+  windowVerdict,
   recordTick,
   respreadServices,
   ringMaxAgeMs,
@@ -1253,6 +1254,41 @@ describe("pausa das medições", () => {
 });
 
 // ---------------------------------------------------------------- gravação e veredito
+
+describe("gatilho da janela deslizante no estado do alvo (fase 6)", () => {
+  const stable = (n: number, ms: number) => Array.from({ length: n }, () => ({ ok: true, latencyMs: ms, lossPct: null }));
+
+  it("TTFB que sobe: o alvo fica degradado quando o p95 das últimas 20 passa de 1,5× a base", () => {
+    let state = target({ id: "http", key: "http", kind: "HTTP", status: "OK", trail: stable(100, 90) });
+    const verdicts: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      state = recordResult(state, up(400), new Date(T0 + i * 60_000)).state;
+      verdicts.push(state.status);
+    }
+    expect(verdicts.slice(0, 1)).toEqual(["OK"]);
+    expect(verdicts.at(-1)).toBe("DEGRADED");
+    expect(state.reason).toMatch(/^p95 4,4× a mediana das 100 medições anteriores \(400 ms\)$/);
+    expect(state.trail).toHaveLength(105);
+  });
+
+  it("respeita o N configurado", () => {
+    const state = target({ id: "tcp", status: "OK", trail: [...stable(100, 20), ...stable(9, 80)] });
+    expect(recordResult(state, up(80), new Date(T0), [], 10).state.status).toBe("DEGRADED");
+    expect(recordResult(state, up(80), new Date(T0), [], 200).state.status).toBe("OK");
+  });
+
+  it("não troca um veredito pior nem vale para o certificado TLS", () => {
+    const failing = target({ id: "tcp", status: "OK", ring: [check(false)], trail: stable(120, 20) });
+    expect(recordResult(failing, down(), new Date(T0)).state.reason).toBe("2 falhas seguidas");
+    expect(windowVerdict("TLS", [...stable(100, 20), ...stable(20, 900)])).toBeNull();
+    expect(windowVerdict("ICMP", [...stable(100, 20), ...stable(20, 900)])?.status).toBe("DEGRADED");
+  });
+
+  it("o histórico do banco entra no alvo ao carregar", () => {
+    const hydrated = hydrateTarget(target({ id: "x" }), { checks: [], everOk: true, trail: stable(400, 5) }, T0);
+    expect(hydrated.trail).toHaveLength(300);
+  });
+});
 
 describe("recordResult", () => {
   const at = new Date(T0);

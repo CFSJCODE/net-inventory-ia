@@ -56,6 +56,8 @@ import {
 import { defaultGateway, runProbe } from "./probes";
 import { BUCKET_MS, WINDOW_SIZE, type RecentCheck } from "./stats";
 import type { LocalConnectivity, ProbeKind } from "./types";
+import { getGlobalStatusSettings } from "./settings";
+import { TRAIL_MAX, type WindowSample } from "./window-stats";
 import { serialized } from "./write-queue";
 
 /**
@@ -93,6 +95,8 @@ interface RunnerState {
   /** Linha de base de latência de cada alvo (medianas das janelas das últimas 24 h). */
   baselines: Map<string, number[]>;
   baselinesAt: number;
+  /** N da janela deslizante (configuração da página), relido junto com a linha de base. */
+  windowSize?: number;
   connectivity: LocalConnectivity;
   /** O estado da conexão que o banco guarda (`connectivityValue`), até onde este processo sabe; null antes da leitura ao subir. */
   savedConnectivity: string | null;
@@ -235,6 +239,25 @@ async function lastChecksOfPaused(targets: TargetState[]): Promise<Map<string, R
 }
 
 /**
+ * Fase 6: as últimas TRAIL_MAX medições de cada alvo (menos o certificado TLS), da mais velha para a
+ * mais nova, para o gatilho da janela deslizante já valer logo depois de o servidor subir. Uma consulta
+ * por alvo, pelo índice (targetId, at); só quando o alvo entra em memória.
+ */
+async function trailsOf(targets: TargetState[]): Promise<Map<string, WindowSample[]>> {
+  const trails = new Map<string, WindowSample[]>();
+  for (const t of targets.filter((x) => x.kind !== "TLS")) {
+    const rows = await prisma.probeCheck.findMany({
+      where: { targetId: t.id, vantage: SERVER_VANTAGE },
+      orderBy: { at: "desc" },
+      take: TRAIL_MAX,
+      select: { ok: true, latencyMs: true, lossPct: true },
+    });
+    trails.set(t.id, rows.reverse());
+  }
+  return trails;
+}
+
+/**
  * Histórico dos alvos que acabaram de entrar em memória: as medições recentes e, nos de Internet, se já
  * responderam alguma vez. Os gravados como pausados recebem também as últimas medições, de qualquer idade.
  */
@@ -269,8 +292,9 @@ async function hydrate(targets: Map<string, TargetState>, added: string[], now: 
   }
 
   const lastChecks = await lastChecksOfPaused(fresh);
+  const trails = await trailsOf(fresh);
   for (const t of fresh) {
-    targets.set(t.id, hydrateTarget(t, { checks: checks.get(t.id) ?? [], everOk: answered.has(t.id), lastChecks: lastChecks.get(t.id) }, now));
+    targets.set(t.id, hydrateTarget(t, { checks: checks.get(t.id) ?? [], everOk: answered.has(t.id), lastChecks: lastChecks.get(t.id), trail: trails.get(t.id) }, now));
   }
 }
 
@@ -282,6 +306,7 @@ async function refreshBaselines(r: RunnerState, now: number): Promise<void> {
     select: { targetId: true, p50Ms: true },
   });
   r.baselines = groupBaseline(rollups);
+  r.windowSize = (await getGlobalStatusSettings()).probeWindow;
   r.baselinesAt = now;
 }
 
@@ -326,7 +351,7 @@ async function tick(r: RunnerState, force: boolean): Promise<void> {
 
   if (settled) {
     // O estado em memória muda antes de gravar: se a gravação falhar, ele segue valendo como calculado.
-    const outcome = recordTick(r.targets, settled.record, r.baselines);
+    const outcome = recordTick(r.targets, settled.record, r.baselines, r.windowSize);
     r.targets = outcome.targets;
     const decidedAt = Date.now();
     const { connectivity, change } = nextConnectivity(r.connectivity, settled.decision, decidedAt);

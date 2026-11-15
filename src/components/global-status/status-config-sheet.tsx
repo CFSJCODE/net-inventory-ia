@@ -143,7 +143,8 @@ export function StatusConfigSheet({ open, onClose }: { open: boolean; onClose: (
               <h3 className="text-sm font-medium">Linha do tempo</h3>
               <p className="text-xs text-muted-foreground">
                 Quantas medições recentes entram no p50, p95, p99, jitter e perda de cada faixa (de 5 a 200). Com 20, cerca de 20 minutos. A
-                faixa fica amarela quando o p95 dessa janela passa de 1,5× a mediana das últimas 100 medições.
+                faixa fica amarela, e o card do serviço degradado, quando o p95 dessa janela passa de 1,5× a mediana das 100
+                medições anteriores (e da variação normal delas).
               </p>
               <Field label="Medições na janela" htmlFor="status-probe-window">
                 <Input
