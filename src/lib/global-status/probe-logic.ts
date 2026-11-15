@@ -762,6 +762,12 @@ export interface CheckRow {
   jitterMs: number | null;
   certDays: number | null;
   error: string | null;
+  /** DNS: código da resposta (fase 6). Só presente quando a sonda informa. */
+  rcode?: string | null;
+  /** DNS: menor TTL devolvido, em segundos. */
+  ttlSec?: number | null;
+  /** DNS composto: JSON com a resposta de cada resolvedor (DnsAnswer[]). */
+  dnsAnswers?: string | null;
 }
 
 /** O que muda na linha do alvo a cada medição. */
@@ -785,6 +791,15 @@ export interface RecordedResult {
 const finite = (value: number | null | undefined): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
 const whole = (value: number | null | undefined): number | null => (finite(value) === null ? null : Math.floor(value as number));
 const cutError = (error: string | null | undefined): string | null => (error ? error.slice(0, ERROR_MAX_LENGTH) : null);
+
+/** Campos de DNS da linha (só quando a sonda informa, para não mudar as linhas dos outros tipos). */
+function dnsFields(result: ProbeResult): Pick<CheckRow, "rcode" | "ttlSec" | "dnsAnswers"> {
+  const fields: Pick<CheckRow, "rcode" | "ttlSec" | "dnsAnswers"> = {};
+  if (result.rcode) fields.rcode = result.rcode;
+  if (whole(result.ttlSec) !== null) fields.ttlSec = whole(result.ttlSec);
+  if (result.dnsAnswers?.length) fields.dnsAnswers = JSON.stringify(result.dnsAnswers);
+  return fields;
+}
 
 /** Frase de um alvo de Internet que nunca respondeu: provavelmente a rede bloqueia esse tipo de tráfego. */
 export function neverAnsweredReason(kind: ProbeKind): string {
@@ -859,6 +874,7 @@ export function recordResult(state: TargetState, result: ProbeResult, at: Date, 
       jitterMs: finite(result.jitterMs),
       certDays: check.certDays,
       error: lastError,
+      ...dnsFields(result),
     },
     update: { status: verdict.status, statusReason: verdict.reason, lastCheckAt: at, lastLatencyMs: latencyMs, lastError },
   };

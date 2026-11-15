@@ -72,7 +72,7 @@ export function StatusConfigSheet({ open, onClose }: { open: boolean; onClose: (
       <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>Configurar Status global</SheetTitle>
-          <SheetDescription>Alerta por e-mail, operadora usada nos alertas do IODA e os serviços acompanhados.</SheetDescription>
+          <SheetDescription>Alerta por e-mail, operadora usada nos alertas do IODA, janela da linha do tempo e os serviços acompanhados.</SheetDescription>
         </SheetHeader>
 
         {!config || !draft ? (
@@ -137,6 +137,25 @@ export function StatusConfigSheet({ open, onClose }: { open: boolean; onClose: (
                 />
               </Field>
               {asnInvalid && <p className="text-xs text-destructive">Use só o número do ASN, com ou sem &ldquo;AS&rdquo; na frente.</p>}
+            </section>
+
+            <section className="flex flex-col gap-3">
+              <h3 className="text-sm font-medium">Linha do tempo</h3>
+              <p className="text-xs text-muted-foreground">
+                Quantas medições recentes entram no p50, p95, p99, jitter e perda de cada faixa (de 5 a 200). Com 20, cerca de 20 minutos. A
+                faixa fica amarela quando o p95 dessa janela passa de 1,5× a mediana das últimas 100 medições.
+              </p>
+              <Field label="Medições na janela" htmlFor="status-probe-window">
+                <Input
+                  id="status-probe-window"
+                  type="number"
+                  min={5}
+                  max={200}
+                  value={draft.settings.probeWindow}
+                  onChange={(e) => setDraft({ ...draft, settings: { ...draft.settings, probeWindow: Number(e.target.value) } })}
+                  className="w-28 font-mono"
+                />
+              </Field>
             </section>
 
             <section className="flex flex-col gap-3">

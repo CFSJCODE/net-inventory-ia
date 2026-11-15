@@ -1,7 +1,7 @@
 import { isIPv4 } from "node:net";
 import { describe, expect, it } from "vitest";
 import { CATEGORY_LABEL, CATEGORY_ORDER, DEFAULT_INTERVAL_SEC, STATUS_CATALOG, type CatalogEntry } from "./catalog";
-import { AUTO_GATEWAY, AUTO_SYSTEM_DNS, DEFAULT_DNS_NAME } from "./types";
+import { AUTO_GATEWAY, AUTO_MULTI_DNS, AUTO_SYSTEM_DNS, DEFAULT_DNS_NAME } from "./types";
 
 const services = STATUS_CATALOG.filter((s) => s.category !== "INTERNET" && s.category !== "REGIONAL");
 const regional = STATUS_CATALOG.filter((s) => s.category === "REGIONAL");
@@ -92,9 +92,9 @@ describe("catálogo: alvos dos serviços", () => {
     expect(services.filter((s) => s.category === "STREAMING").length).toBeGreaterThanOrEqual(4);
   });
 
-  it("cada serviço tem exatamente um alvo HTTP e um TCP na porta 443, e nada mais", () => {
+  it("cada serviço tem exatamente um alvo HTTP, um TCP na porta 443 e um DNS composto, e nada mais", () => {
     for (const s of services) {
-      expect(s.targets.map((t) => t.kind).sort(), s.slug).toEqual(["HTTP", "TCP"]);
+      expect(s.targets.map((t) => t.kind).sort(), s.slug).toEqual(["DNS_MULTI", "HTTP", "TCP"]);
       const [tcp] = targetsOf(s, "TCP");
       expect(tcp.port, s.slug).toBe(443);
       expect(tcp.url, s.slug).toBeUndefined();
@@ -112,9 +112,18 @@ describe("catálogo: alvos dos serviços", () => {
     }
   });
 
+  it("o DNS composto consulta o nome do HTTPS em auto:multi, a cada minuto como o HTTPS", () => {
+    for (const s of services) {
+      const [http] = targetsOf(s, "HTTP");
+      const [dns] = targetsOf(s, "DNS_MULTI");
+      expect(dns, s.slug).toMatchObject({ key: "dnsx", host: AUTO_MULTI_DNS, url: http.host });
+    }
+    expect(DEFAULT_INTERVAL_SEC.DNS_MULTI).toBe(DEFAULT_INTERVAL_SEC.HTTP);
+  });
+
   it("os hosts são nomes (o DNS faz parte do que se mede), nunca IP nem host automático", () => {
     for (const s of services) {
-      for (const t of s.targets) {
+      for (const t of s.targets.filter((x) => x.kind !== "DNS_MULTI")) {
         expect(isIPv4(t.host), `${s.slug}/${t.key}`).toBe(false);
         expect(t.host.startsWith("auto:"), `${s.slug}/${t.key}`).toBe(false);
         expect(t.host, `${s.slug}/${t.key}`).toMatch(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/);
@@ -145,7 +154,7 @@ describe("catálogo: conexão do próprio servidor (categoria INTERNET)", () => 
   });
 
   it("os hosts automáticos (gateway e DNS do sistema) aparecem só em rede-local", () => {
-    const auto = STATUS_CATALOG.flatMap((s) => s.targets.filter((t) => t.host.startsWith("auto:")).map((t) => `${s.slug}/${t.key}:${t.host}`));
+    const auto = STATUS_CATALOG.flatMap((s) => s.targets.filter((t) => t.host.startsWith("auto:") && t.host !== AUTO_MULTI_DNS).map((t) => `${s.slug}/${t.key}:${t.host}`));
     expect(auto.sort()).toEqual([`rede-local/dns:${AUTO_SYSTEM_DNS}`, `rede-local/gateway:${AUTO_GATEWAY}`]);
     const local = internet.find((s) => s.slug === "rede-local")!;
     expect(local.targets.find((t) => t.key === "gateway")).toMatchObject({ kind: "ICMP", host: AUTO_GATEWAY });

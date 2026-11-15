@@ -8,6 +8,7 @@ import { endianness } from "node:os";
 import tls from "node:tls";
 import { getSystemDnsServers } from "@/lib/network/system-dns";
 import { readRouteTable, type RouteEntry } from "@/lib/network/tools/route-table";
+import { probeDnsComposite } from "./dns-composite";
 import { jitter } from "./stats";
 import { AUTO_GATEWAY, AUTO_SYSTEM_DNS, DEFAULT_DNS_NAME, type ProbePhase, type ProbeResult, type ProbeSpec } from "./types";
 
@@ -649,6 +650,8 @@ export async function runProbe(spec: ProbeSpec): Promise<ProbeResult> {
         return await probeDns(host, spec.url ?? DEFAULT_DNS_NAME);
       case "ICMP":
         return await probeIcmp(host);
+      case "DNS_MULTI":
+        return await probeDnsComposite(spec.url ?? DEFAULT_DNS_NAME);
       default:
         return failure("tipo de medição desconhecido", null);
     }

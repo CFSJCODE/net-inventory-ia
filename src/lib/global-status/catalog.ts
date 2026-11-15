@@ -1,4 +1,4 @@
-import { AUTO_GATEWAY, AUTO_SYSTEM_DNS, DEFAULT_DNS_NAME, type ProbeKind, type ServiceCategory, type SourceType } from "./types";
+import { AUTO_GATEWAY, AUTO_MULTI_DNS, AUTO_SYSTEM_DNS, DEFAULT_DNS_NAME, type ProbeKind, type ServiceCategory, type SourceType } from "./types";
 
 /** Alvo de medição própria de um serviço (vira um ProbeTarget). */
 export interface CatalogTarget {
@@ -28,18 +28,21 @@ export interface CatalogEntry {
 }
 
 /** Intervalo padrão de cada tipo de medição, em segundos (plano aprovado: HTTP 60 s, TCP 30 s, ICMP 60 s, DNS 5 min, TLS 6 h). */
-export const DEFAULT_INTERVAL_SEC: Record<ProbeKind, number> = { HTTP: 60, TCP: 30, ICMP: 60, DNS: 300, TLS: 21_600 };
+export const DEFAULT_INTERVAL_SEC: Record<ProbeKind, number> = { HTTP: 60, TCP: 30, ICMP: 60, DNS: 300, TLS: 21_600, DNS_MULTI: 60 };
 
 /**
- * Alvos de um serviço: um pedido HTTPS (tempos de DNS, TCP, TLS e resposta, mais a validade do certificado)
- * e o handshake TCP na porta 443, que dá a latência de rede do card. `tcpHost` troca o host do TCP quando
- * o serviço de verdade atende em outro nome (o chat do WhatsApp fica em g.whatsapp.net).
+ * Alvos de um serviço: um pedido HTTPS (tempos de DNS, TCP, TLS e resposta, mais a validade do certificado),
+ * o handshake TCP na porta 443, que dá a latência de rede do card, e (fase 6) o DNS composto do nome do
+ * HTTPS, consultado no DNS do sistema, no 8.8.8.8 e no 1.1.1.1 a cada minuto, junto com o HTTPS, para a
+ * linha do tempo. `tcpHost` troca o host do TCP quando o serviço de verdade atende em outro nome (o chat
+ * do WhatsApp fica em g.whatsapp.net).
  */
 function web(url: string, tcpHost?: string): CatalogTarget[] {
   const host = new URL(url).hostname;
   return [
     { key: "http", kind: "HTTP", host, url },
     { key: "tcp", kind: "TCP", host: tcpHost ?? host, port: 443 },
+    { key: "dnsx", kind: "DNS_MULTI", host: AUTO_MULTI_DNS, url: host },
   ];
 }
 

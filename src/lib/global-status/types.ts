@@ -61,7 +61,12 @@ export function combineStatus(official: ServiceStatus | null | undefined, measur
 
 // ---------------------------------------------------------------- medições próprias (fase 2)
 
-export type ProbeKind = "HTTP" | "TCP" | "ICMP" | "DNS" | "TLS";
+/**
+ * DNS_MULTI (fase 6) = DNS composto: o nome do serviço consultado ao mesmo tempo no DNS do sistema, no
+ * 8.8.8.8 e no 1.1.1.1, com latência, TTL e código de resposta de cada um. Só o servidor mede: o agente
+ * Windows pede os tipos pela lista fixa HTTP/TCP/ICMP/DNS e não recebe este.
+ */
+export type ProbeKind = "HTTP" | "TCP" | "ICMP" | "DNS" | "TLS" | "DNS_MULTI";
 /** Estado de um alvo de medição (não existe "manutenção" medida). */
 export type TargetStatus = Exclude<ServiceStatus, "MAINTENANCE">;
 /** Etapa em que uma medição falhou; "dns" costuma indicar problema de resolução de nomes no próprio servidor. */
@@ -71,6 +76,33 @@ export type ProbePhase = "dns" | "connect" | "tls" | "http";
 export const AUTO_GATEWAY = "auto:gateway";
 /** Servidor DNS especial: os resolvedores configurados no sistema operacional. */
 export const AUTO_SYSTEM_DNS = "auto:system";
+/** Servidor DNS especial do DNS composto: sistema + resolvedores públicos de MULTI_DNS_RESOLVERS. */
+export const AUTO_MULTI_DNS = "auto:multi";
+/** Resolvedores públicos do DNS composto, além do DNS do sistema. */
+export const MULTI_DNS_RESOLVERS = ["8.8.8.8", "1.1.1.1"] as const;
+/** Nome do resolvedor "DNS do sistema" nas respostas do DNS composto. */
+export const SYSTEM_RESOLVER = "system";
+
+/**
+ * Código da resposta DNS: NOERROR = respondeu com endereço; NODATA = o nome existe sem registro A;
+ * NXDOMAIN = o nome não existe; SERVFAIL = o servidor falhou; REFUSED = recusou; TIMEOUT = não
+ * respondeu no prazo; ERROR = outra falha.
+ */
+export type DnsRcode = "NOERROR" | "NODATA" | "NXDOMAIN" | "SERVFAIL" | "REFUSED" | "TIMEOUT" | "ERROR";
+
+/** Resposta de um resolvedor numa medição do DNS composto (gravada em JSON em ProbeCheck.dnsAnswers). */
+export interface DnsAnswer {
+  /** "system", "8.8.8.8" ou "1.1.1.1". */
+  resolver: string;
+  ok: boolean;
+  ms: number | null;
+  rcode: DnsRcode;
+  /** Menor TTL entre os registros A devolvidos (segundos); null sem resposta. */
+  ttlSec: number | null;
+  /** Até 4 endereços devolvidos. */
+  addresses: string[];
+}
+
 /** Nome consultado nas medições de DNS quando o alvo não informa outro. */
 export const DEFAULT_DNS_NAME = "example.com";
 
@@ -93,6 +125,8 @@ export function targetLabel(target: Pick<ProbeSpec, "kind" | "port">): string {
       return "Ping";
     case "TLS":
       return "Certificado TLS";
+    case "DNS_MULTI":
+      return "DNS composto";
     default:
       return target.kind;
   }
@@ -111,6 +145,8 @@ export function targetAddress(target: ProbeSpec, gateway?: string | null): strin
       const name = target.url ?? DEFAULT_DNS_NAME;
       return target.host === AUTO_SYSTEM_DNS ? `${name} no DNS do sistema` : `${name} em ${host}`;
     }
+    case "DNS_MULTI":
+      return `${target.url ?? DEFAULT_DNS_NAME} no DNS do sistema, ${MULTI_DNS_RESOLVERS.join(" e ")}`;
     case "TCP":
     case "TLS":
       return `${host}:${target.port ?? 443}`;
@@ -135,6 +171,12 @@ export interface ProbeResult {
   jitterMs?: number | null;
   /** Dias até o certificado vencer (negativo = vencido). */
   certDays?: number | null;
+  /** DNS: código da resposta (no DNS composto, o do DNS do sistema). */
+  rcode?: DnsRcode | null;
+  /** DNS: menor TTL devolvido, em segundos. */
+  ttlSec?: number | null;
+  /** DNS composto: a resposta de cada resolvedor. */
+  dnsAnswers?: DnsAnswer[] | null;
   /** Frase curta em português quando ok = false. */
   error?: string | null;
   /** Etapa da falha (não é gravado; separa falha de DNS local de falha do serviço). */

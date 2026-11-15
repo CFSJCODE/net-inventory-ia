@@ -25,6 +25,7 @@ import { formatDateTime, formatRelativeTime } from "@/lib/format-time";
 import { cn } from "@/lib/utils";
 import { formatLatency, formatPercent, formatUptime, isWorseThanOfficial } from "./format";
 import { BgpRoute, PhaseChart, RouteSection, VantageList } from "./detail-sections";
+import { ProbeTimeline } from "./probe-timeline";
 import { InternetHealthBar } from "./internet-health-bar";
 import { RegionalBar } from "./regional-bar";
 import { StatusConfigSheet } from "./status-config-sheet";
@@ -469,6 +470,8 @@ function ServiceDetailSheet({ service, measuring, onClose }: { service: StatusSe
                 <>
                   {/* A faixa "Internet no Brasil" é a visão de fora: não tem medições daqui. */}
                   {measuring && service.category !== REGIONAL_CATEGORY && <TargetList targets={data.targets} />}
+                  {/* Fase 6: as quatro leituras no mesmo relógio, só para serviços com HTTPS medido. */}
+                  {measuring && data.targets.some((t) => t.kind === "HTTP") && <ProbeTimeline key={`timeline-${service.slug}`} slug={service.slug} vantages={data.vantages} />}
                   {measuring && data.vantages && <VantageList vantages={data.vantages} />}
                   {measuring && data.phases && <PhaseChart phases={data.phases} />}
                   {data.bgp && <BgpRoute bgp={data.bgp} />}
