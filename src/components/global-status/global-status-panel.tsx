@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Loader2, RefreshCw } from "lucide-react";
+import { ExternalLink, Loader2, Radar, RefreshCw, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   getGlobalStatus,
@@ -24,11 +24,13 @@ import type { ServiceCategory, ServiceStatus } from "@/lib/global-status/types";
 import { formatDateTime, formatRelativeTime } from "@/lib/format-time";
 import { cn } from "@/lib/utils";
 import { formatLatency, formatPercent, formatUptime, isWorseThanOfficial } from "./format";
-import { PhaseChart, RouteSection, VantageList } from "./detail-sections";
+import { BgpRoute, PhaseChart, RouteSection, VantageList } from "./detail-sections";
 import { InternetHealthBar } from "./internet-health-bar";
+import { RegionalBar } from "./regional-bar";
+import { StatusConfigSheet } from "./status-config-sheet";
 import { Sparkline } from "./sparkline";
 import { HTTP_PHASE_STYLE, IMPACT_LABEL, IMPACT_STATUS, SERVICE_STATUS_STYLE, incidentStateLabel } from "./status-style";
-import { INTERNET_CATEGORY, rememberSeen, transitionNotices, type Notice, type SeenStatus } from "./transitions";
+import { INTERNET_CATEGORY, REGIONAL_CATEGORY, rememberSeen, transitionNotices, type Notice, type SeenStatus } from "./transitions";
 
 function StatusPill({ status, className }: { status: ServiceStatus; className?: string }) {
   const style = SERVICE_STATUS_STYLE[status];
@@ -93,7 +95,7 @@ function IncidentTicker({ incidents, onOpen }: { incidents: StatusIncidentRow[];
     return (
       <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-2.5 text-sm text-muted-foreground">
         <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
-        Nenhum incidente aberto nos provedores monitorados.
+        Nenhum incidente aberto nos provedores monitorados nem detectado pelas medições.
       </div>
     );
   }
@@ -108,7 +110,12 @@ function IncidentTicker({ incidents, onOpen }: { incidents: StatusIncidentRow[];
         tabIndex={copy ? -1 : 0}
         aria-hidden={copy ? true : undefined}
       >
-        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", style.dot)} />
+        {/* Detectado pelas medições daqui: radar; publicado pela fonte: o ponto de sempre. */}
+        {i.origin === "DETECTED" ? (
+          <Radar className={cn("size-3.5 shrink-0", style.text)} aria-label="Detectado pelas medições deste servidor" />
+        ) : (
+          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", style.dot)} />
+        )}
         <span className="font-medium text-foreground">{i.serviceName}</span>
         <span className="max-w-[28rem] truncate">{i.title}</span>
         <span className="text-xs">· {formatRelativeTime(i.startedAt)}</span>
@@ -366,6 +373,11 @@ function IncidentList({ incidents }: { incidents: StatusIncidentRow[] }) {
             <StatusPill status={i.resolvedAt ? "OK" : IMPACT_STATUS[i.impact] ?? "DEGRADED"} className="shrink-0" />
           </div>
           <div className="mt-1 text-muted-foreground">
+            {i.origin === "DETECTED" && (
+              <span className="inline-flex items-center gap-1">
+                <Radar className="size-3" /> Detectado ·{" "}
+              </span>
+            )}
             {IMPACT_LABEL[i.impact] ?? i.impact} · {incidentStateLabel(i.state)} · início {formatDateTime(i.startedAt)}
             {i.resolvedAt && <> · resolvido {formatDateTime(i.resolvedAt)}</>}
           </div>
@@ -455,18 +467,16 @@ function ServiceDetailSheet({ service, measuring, onClose }: { service: StatusSe
               {isLoading && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
               {data && (
                 <>
-                  {measuring && <TargetList targets={data.targets} />}
+                  {/* A faixa "Internet no Brasil" é a visão de fora: não tem medições daqui. */}
+                  {measuring && service.category !== REGIONAL_CATEGORY && <TargetList targets={data.targets} />}
                   {measuring && data.vantages && <VantageList vantages={data.vantages} />}
                   {measuring && data.phases && <PhaseChart phases={data.phases} />}
-                  {data.traceable && <RouteSection key={service.slug} slug={service.slug} />}
-                  {/* Sem fonte oficial não há incidentes nem componentes publicados para listar. */}
-                  {service.hasSource && (
-                    <>
-                      <IncidentList incidents={data.incidents} />
-                      {/* key: volta para "só os afetados" ao trocar de serviço. */}
-                      <ComponentList key={service.slug} components={data.components} />
-                    </>
-                  )}
+                  {data.bgp && <BgpRoute bgp={data.bgp} />}
+                  {data.traceable && <RouteSection key={`route-${service.slug}`} slug={service.slug} />}
+                  {/* Sem fonte oficial só há os incidentes detectados pelas medições, e nenhum componente publicado. */}
+                  {(service.hasSource || data.incidents.length > 0) && <IncidentList incidents={data.incidents} />}
+                  {/* key: volta para "só os afetados" ao trocar de serviço. */}
+                  {service.hasSource && <ComponentList key={`components-${service.slug}`} components={data.components} />}
                 </>
               )}
             </div>
@@ -480,6 +490,8 @@ function ServiceDetailSheet({ service, measuring, onClose }: { service: StatusSe
 export function GlobalStatusPanel() {
   const queryClient = useQueryClient();
   const canRefresh = useCan("network.operate");
+  const canConfigure = useCan("settings.manage");
+  const [configOpen, setConfigOpen] = useState(false);
   const { data, isLoading } = useQuery({ queryKey: ["global-status"], queryFn: () => getGlobalStatus(), refetchInterval: 30_000 });
   const [openSlug, setOpenSlug] = useState<string | null>(null);
   useTransitionToasts(data);
@@ -504,8 +516,9 @@ export function GlobalStatusPanel() {
   const services = data.services;
   const lastCheck = services.map((s) => s.lastCheckAt).filter(Boolean).sort().at(-1);
   const internet = services.filter((s) => s.category === INTERNET_CATEGORY);
-  // Contadores e cards só dos provedores: a conexão do servidor aparece na faixa "Sua Internet".
-  const providers = services.filter((s) => s.category !== INTERNET_CATEGORY);
+  const regional = services.filter((s) => s.category === REGIONAL_CATEGORY);
+  // Contadores e cards só dos provedores: a conexão do servidor e a visão de fora ficam nas duas faixas.
+  const providers = services.filter((s) => s.category !== INTERNET_CATEGORY && s.category !== REGIONAL_CATEGORY);
   const byCategory = CATEGORY_ORDER.map((cat) => [cat, providers.filter((s) => s.category === cat)] as [ServiceCategory, StatusServiceRow[]]).filter(([, list]) => list.length);
 
   return (
@@ -517,15 +530,24 @@ export function GlobalStatusPanel() {
             : "Status oficial publicado por cada provedor, consultado pelo servidor a cada 2 minutos. As medições deste servidor estão desligadas."}
           {lastCheck && <> Última consulta {formatRelativeTime(lastCheck)}.</>}
         </p>
-        {canRefresh && (
-          <Button variant="outline" size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending} className="shrink-0">
-            {refresh.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            Atualizar agora
-          </Button>
-        )}
+        <div className="flex shrink-0 gap-2">
+          {canConfigure && (
+            <Button variant="outline" size="sm" onClick={() => setConfigOpen(true)}>
+              <Settings2 />
+              Configurar
+            </Button>
+          )}
+          {canRefresh && (
+            <Button variant="outline" size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+              {refresh.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              Atualizar agora
+            </Button>
+          )}
+        </div>
       </div>
 
       <InternetHealthBar services={internet} connectivity={data.connectivity} onOpen={setOpenSlug} />
+      <RegionalBar services={regional} onOpen={setOpenSlug} />
       <Counters services={providers} />
       <IncidentTicker incidents={data.incidents} onOpen={setOpenSlug} />
 
@@ -541,6 +563,7 @@ export function GlobalStatusPanel() {
       ))}
 
       <ServiceDetailSheet service={services.find((s) => s.slug === openSlug) ?? null} measuring={data.probes} onClose={() => setOpenSlug(null)} />
+      {canConfigure && <StatusConfigSheet open={configOpen} onClose={() => setConfigOpen(false)} />}
     </>
   );
 }

@@ -1,0 +1,146 @@
+{
+ "type": "outages.alerts",
+ "error": null,
+ "data": [
+  {
+   "datasource": "bgp",
+   "entity": {
+    "code": "XX",
+    "name": "Exemplo",
+    "type": "country"
+   },
+   "time": 1794222600,
+   "level": "normal",
+   "condition": "normal",
+   "value": 25417,
+   "historyValue": 25416,
+   "method": "median"
+  },
+  {
+   "datasource": "bgp",
+   "entity": {
+    "code": "XX",
+    "name": "Exemplo",
+    "type": "country"
+   },
+   "time": 1794318900,
+   "level": "critical",
+   "condition": "< 0.99",
+   "value": 21935,
+   "historyValue": 25417,
+   "method": "median"
+  },
+  {
+   "datasource": "bgp",
+   "entity": {
+    "code": "XX",
+    "name": "Exemplo",
+    "type": "country"
+   },
+   "time": 1794399000,
+   "level": "normal",
+   "condition": "normal",
+   "value": 25411,
+   "historyValue": 25417,
+   "method": "median"
+  },
+  {
+   "datasource": "bgp",
+   "entity": {
+    "code": "XX",
+    "name": "Exemplo",
+    "type": "country"
+   },
+   "time": 1794415800,
+   "level": "critical",
+   "condition": "< 0.99",
+   "value": 23849,
+   "historyValue": 25417,
+   "method": "median"
+  },
+  {
+   "datasource": "bgp",
+   "entity": {
+    "code": "XX",
+    "name": "Exemplo",
+    "type": "country"
+   },
+   "time": 1794420300,
+   "level": "normal",
+   "condition": "normal",
+   "value": 25418,
+   "historyValue": 25417,
+   "method": "median"
+  },
+  {
+   "datasource": "bgp",
+   "entity": {
+    "code": "XX",
+    "name": "Exemplo",
+    "type": "country"
+   },
+   "time": 1794450000,
+   "level": "critical",
+   "condition": "< 0.99",
+   "value": 20214,
+   "historyValue": 25417,
+   "method": "median"
+  },
+  {
+   "datasource": "bgp",
+   "entity": {
+    "code": "XX",
+    "name": "Exemplo",
+    "type": "country"
+   },
+   "time": 1794492600,
+   "level": "normal",
+   "condition": "normal",
+   "value": 25409,
+   "historyValue": 25417,
+   "method": "median"
+  },
+  {
+   "datasource": "bgp",
+   "entity": {
+    "code": "XX",
+    "name": "Exemplo",
+    "type": "country"
+   },
+   "time": 1794525000,
+   "level": "critical",
+   "condition": "< 0.99",
+   "value": 20220,
+   "historyValue": 25416,
+   "method": "median"
+  },
+  {
+   "datasource": "bgp",
+   "entity": {
+    "code": "XX",
+    "name": "Exemplo",
+    "type": "country"
+   },
+   "time": 1794535800,
+   "level": "normal",
+   "condition": "normal",
+   "value": 25408,
+   "historyValue": 25416,
+   "method": "median"
+  },
+  {
+   "datasource": "bgp",
+   "entity": {
+    "code": "XX",
+    "name": "Exemplo",
+    "type": "country"
+   },
+   "time": 1794566700,
+   "level": "critical",
+   "condition": "< 0.99",
+   "value": 20414,
+   "historyValue": 25416,
+   "method": "median"
+  }
+ ]
+}

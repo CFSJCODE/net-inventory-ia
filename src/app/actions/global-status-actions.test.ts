@@ -116,7 +116,7 @@ vi.mock("@/lib/prisma", () => {
           return service ? { ...service, components: [], incidents: [], targets: targets().filter((t) => t.serviceId === service.id && t.enabled) } : null;
         }),
       },
-      statusComponent: { groupBy: record("statusComponent.groupBy", () => []), findMany: record("statusComponent.findMany", () => []) },
+      statusComponent: { groupBy: record("statusComponent.groupBy", () => []), findMany: record("statusComponent.findMany", () => []), findFirst: record("statusComponent.findFirst", () => null) },
       statusIncident: { findMany: record("statusIncident.findMany", () => []) },
       probeTarget: {
         findMany: record("probeTarget.findMany", () =>
@@ -488,7 +488,7 @@ describe("getGlobalStatusDetail com as medições ligadas", () => {
   });
 
   it("serviço desconhecido ou identificador vazio: nada a listar, sem erro", async () => {
-    const empty = { components: [], incidents: [], targets: [], vantages: null, phases: null, traceable: false };
+    const empty = { components: [], incidents: [], targets: [], vantages: null, phases: null, traceable: false, bgp: null };
     expect(await getGlobalStatusDetail("nao-existe")).toEqual(empty);
     expect(await getGlobalStatusDetail("")).toEqual(empty);
     expect(await getGlobalStatusDetail(42 as never)).toEqual(empty);

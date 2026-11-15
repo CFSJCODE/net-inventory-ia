@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { CATEGORY_LABEL, CATEGORY_ORDER, DEFAULT_INTERVAL_SEC, STATUS_CATALOG, type CatalogEntry } from "./catalog";
 import { AUTO_GATEWAY, AUTO_SYSTEM_DNS, DEFAULT_DNS_NAME } from "./types";
 
-const services = STATUS_CATALOG.filter((s) => s.category !== "INTERNET");
+const services = STATUS_CATALOG.filter((s) => s.category !== "INTERNET" && s.category !== "REGIONAL");
+const regional = STATUS_CATALOG.filter((s) => s.category === "REGIONAL");
 const internet = STATUS_CATALOG.filter((s) => s.category === "INTERNET");
 const targetsOf = (entry: CatalogEntry, kind: string) => entry.targets.filter((t) => t.kind === kind);
 
@@ -29,8 +30,20 @@ describe("catálogo: identificação", () => {
     for (const s of STATUS_CATALOG) expect(new Set(s.targets.map((t) => t.key)).size, s.slug).toBe(s.targets.length);
   });
 
-  it("todo serviço tem medição própria", () => {
-    for (const s of STATUS_CATALOG) expect(s.targets.length, s.slug).toBeGreaterThan(0);
+  it("todo serviço tem medição própria, menos os da visão de fora (IODA e RIPEstat)", () => {
+    for (const s of STATUS_CATALOG.filter((x) => x.category !== "REGIONAL")) expect(s.targets.length, s.slug).toBeGreaterThan(0);
+    for (const s of regional) expect(s.targets, s.slug).toEqual([]);
+  });
+
+  it("a faixa 'Internet no Brasil' tem o país e a operadora no IODA e as rotas BGP no RIPEstat", () => {
+    expect(regional.map((s) => [s.slug, s.sourceType])).toEqual([
+      ["internet-brasil", "IODA"],
+      ["sua-operadora", "IODA"],
+      ["rotas-bgp", "RIPESTAT"],
+    ]);
+    expect(regional[0].sourceUrl).toContain("entityType=country&entityCode=BR");
+    // A operadora é descoberta pelo IP público do servidor (ou vem da tela de configuração).
+    expect(regional[1].sourceUrl).toContain("entityType=asn&entityCode=auto");
   });
 });
 

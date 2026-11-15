@@ -10,7 +10,7 @@ import { formatDateTime, formatRelativeTime } from "@/lib/format-time";
 import { cn } from "@/lib/utils";
 import { formatLatency, formatUptime } from "./format";
 import { Sparkline, sparkScaleTop } from "./sparkline";
-import { HTTP_PHASE_STYLE } from "./status-style";
+import { HTTP_PHASE_STYLE, SERVICE_STATUS_STYLE } from "./status-style";
 
 /**
  * Seções da fase 3 no detalhe do serviço: o mesmo alvo medido do servidor e do PC (agente Windows), as
@@ -115,6 +115,21 @@ export function PhaseChart({ phases }: { phases: PhaseSeries }) {
           ))}
         </div>
       </div>
+    </section>
+  );
+}
+
+/** A rota BGP do endereço medido, na última coleta do RIPEstat (uma vez por hora). */
+export function BgpRoute({ bgp }: { bgp: NonNullable<StatusServiceDetail["bgp"]> }) {
+  const style = SERVICE_STATUS_STYLE[bgp.status];
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium">Rota BGP</h3>
+      <div className="flex items-start justify-between gap-3 rounded-lg border p-3 text-xs">
+        <span className="min-w-0 break-words tabular-nums text-foreground">{bgp.text}</span>
+        <span className={cn("shrink-0", style.text)}>{bgp.status === "OK" ? "Visível" : style.label}</span>
+      </div>
+      <p className="text-xs text-muted-foreground">Prefixo anunciado e quantos coletores do RIPE RIS, espalhados pelo mundo, enxergam essa rota.</p>
     </section>
   );
 }

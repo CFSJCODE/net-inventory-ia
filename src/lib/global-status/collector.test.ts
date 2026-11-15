@@ -390,6 +390,130 @@ describe("fontes oficiais além da Statuspage", () => {
   });
 });
 
+describe("visão de fora: IODA e RIPEstat (fase 4)", () => {
+  const collector = globalThis as { __globalStatusSources?: unknown; __globalStatusRun?: unknown; __globalStatusPrefixes?: unknown };
+  const IODA = "https://api.ioda.inetintel.cc.gatech.edu/v2/outages/alerts";
+  const BRASIL: CatalogEntry = { slug: "internet-brasil", name: "Internet no Brasil", category: "REGIONAL", sourceType: "IODA", sourceUrl: `${IODA}?entityType=country&entityCode=BR`, pageUrl: "https://ioda.inetintel.cc.gatech.edu/country/BR", targets: [] };
+  const OPERADORA: CatalogEntry = { slug: "sua-operadora", name: "Sua operadora", category: "REGIONAL", sourceType: "IODA", sourceUrl: `${IODA}?entityType=asn&entityCode=auto`, pageUrl: "https://ioda.inetintel.cc.gatech.edu/", targets: [] };
+  const ROTAS: CatalogEntry = { slug: "rotas-bgp", name: "Rotas BGP dos serviços", category: "REGIONAL", sourceType: "RIPESTAT", sourceUrl: "https://stat.ripe.net", pageUrl: "https://stat.ripe.net/", targets: [] };
+  // IP no lugar do nome: o teste não depende do DNS do sandbox.
+  const GITHUB_IP: CatalogEntry = { ...GITHUB, targets: [{ key: "tcp", kind: "TCP", host: "140.82.112.3", port: 443 }] };
+  const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  const ripe = (data: unknown) => json({ status: "ok", data });
+
+  beforeEach(async () => {
+    collector.__globalStatusSources = undefined;
+    collector.__globalStatusRun = undefined;
+    collector.__globalStatusPrefixes = undefined;
+    await db.appSetting.deleteMany();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubEnv("GLOBAL_STATUS_PROBES", "off");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("país: alertas reais viram sinais e quedas da semana, com a queda aberta no ticker", async () => {
+    await seed(BRASIL);
+    const alerts = (await import("./__fixtures__/ioda-alerts-sample.json")).default;
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => json(alerts));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await checkGlobalStatus(true);
+
+    expect(fetchMock.mock.calls[0][0]).toMatch(/^https:\/\/api\.ioda\.inetintel\.cc\.gatech\.edu\/v2\/outages\/alerts\?entityType=country&entityCode=BR&from=\d+&until=\d+$/);
+    const br = await db.statusService.findUniqueOrThrow({ where: { slug: "internet-brasil" }, include: { components: { orderBy: { position: "asc" } }, incidents: true } });
+    expect(br).toMatchObject({ officialState: "DEGRADED", status: "DEGRADED", officialStatus: "Alerta do IODA em rotas bgp", lastError: null });
+    expect(br.components.map((c) => [c.externalId, c.status])).toEqual([["bgp", "DOWN"], ["ping-slash24", "OK"], ["merit-nt", "OK"]]);
+    expect(br.incidents.filter((i) => i.resolvedAt === null).map((i) => i.title)).toEqual(["Internet no Brasil: queda no sinal rotas bgp"]);
+  });
+
+  it("operadora: o ASN vem do IP público pelo RIPEstat, é guardado sem o IP, e entra no card", async () => {
+    await seed(OPERADORA);
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(async (url) => {
+      if (url.includes("/whats-my-ip/")) return ripe({ ip: "203.0.113.7" });
+      if (url.includes("/network-info/")) return ripe({ asns: ["28573"], prefix: "203.0.113.0/24" });
+      if (url.includes("/as-overview/")) return ripe({ holder: "CLARO S.A." });
+      return json({ data: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await checkGlobalStatus(true);
+
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toContain("entityType=asn&entityCode=28573&");
+    const isp = await db.statusService.findUniqueOrThrow({ where: { slug: "sua-operadora" } });
+    expect(isp).toMatchObject({ officialState: "OK", officialStatus: "AS28573 · CLARO S.A. · Sem alertas do IODA" });
+    const stored = await db.appSetting.findUniqueOrThrow({ where: { key: "globalStatus.isp" } });
+    expect(JSON.parse(stored.value)).toMatchObject({ asn: 28573, name: "CLARO S.A." });
+    expect(stored.value).not.toContain("203.0.113.7");
+  });
+
+  it("voltar ao automático depois de informar o ASN descobre de novo pelo IP", async () => {
+    await seed(OPERADORA);
+    await db.appSetting.create({ data: { key: "globalStatus.isp", value: JSON.stringify({ asn: 18881, name: "TELEFONICA BRASIL", at: new Date().toISOString(), manual: true }) } });
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(async (url) => {
+      if (url.includes("/whats-my-ip/")) return ripe({ ip: "203.0.113.7" });
+      if (url.includes("/network-info/")) return ripe({ asns: ["28573"], prefix: "203.0.113.0/24" });
+      if (url.includes("/as-overview/")) return ripe({ holder: "CLARO S.A." });
+      return json({ data: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await checkGlobalStatus(true);
+
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toContain("entityCode=28573&");
+    const stored = JSON.parse((await db.appSetting.findUniqueOrThrow({ where: { key: "globalStatus.isp" } })).value);
+    expect(stored).toMatchObject({ asn: 28573 });
+    expect(stored.manual).toBeUndefined();
+  });
+
+  it("queda aberta há mais de 7 dias não é dada como resolvida só por ter saído da janela", async () => {
+    await seed(BRASIL);
+    const service = await db.statusService.findUniqueOrThrow({ where: { slug: "internet-brasil" } });
+    const start = Math.floor(Date.now() / 1000) - 9 * 86400;
+    await db.statusIncident.create({ data: { serviceId: service.id, origin: "OFFICIAL", externalId: `bgp:${start}`, title: "Internet no Brasil: queda no sinal rotas bgp", impact: "MAJOR", state: "investigating", url: null, affected: "Rotas BGP", startedAt: new Date(start * 1000) } });
+    vi.stubGlobal("fetch", vi.fn(async () => json({ data: [] })));
+
+    await checkGlobalStatus(true);
+
+    const br = await db.statusService.findUniqueOrThrow({ where: { slug: "internet-brasil" }, include: { incidents: true } });
+    expect(br.officialState).toBe("DEGRADED");
+    expect(br.incidents.map((i) => [i.externalId, i.resolvedAt])).toEqual([[`bgp:${start}`, null]]);
+  });
+
+  it("operadora informada na configuração: não descobre pelo IP", async () => {
+    await seed(OPERADORA);
+    await db.appSetting.create({ data: { key: "globalStatus.settings", value: JSON.stringify({ ispAsn: 18881 }) } });
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(async (url) => (url.includes("/as-overview/") ? ripe({ holder: "TELEFONICA BRASIL" }) : json({ data: [] })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await checkGlobalStatus(true);
+
+    expect(fetchMock.mock.calls.some(([url]) => url.includes("whats-my-ip"))).toBe(false);
+    expect(await db.statusService.findUniqueOrThrow({ where: { slug: "sua-operadora" } })).toMatchObject({ officialStatus: "AS18881 · TELEFONICA BRASIL · Sem alertas do IODA" });
+  });
+
+  it("rotas BGP: um componente por serviço medido, com o prefixo, o ASN e a visibilidade", async () => {
+    await seed(GITHUB_IP, ROTAS);
+    // Só a fonte das rotas: o GitHub da Statuspage fica sem resposta e não entra na conta.
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(async (url) => {
+      if (url.includes("/network-info/") && url.includes("140.82.112.3")) return ripe({ asns: ["36459"], prefix: "140.82.112.0/20" });
+      if (url.includes("/routing-status/")) return ripe({ visibility: { v4: { ris_peers_seeing: 243, total_ris_peers: 244 } } });
+      return new Response("", { status: 503 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await checkGlobalStatus(true);
+
+    const rotas = await db.statusService.findUniqueOrThrow({ where: { slug: "rotas-bgp" }, include: { components: true } });
+    expect(rotas).toMatchObject({ officialState: "OK", officialStatus: "1 de 1 prefixos vistos no mundo todo" });
+    expect(rotas.components.map((c) => [c.externalId, c.groupName, c.name, c.status])).toEqual([["github", "Desenvolvimento", "GitHub · 140.82.112.0/20 · AS36459 · vista por 243 de 244 coletores", "OK"]]);
+    expect(fetchMock.mock.calls.filter(([url]) => url.includes("routing-status"))[0][0]).toContain("resource=140.82.112.0%2F20");
+  });
+});
+
 describe("ensureCatalogSeeded", () => {
   it("quem pede ao mesmo tempo espera a mesma gravação, e ela roda uma vez por processo", async () => {
     fixture.catalog.splice(0, fixture.catalog.length, GITHUB, WHATSAPP);

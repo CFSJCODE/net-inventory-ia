@@ -5,6 +5,11 @@ import { parseStatuspageSummary, statuspageVersion, type SpSummary } from "./ada
 import { parseGcpIncidents } from "./adapters/gcp";
 import { parseAzureRss } from "./adapters/azure-rss";
 import { decodeAwsBody, parseAwsEvents } from "./adapters/aws";
+import { IMPACT_LEVEL, IODA_WINDOW_S, iodaAlertsUrl, parseIodaAlerts, parseRunId, type CarriedRun, type IodaAlertsResponse } from "./adapters/ioda";
+import { bgpSnapshot } from "./adapters/ripestat";
+import { collectRoutes, ispLabel, resolveIsp } from "./internet-signals";
+import { getGlobalStatusSettings } from "./settings";
+import { notifyStatusChanges } from "./status-alerts";
 import { CLEARED_TARGET_DATA, endpointChanged, probesEnabled, unsourcedServiceData } from "./probe-logic";
 import { combineStatus, type OfficialSnapshot, type ServiceStatus } from "./types";
 import { serialized } from "./write-queue";
@@ -17,12 +22,18 @@ import { serialized } from "./write-queue";
  * - Statuspage: `status.json` (≈200 bytes) a cada 2 min; `summary.json` só quando a página muda
  *   (`page.updated_at`) ou a cada 10 min.
  * - Google Cloud, Firebase, Azure e AWS: a cada 5 min, com ETag/Last-Modified (resposta 304 não baixa nada).
+ * - IODA (Internet no Brasil e da sua operadora): a cada 10 min; os alertas têm minutos de atraso natural.
+ * - RIPEstat (rotas BGP dos serviços): a cada hora; os dados do RIS mudam em horas.
  * Erro 429/5xx dobra o intervalo daquela fonte até 30 min; volta ao normal no primeiro sucesso.
  */
 
 export const TICK_MS = 2 * 60_000;
 const SUMMARY_MAX_AGE_MS = 10 * 60_000;
-const SLOW_SOURCE_MS = 5 * 60_000;
+/** Intervalo mínimo das fontes que não são Statuspage (a Statuspage tem a consulta leve de 2 min). */
+const SOURCE_INTERVAL_MS: Partial<Record<string, number>> = { GCP: 5 * 60_000, AZURE_RSS: 5 * 60_000, AWS: 5 * 60_000, IODA: 10 * 60_000, RIPESTAT: 60 * 60_000 };
+const FORCED_ROUTES_MS = 10 * 60_000;
+/** Marcador do catálogo no lugar do ASN: a operadora é descoberta pelo IP público do servidor. */
+export const AUTO_ASN = "entityCode=auto";
 const MAX_BACKOFF_MS = 30 * 60_000;
 const FETCH_TIMEOUT_MS = 15_000;
 /** Falhas seguidas até o card virar "Sem dados" (uma falha isolada mantém o último status). */
@@ -108,9 +119,41 @@ async function fetchWithEtag(
   return { kind: "snapshot", snapshot: parse(body), version: etag ? `etag:${etag}` : modified ? `lm:${modified}` : null };
 }
 
+/**
+ * Alertas do IODA de um país ou ASN. A entrada da operadora vem com "entityCode=auto" no catálogo: o
+ * ASN é o da tela de configuração ou o descoberto pelo IP público (uma vez por dia).
+ */
+async function fetchIoda(service: StatusService): Promise<FetchResult> {
+  let base = service.sourceUrl!;
+  let entity = service.name;
+  if (base.includes(AUTO_ASN)) {
+    const isp = await resolveIsp((await getGlobalStatusSettings()).ispAsn);
+    base = base.replace(AUTO_ASN, `entityCode=${isp.asn}`);
+    entity = ispLabel(isp);
+  }
+  const now = Date.now();
+  const body = (await (await get(iodaAlertsUrl(base, now))).json()) as IodaAlertsResponse;
+  // Quedas abertas que começaram antes da janela de 7 dias: o alerta que as abriu já não vem, e só um
+  // "normal" as fecha. Sem isto, uma queda longa sumiria da resposta e seria dada como resolvida.
+  const windowStart = Math.floor(now / 1000) - IODA_WINDOW_S;
+  const open = await prisma.statusIncident.findMany({ where: { serviceId: service.id, origin: "OFFICIAL", resolvedAt: null }, select: { externalId: true, impact: true, affected: true } });
+  const carried = open.flatMap((i): CarriedRun[] => {
+    const id = parseRunId(i.externalId);
+    return id && id.start < windowStart ? [{ ...id, level: IMPACT_LEVEL[i.impact] ?? "warning", affected: i.affected }] : [];
+  });
+  const code = /entityCode=([^&]+)/.exec(base)?.[1];
+  const kind = /entityType=([^&]+)/.exec(base)?.[1];
+  const pageUrl = code && kind ? `https://ioda.inetintel.cc.gatech.edu/${kind}/${code}` : service.pageUrl;
+  const snapshot = parseIodaAlerts(body, { entity, pageUrl, carried });
+  // A operadora aparece no card pela frase: "AS28573 · CLARO S.A. · Sem alertas do IODA".
+  if (entity !== service.name) snapshot.description = `${entity} · ${snapshot.description}`;
+  return { kind: "snapshot", snapshot, version: null };
+}
+
 async function fetchService(service: StatusService, state: SourceState, force: boolean): Promise<FetchResult | null> {
-  const slow = service.sourceType === "GCP" || service.sourceType === "AZURE_RSS" || service.sourceType === "AWS";
-  if (!force && slow && Date.now() - state.lastFetchAt < SLOW_SOURCE_MS) return null;
+  // "Atualizar agora" não refaz as rotas BGP de todos os serviços a cada clique: elas mudam em horas.
+  const interval = force ? (service.sourceType === "RIPESTAT" ? FORCED_ROUTES_MS : 0) : SOURCE_INTERVAL_MS[service.sourceType];
+  if (interval && Date.now() - state.lastFetchAt < interval) return null;
   switch (service.sourceType) {
     case "STATUSPAGE":
       return fetchStatuspage(service, state, force);
@@ -126,6 +169,12 @@ async function fetchService(service: StatusService, state: SourceState, force: b
       state.lastFetchAt = Date.now();
       // O JSON da AWS vem em UTF-16: res.text() leria como UTF-8 e quebraria o parse.
       return fetchWithEtag(service, service.sourceUrl!, (body) => parseAwsEvents(JSON.parse(body)), async (res) => decodeAwsBody(await res.arrayBuffer()));
+    case "IODA":
+      state.lastFetchAt = Date.now();
+      return fetchIoda(service);
+    case "RIPESTAT":
+      state.lastFetchAt = Date.now();
+      return { kind: "snapshot", snapshot: bgpSnapshot(await collectRoutes()), version: null };
     default:
       return null;
   }
@@ -343,6 +392,8 @@ export function checkGlobalStatus(force = false): Promise<void> {
     await ensureCatalogSeeded();
     const services = await prisma.statusService.findMany({ where: { enabled: true, sourceType: { not: "NONE" } } });
     await Promise.all(services.map((s) => checkService(s, force)));
+    // Depois das consultas e no mesmo ritmo delas: o e-mail opcional de mudanças de status.
+    await notifyStatusChanges().catch((err) => console.warn("[global-status] alerta por e-mail:", err instanceof Error ? err.message : err));
   })()
     .catch((err) => console.error("[global-status] falha na rodada:", err))
     .finally(() => {

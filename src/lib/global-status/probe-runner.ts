@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { mapWithConcurrency } from "@/lib/network/concurrency";
 import { STATUS_CATALOG } from "./catalog";
 import { ensureCatalogSeeded } from "./collector";
+import { DETECTED_ORIGIN, planDetected } from "./detected";
 import {
   AGENT_VANTAGE_PREFIX,
   BASELINE_REFRESH_MS,
@@ -384,10 +385,17 @@ async function writeTick(outcome: TickOutcome, pause: PausedState | null, connec
   const touched = outcome.services.map((s) => s.serviceId);
   // Lidos aqui dentro da fila: o coletor pode ter mudado o estado oficial e o status desde o começo do passo.
   const current = await prisma.statusService.findMany({
-    where: pause ? { OR: [{ id: { in: touched } }, { category: { not: "INTERNET" } }] } : { id: { in: touched } },
+    // Na pausa entram os serviços medidos (os da faixa "Internet no Brasil" não têm alvos: a visão deles é de fora).
+    where: pause ? { OR: [{ id: { in: touched } }, { category: { not: "INTERNET" }, targets: { some: {} } }] } : { id: { in: touched } },
     select: { id: true, category: true, officialState: true, status: true },
   });
   const byId = new Map(current.map((s) => [s.id, s]));
+  // Incidentes detectados só dos provedores: a conexão do próprio servidor aparece na faixa "Sua Internet".
+  const judged = outcome.services.filter((s) => byId.get(s.serviceId)?.category !== "INTERNET").map((s) => s.serviceId);
+  const openDetected = judged.length
+    ? await prisma.statusIncident.findMany({ where: { serviceId: { in: judged }, origin: DETECTED_ORIGIN, resolvedAt: null }, select: { id: true, serviceId: true, impact: true, state: true, updatedAt: true } })
+    : [];
+  const detectedBy = new Map(openDetected.map((i) => [i.serviceId, i]));
 
   const writes: Prisma.PrismaPromise<unknown>[] = [];
   if (outcome.rows.length) writes.push(prisma.probeCheck.createMany({ data: outcome.rows }));
@@ -395,6 +403,10 @@ async function writeTick(outcome: TickOutcome, pause: PausedState | null, connec
   for (const s of outcome.services) {
     const row = byId.get(s.serviceId);
     if (row) writes.push(prisma.statusService.updateMany({ where: { id: s.serviceId }, data: serviceData(s.summary, row, { sourceType: s.sourceType, at: s.at, now }) }));
+    if (!row || row.category === "INTERNET") continue;
+    const plan = planDetected(detectedBy.get(s.serviceId) ?? null, s.summary, now);
+    if (plan.kind === "create") writes.push(prisma.statusIncident.create({ data: { serviceId: s.serviceId, origin: DETECTED_ORIGIN, url: null, resolvedAt: null, ...plan.data } }));
+    else if (plan.kind === "update") writes.push(prisma.statusIncident.updateMany({ where: { id: plan.id }, data: plan.data }));
   }
   if (pause) {
     // Os cards passam a mostrar só o status oficial; os alvos de serviço ficam "Sem dados" com a frase da pausa.
@@ -543,6 +555,8 @@ async function clearMeasuredState(): Promise<void> {
     const writes: Prisma.PrismaPromise<unknown>[] = services.map((s) => prisma.statusService.updateMany({ where: { id: s.id }, data: clearedServiceData(s, now) }));
     writes.push(prisma.probeTarget.updateMany({ where: { OR: [{ status: { not: "UNKNOWN" } }, { statusReason: { not: null } }, { lastLatencyMs: { not: null } }, { lastError: { not: null } }] }, data: CLEARED_TARGET_DATA }));
     writes.push(prisma.appSetting.deleteMany({ where: { key: CONNECTIVITY_SETTING } }));
+    // Sem medições ninguém mais fecharia os incidentes detectados: fecham agora.
+    writes.push(prisma.statusIncident.updateMany({ where: { origin: DETECTED_ORIGIN, resolvedAt: null }, data: { state: "resolved", resolvedAt: now } }));
     await prisma.$transaction(writes);
   };
   // Como as gravações de um passo: uma segunda tentativa depois de 500 ms (o banco pode estar ocupado ao subir).
