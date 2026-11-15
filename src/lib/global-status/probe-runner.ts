@@ -4,6 +4,7 @@ import { mapWithConcurrency } from "@/lib/network/concurrency";
 import { STATUS_CATALOG } from "./catalog";
 import { ensureCatalogSeeded } from "./collector";
 import {
+  AGENT_VANTAGE_PREFIX,
   BASELINE_REFRESH_MS,
   BASELINE_WINDOW_MS,
   CLEARED_TARGET_DATA,
@@ -11,6 +12,8 @@ import {
   SERVER_VANTAGE,
   TARGET_CACHE_MS,
   advanceAgenda,
+  agentRollupWindows,
+  mergeWindows,
   buildRollups,
   cleanupCutoffs,
   clearedServiceData,
@@ -101,6 +104,8 @@ interface RunnerState {
   rotation: number;
   /** Início da última janela de 5 min já resumida; null até a primeira passada. */
   lastRolled: number | null;
+  /** O mesmo para as medições dos agentes Windows; null até a primeira passada deste processo. */
+  agentLastRolled: number | null;
   rollupAt: number;
   cleanupAt: number;
   logged: Map<string, number>;
@@ -123,6 +128,7 @@ function runner(): RunnerState {
     pausedRoundAt: 0,
     rotation: 0,
     lastRolled: null,
+    agentLastRolled: null,
     rollupAt: 0,
     cleanupAt: 0,
     logged: new Map(),
@@ -410,6 +416,10 @@ async function maintain(r: RunnerState): Promise<void> {
       const message = `[global-status] falha ao resumir as janelas de 5 min: ${errorText(err)}`;
       report(r, message, () => console.warn(message));
     });
+    await rollUpAgents(r, now).catch((err) => {
+      const message = `[global-status] falha ao resumir as medições dos agentes: ${errorText(err)}`;
+      report(r, message, () => console.warn(message));
+    });
   }
   if (due.cleanup) {
     r.cleanupAt = now;
@@ -452,6 +462,38 @@ async function rollUp(r: RunnerState, now: number): Promise<void> {
     );
   });
   r.lastRolled = plan.lastRolled;
+}
+
+/**
+ * Resumo dos agentes Windows (fase 3). Duas partes numa passada: as janelas ainda não resumidas (ao subir,
+ * continua de onde o banco parou, como o resumo do servidor, para não perder o que o host .NET gravou
+ * enquanto o motor estava parado) e as últimas janelas fechadas de novo, porque o lote do agente chega até
+ * um minuto depois da medição e pode atrasar com a rede do PC. O upsert deixa a repetição sem efeito.
+ */
+async function rollUpAgents(r: RunnerState, now: number): Promise<void> {
+  const agents = { vantage: { startsWith: AGENT_VANTAGE_PREFIX } };
+  let known = { lastRolled: r.agentLastRolled, newestRollup: null as number | null, oldestCheck: null as number | null };
+  if (known.lastRolled === null) {
+    const newest = await prisma.probeRollup.findFirst({ where: agents, orderBy: { bucket: "desc" }, select: { bucket: true } });
+    const oldest = newest ? null : await prisma.probeCheck.findFirst({ where: agents, orderBy: { at: "asc" }, select: { at: true } });
+    known = { lastRolled: null, newestRollup: newest?.bucket.getTime() ?? null, oldestCheck: oldest?.at.getTime() ?? null };
+  }
+  const plan = planRollup(known, now);
+  const windows = mergeWindows(plan?.windows ?? [], agentRollupWindows(now));
+  await serialized(async () => {
+    const checks = await prisma.probeCheck.findMany({
+      where: { ...agents, at: { gte: new Date(windows[0]), lt: new Date(windows[windows.length - 1] + BUCKET_MS) } },
+      select: { targetId: true, vantage: true, at: true, ok: true, latencyMs: true, lossPct: true },
+    });
+    const rows = buildRollups(checks, windows);
+    if (!rows.length) return;
+    await prisma.$transaction(
+      rows.map(({ targetId, vantage, bucket, ...stats }) =>
+        prisma.probeRollup.upsert({ where: { targetId_vantage_bucket: { targetId, vantage, bucket } }, create: { targetId, vantage, bucket, ...stats }, update: stats }),
+      ),
+    );
+  });
+  if (plan) r.agentLastRolled = plan.lastRolled;
 }
 
 /** Apaga as medições cruas com mais de 48 h e as janelas com mais de 30 dias. */

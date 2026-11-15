@@ -24,6 +24,7 @@ import type { ServiceCategory, ServiceStatus } from "@/lib/global-status/types";
 import { formatDateTime, formatRelativeTime } from "@/lib/format-time";
 import { cn } from "@/lib/utils";
 import { formatLatency, formatPercent, formatUptime, isWorseThanOfficial } from "./format";
+import { PhaseChart, RouteSection, VantageList } from "./detail-sections";
 import { InternetHealthBar } from "./internet-health-bar";
 import { Sparkline } from "./sparkline";
 import { HTTP_PHASE_STYLE, IMPACT_LABEL, IMPACT_STATUS, SERVICE_STATUS_STYLE, incidentStateLabel } from "./status-style";
@@ -325,6 +326,7 @@ function TargetList({ targets }: { targets: StatusTargetRow[] }) {
               <InlineReading label="mediana 24 h" value={formatLatency(t.p50Ms)} />
               <InlineReading label="p95 24 h" value={formatLatency(t.p95Ms)} />
               <InlineReading label="disponibilidade 24 h" value={formatUptime(t.uptime24h)} />
+              <InlineReading label="30 dias" value={formatUptime(t.uptime30d)} />
             </div>
             {t.spark ? (
               <Sparkline series={t.spark} label={`Latência de ${t.label} (${t.address}) nas últimas 24 h`} className="h-10" />
@@ -454,6 +456,9 @@ function ServiceDetailSheet({ service, measuring, onClose }: { service: StatusSe
               {data && (
                 <>
                   {measuring && <TargetList targets={data.targets} />}
+                  {measuring && data.vantages && <VantageList vantages={data.vantages} />}
+                  {measuring && data.phases && <PhaseChart phases={data.phases} />}
+                  {data.traceable && <RouteSection key={service.slug} slug={service.slug} />}
                   {/* Sem fonte oficial não há incidentes nem componentes publicados para listar. */}
                   {service.hasSource && (
                     <>

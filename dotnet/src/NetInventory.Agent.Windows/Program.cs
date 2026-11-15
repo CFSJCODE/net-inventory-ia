@@ -54,13 +54,15 @@ using(var context=Context(endpoint))
 }
 var diagnostics=new DiagnosticState();var runner=new AgentRunner(installation.AgentId,Context,Endpoint,new WindowsCollector(),diagnostics);
 if(args.Contains("--once"))return await runner.RunOnce(CancellationToken.None)?0:2;
-builder.Services.AddSingleton(runner);builder.Services.AddSingleton(diagnostics);builder.Services.AddHostedService<DiagnosticPipeServer>();builder.Services.AddHostedService<AgentWorker>();
+builder.Services.AddSingleton(runner);builder.Services.AddSingleton(diagnostics);builder.Services.AddHostedService<DiagnosticPipeServer>();builder.Services.AddHostedService<AgentWorker>();builder.Services.AddHostedService<ProbeWorker>();
 using var host=builder.Build();await host.RunAsync();return 0;
 static string HostKey(Uri uri)=>Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(uri.AbsoluteUri))).ToLowerInvariant()[..24];
 
 internal sealed class AgentRunner(Guid installationId,Func<Uri,AgentState> contextFactory,Func<Uri> endpoint,WindowsCollector collector,DiagnosticState diagnostics):IDisposable
 {
     private AgentState? state;private Uri? server;private DateTimeOffset? confirmed;
+    /// <summary>Servidor e credencial já confirmados por um envio de inventário; null antes disso. Usado pelas medições do painel de status.</summary>
+    public (Uri Server,string Token,Guid AgentId)? Connection=>confirmed is not null&&server is not null&&state?.Token is {} token?(server,token,installationId):null;
     public void Dispose()=>state?.Dispose();
     public async Task<bool> RunOnce(CancellationToken cancellation)
     {

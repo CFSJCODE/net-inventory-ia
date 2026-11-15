@@ -223,6 +223,18 @@ app.MapPost("/api/v1/agents/samples",async(InventorySample sample,HttpContext co
     try{var result=await store.IngestAsync(sample,token,now);if(result.LatestUpdated)try{await hub.Clients.All.SendAsync("inventoryChanged",new DeviceChange(sample.AgentId,sample.CollectedAt));}catch(Exception ex)when(ex is not OperationCanceledException){app.Logger.LogWarning("Amostra persistida; notificação indisponível.");}return Results.Ok(result);}
     catch(UnauthorizedAccessException){return Results.Unauthorized();}catch(InvalidOperationException){return Results.Conflict();}
 });
+// Painel "Status global", fase 3: o agente mede os mesmos alvos do servidor como segundo ponto de medição.
+app.MapGet("/api/v1/agents/{id:guid}/probe-targets",async(Guid id,HttpContext context,InventoryStore store)=>
+{
+    var token=Bearer(context);if(token is null||!await store.AuthenticateAsync(id,token))return Results.Unauthorized();
+    return Results.Ok(await store.ListProbeTargetsAsync());
+}).WithMetadata(new AgentSelfMarker());
+app.MapPost("/api/v1/agents/{id:guid}/probe-results",async(Guid id,AgentProbeBatch batch,HttpContext context,InventoryStore store)=>
+{
+    var token=Bearer(context);if(token is null||batch.AgentId!=id||!await store.AuthenticateAsync(id,token))return Results.Unauthorized();
+    if(ProbeValidation.Validate(batch)is{}error)return Results.BadRequest(new{error});
+    return Results.Ok(await store.IngestProbeResultsAsync(batch,DateTimeOffset.UtcNow));
+}).WithMetadata(new AgentSelfMarker());
 app.MapHub<InventoryHub>("/hubs/inventory");app.MapNetInventoryWebConsole();
 if(!string.IsNullOrWhiteSpace(legacy))app.MapReverseProxy().WithMetadata(new LegacyMarker());
 app.Run();

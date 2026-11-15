@@ -51,13 +51,19 @@ function runsOf(series: SparkSeries): Point[][] {
  * Latência ao longo do tempo: a linha é a mediana (p50), a faixa vai da mediana ao p95 e as marcas
  * embaixo são os passos com falha. Estica até o tamanho do elemento que o contém.
  */
-export function Sparkline({ series, label, className }: { series: SparkSeries; label: string; className?: string }) {
-  const width = Math.max(series.p50.length, series.fail.length, 1);
-  const runs = runsOf(series);
-  const points = runs.flat();
+/** Topo da escala de uma série: o p95 limitado a BAND_LIMIT vezes a maior mediana, com folga. */
+export function sparkScaleTop(series: SparkSeries): number {
+  const points = runsOf(series).flat();
   const peakP50 = Math.max(0, ...points.map((p) => p.p50));
   const peakP95 = Math.max(0, ...points.map((p) => p.p95));
-  const top = Math.max(Math.min(peakP95, peakP50 * BAND_LIMIT) * HEADROOM, MIN_SCALE_MS);
+  return Math.max(Math.min(peakP95, peakP50 * BAND_LIMIT) * HEADROOM, MIN_SCALE_MS);
+}
+
+/** `scaleTopMs` fixa o topo da escala: gráficos lado a lado com a mesma escala podem ser comparados de olho. */
+export function Sparkline({ series, label, className, scaleTopMs }: { series: SparkSeries; label: string; className?: string; scaleTopMs?: number }) {
+  const width = Math.max(series.p50.length, series.fail.length, 1);
+  const runs = runsOf(series);
+  const top = scaleTopMs ?? sparkScaleTop(series);
   const y = (ms: number) => Math.round((PLOT_BOTTOM - (Math.min(Math.max(ms, 0), top) / top) * (PLOT_BOTTOM - PLOT_TOP)) * 100) / 100;
 
   const line = runs.map((run) => run.map((p, n) => `${n ? "L" : "M"}${p.x} ${y(p.p50)}`).join(" ")).join(" ");

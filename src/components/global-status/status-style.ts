@@ -11,10 +11,10 @@ export const SERVICE_STATUS_STYLE: Record<ServiceStatus, { label: string; badge:
 
 /** Parcelas de uma medição HTTP, na ordem em que acontecem, nas cores de gráfico do tema. */
 export const HTTP_PHASE_STYLE = [
-  { key: "dnsMs", label: "DNS", bar: "bg-chart-1" },
-  { key: "connectMs", label: "TCP", bar: "bg-chart-2" },
-  { key: "tlsMs", label: "TLS", bar: "bg-chart-3" },
-  { key: "ttfbMs", label: "Servidor", bar: "bg-chart-4" },
+  { key: "dnsMs", label: "DNS", bar: "bg-chart-1", fill: "fill-chart-1" },
+  { key: "connectMs", label: "TCP", bar: "bg-chart-2", fill: "fill-chart-2" },
+  { key: "tlsMs", label: "TLS", bar: "bg-chart-3", fill: "fill-chart-3" },
+  { key: "ttfbMs", label: "Servidor", bar: "bg-chart-4", fill: "fill-chart-4" },
 ] as const;
 
 export const IMPACT_LABEL: Record<string, string> = {
