@@ -24,7 +24,7 @@ public sealed partial class InventoryStore
             command.CommandText = """
                 SELECT t."id", t."kind", t."host", t."url", t."port", t."intervalSec"
                 FROM "ProbeTarget" t JOIN "StatusService" s ON s."id" = t."serviceId"
-                WHERE t."enabled" = 1 AND t."kind" IN ('HTTP','TCP','ICMP','DNS')
+                WHERE t."enabled" = 1 AND s."enabled" = 1 AND t."kind" IN ('HTTP','TCP','ICMP','DNS')
                 ORDER BY s."slug", t."key"
                 """;
             var targets = new List<AgentProbeTarget>();
@@ -37,7 +37,7 @@ public sealed partial class InventoryStore
         finally { gate.Release(); }
     }
 
-    /// <summary>Grava o lote validado com o ponto de medição do agente; ignora alvos que não existem mais e medições velhas.</summary>
+    /// <summary>Grava o lote validado com o ponto de medição do agente; ignora alvos que não existem mais, medições velhas e as já gravadas.</summary>
     public async Task<AgentProbeIngestResponse> IngestProbeResultsAsync(AgentProbeBatch batch, DateTimeOffset now)
     {
         await gate.WaitAsync();
@@ -57,7 +57,8 @@ public sealed partial class InventoryStore
             insert.Transaction = transaction;
             insert.CommandText = """
                 INSERT INTO "ProbeCheck" ("targetId","vantage","at","ok","latencyMs","httpStatus","dnsMs","connectMs","ttfbMs","totalMs","lossPct","jitterMs","error")
-                VALUES ($target,$vantage,$at,$ok,$latency,$http,$dns,$connect,$ttfb,$total,$loss,$jitter,$error)
+                SELECT $target,$vantage,$at,$ok,$latency,$http,$dns,$connect,$ttfb,$total,$loss,$jitter,$error
+                WHERE NOT EXISTS (SELECT 1 FROM "ProbeCheck" WHERE "targetId" = $target AND "vantage" = $vantage AND "at" = $at)
                 """;
             string[] names = ["$target", "$vantage", "$at", "$ok", "$latency", "$http", "$dns", "$connect", "$ttfb", "$total", "$loss", "$jitter", "$error"];
             foreach (var name in names) insert.Parameters.Add(new SqliteParameter(name, null));
@@ -68,8 +69,8 @@ public sealed partial class InventoryStore
                 if (!known.Contains(r.TargetId) || !ProbeValidation.Fresh(r, now)) { ignored++; continue; }
                 object?[] values = [r.TargetId, vantage, r.At.ToUnixTimeMilliseconds(), r.Ok ? 1 : 0, r.LatencyMs, r.HttpStatus, r.DnsMs, r.ConnectMs, r.TtfbMs, r.TotalMs, r.LossPct, r.JitterMs, r.Error];
                 for (var i = 0; i < values.Length; i++) insert.Parameters[i].Value = values[i] ?? DBNull.Value;
-                insert.ExecuteNonQuery();
-                accepted++;
+                // Reenvio do mesmo lote (resposta perdida, prazo estourado): a medição já gravada (alvo, ponto e instante) não entra de novo.
+                if (insert.ExecuteNonQuery() == 1) accepted++; else ignored++;
             }
             transaction.Commit();
             return new(accepted, ignored);

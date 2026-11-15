@@ -19,6 +19,7 @@ internal sealed class ProbeWorker(AgentRunner runner, IConfiguration config, ILo
         var due = new Dictionary<string, DateTimeOffset>();
         var pending = new List<AgentProbeResult>();
         string? lastProblem = null;
+        Uri? server = null;
         // Registra só a mudança de situação, para não encher o log do Windows a cada minuto.
         void Problem(string? problem)
         {
@@ -34,6 +35,15 @@ internal sealed class ProbeWorker(AgentRunner runner, IConfiguration config, ILo
             var started = DateTimeOffset.UtcNow;
             if (runner.Connection is { } connection)
             {
+                // Outro servidor escolhido no perfil: os alvos, a agenda e o lote eram do anterior (ids de alvo de outro banco).
+                if (connection.Server != server)
+                {
+                    server = connection.Server;
+                    targets = [];
+                    targetsAt = DateTimeOffset.MinValue;
+                    due.Clear();
+                    pending.Clear();
+                }
                 using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = connection.Server, Timeout = TimeSpan.FromSeconds(15) };
                 http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", connection.Token);
                 try

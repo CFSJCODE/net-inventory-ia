@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_ROLLUP_WINDOWS, SERVER_VANTAGE, agentIdOf, agentRollupWindows, buildRollups, closedWindows } from "./probe-logic";
+import { AGENT_ROLLUP_WINDOWS, SERVER_VANTAGE, agentIdOf, agentRollupWindows, buildRollups, closedWindows, mergeWindows, planRollup } from "./probe-logic";
 import { buildPhaseSeries, uptimeFromTotals } from "./series";
 import { BUCKET_MS } from "./stats";
 
@@ -31,6 +31,18 @@ describe("agentRollupWindows", () => {
       expect(windows[windows.length - 1]).toBe(closed[closed.length - 1]);
       windows.slice(1).forEach((w, i) => expect(w - windows[i]).toBe(BUCKET_MS));
     }
+  });
+});
+
+describe("resumo dos agentes depois de o motor ficar parado", () => {
+  it("ao subir continua da última janela gravada e ainda refaz as últimas", () => {
+    const now = T0 + 2 * 60 * 60_000 + 2 * 60_000;
+    // Última janela dos agentes gravada 2 h antes: as 23 janelas seguintes ainda não foram resumidas.
+    const plan = planRollup({ lastRolled: null, newestRollup: T0, oldestCheck: null }, now);
+    const windows = mergeWindows(plan!.windows, agentRollupWindows(now));
+    expect(windows[0]).toBe(T0 + BUCKET_MS);
+    expect(windows[windows.length - 1]).toBe(agentRollupWindows(now)[AGENT_ROLLUP_WINDOWS - 1]);
+    expect(new Set(windows).size).toBe(windows.length);
   });
 });
 

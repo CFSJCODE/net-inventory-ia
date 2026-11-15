@@ -221,6 +221,12 @@ try { await store.CreateInvitationAsync("Revoked agent", 5, agentId); Check(fals
     Check(ProbeValidation.Validate(probeBatch) is null, "lote válido");
     var ingested = await probeStore.IngestProbeResultsAsync(probeBatch, now);
     Check(ingested is { Accepted: 2, Ignored: 2 }, "medição velha e alvo removido ignorados");
+    Check(await probeStore.IngestProbeResultsAsync(probeBatch, now) is { Accepted: 0, Ignored: 4 }, "reenvio do mesmo lote não duplica medições");
+    using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = probeStore.DatabasePath }.ToString()))
+    {
+        db.Open(); using var disable = db.CreateCommand(); disable.CommandText = "UPDATE \"StatusService\" SET \"enabled\" = 0"; disable.ExecuteNonQuery();
+    }
+    Check((await probeStore.ListProbeTargetsAsync()).Length == 0, "serviço desligado não manda alvos ao agente");
     using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = probeStore.DatabasePath }.ToString()))
     {
         db.Open(); using var read = db.CreateCommand();

@@ -1042,6 +1042,11 @@ export function agentRollupWindows(now: number, count = AGENT_ROLLUP_WINDOWS): n
   return Array.from({ length: count }, (_, i) => lastClosed - (count - 1 - i) * BUCKET_MS);
 }
 
+/** Junta duas listas de janelas sem repetir, da mais antiga para a mais nova. */
+export function mergeWindows(a: readonly number[], b: readonly number[]): number[] {
+  return [...new Set([...a, ...b])].sort((x, y) => x - y);
+}
+
 /** Id do agente de um ponto de medição, ou null quando é o servidor (ou um valor que não é de agente). */
 export function agentIdOf(vantage: string): string | null {
   if (!vantage.startsWith(AGENT_VANTAGE_PREFIX)) return null;

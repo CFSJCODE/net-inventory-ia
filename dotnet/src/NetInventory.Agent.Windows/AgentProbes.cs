@@ -147,38 +147,80 @@ public static class AgentProbes
 
     private static async Task<AgentProbeResult> Dns(AgentProbeTarget target, DateTimeOffset at, string server, string name, CancellationToken cancellation)
     {
+        IPAddress[] servers;
+        if (server == AutoSystemDns)
+        {
+            // Consulta de verdade nos servidores DNS configurados no PC, como o servidor faz: o cache do Windows
+            // responderia na hora mesmo com os servidores fora do ar.
+            servers = SystemDnsServers();
+            if (servers.Length == 0) return Fail(target, at, "nenhum servidor DNS configurado");
+        }
+        else if (IPAddress.TryParse(server, out var address)) servers = [address];
+        else return Fail(target, at, "servidor DNS inválido");
+
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         deadline.CancelAfter(DnsTimeout);
         var clock = Stopwatch.StartNew();
+        // Todos ao mesmo tempo; a primeira resposta com endereço vence. Entre as falhas, uma resposta de verdade
+        // (nome não encontrado, recusa) diz mais que o silêncio de outro servidor.
+        var pending = servers.Select(s => QueryServer(s, name, deadline.Token)).ToList();
+        DnsOutcome? reported = null;
+        while (pending.Count > 0)
+        {
+            var done = await Task.WhenAny(pending);
+            pending.Remove(done);
+            var outcome = await done;
+            if (outcome == DnsOutcome.Answer)
+            {
+                var ms = Ms(clock.Elapsed);
+                await deadline.CancelAsync();
+                return new(target.Id, at, true, ms, DnsMs: ms);
+            }
+            if (outcome is not null && reported is null) reported = outcome;
+        }
+        cancellation.ThrowIfCancellationRequested();
+        return reported switch
+        {
+            DnsOutcome.NameNotFound => Fail(target, at, "nome não encontrado"),
+            DnsOutcome.Refused => Fail(target, at, "servidor DNS recusou a consulta"),
+            _ => Fail(target, at, "DNS não respondeu"),
+        };
+    }
+
+    /// <summary>Uma consulta A num servidor; null quando ele não responde no prazo ou a rede recusa o envio.</summary>
+    private static async Task<DnsOutcome?> QueryServer(IPAddress server, string name, CancellationToken cancellation)
+    {
         try
         {
-            if (server == AutoSystemDns)
-            {
-                var found = await System.Net.Dns.GetHostAddressesAsync(name, AddressFamily.InterNetwork, deadline.Token);
-                var ms = Ms(clock.Elapsed);
-                return found.Length > 0 ? new(target.Id, at, true, ms, DnsMs: ms) : Fail(target, at, "nome não encontrado");
-            }
-            if (!IPAddress.TryParse(server, out var address)) return Fail(target, at, "servidor DNS inválido");
             var id = (ushort)Random.Shared.Next(1, ushort.MaxValue);
-            using var udp = new UdpClient(address.AddressFamily);
-            await udp.SendAsync(DnsQuery(id, name), new IPEndPoint(address, 53), deadline.Token);
+            using var udp = new UdpClient(server.AddressFamily);
+            await udp.SendAsync(DnsQuery(id, name), new IPEndPoint(server, 53), cancellation);
             while (true)
             {
-                var answer = await udp.ReceiveAsync(deadline.Token);
-                if (!answer.RemoteEndPoint.Address.Equals(address)) continue;
-                var parsed = ParseDnsAnswer(answer.Buffer, id);
-                if (parsed is null) continue;
-                var ms = Ms(clock.Elapsed);
-                return parsed switch
-                {
-                    DnsOutcome.Answer => new(target.Id, at, true, ms, DnsMs: ms),
-                    DnsOutcome.NameNotFound => Fail(target, at, "nome não encontrado"),
-                    _ => Fail(target, at, "servidor DNS recusou a consulta"),
-                };
+                var answer = await udp.ReceiveAsync(cancellation);
+                if (!answer.RemoteEndPoint.Address.Equals(server)) continue;
+                if (ParseDnsAnswer(answer.Buffer, id) is { } parsed) return parsed;
             }
         }
-        catch (OperationCanceledException) when (!cancellation.IsCancellationRequested) { return Fail(target, at, "DNS não respondeu"); }
-        catch (SocketException ex) { return Fail(target, at, ex.SocketErrorCode == SocketError.HostNotFound ? "nome não encontrado" : Short(ex.Message)); }
+        catch (OperationCanceledException) { return null; }
+        catch (SocketException) { return null; }
+    }
+
+    /// <summary>Servidores DNS das interfaces ativas que têm gateway (as que levam à Internet), sem repetir.</summary>
+    public static IPAddress[] SystemDnsServers()
+    {
+        try
+        {
+            return NetworkInterface.GetAllNetworkInterfaces()
+                .Where(n => n.OperationalStatus == OperationalStatus.Up && n.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+                .Select(n => n.GetIPProperties())
+                .Where(p => p.GatewayAddresses.Any(g => !g.Address.Equals(IPAddress.Any)))
+                .SelectMany(p => p.DnsAddresses)
+                .Where(a => a.AddressFamily == AddressFamily.InterNetwork || a.AddressFamily == AddressFamily.InterNetworkV6 && !a.IsIPv6SiteLocal)
+                .Distinct()
+                .ToArray();
+        }
+        catch (NetworkInformationException) { return []; }
     }
 
     public enum DnsOutcome { Answer, NameNotFound, Refused }
