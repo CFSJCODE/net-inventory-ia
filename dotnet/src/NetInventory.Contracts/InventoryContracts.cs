@@ -32,3 +32,13 @@ public sealed record IngestResponse(bool Duplicate, bool LatestUpdated);
 public sealed record DeviceClassification(string Type, string Source, string Confidence, string[] Evidence);
 public sealed record DeviceSnapshot(Guid AgentId, string Label, DateTimeOffset? ReceivedAt, InventorySample? Latest, DeviceClassification? Classification = null);
 public sealed record DeviceChange(Guid AgentId, DateTimeOffset CollectedAt);
+
+/// <summary>Alvo de medição do painel "Status global" que o agente mede como segundo ponto (fase 3).</summary>
+public sealed record AgentProbeTarget(string Id, string Kind, string Host, string? Url, int? Port, int IntervalSec);
+/// <summary>Uma medição feita pelo agente; mesmos campos de ProbeCheck do painel.</summary>
+public sealed record AgentProbeResult(
+    string TargetId, DateTimeOffset At, bool Ok, double? LatencyMs = null, int? HttpStatus = null,
+    double? DnsMs = null, double? ConnectMs = null, double? TtfbMs = null, double? TotalMs = null,
+    double? LossPct = null, double? JitterMs = null, string? Error = null);
+public sealed record AgentProbeBatch(Guid AgentId, AgentProbeResult[] Results);
+public sealed record AgentProbeIngestResponse(int Accepted, int Ignored);

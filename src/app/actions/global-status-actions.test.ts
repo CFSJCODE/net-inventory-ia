@@ -39,6 +39,8 @@ interface TargetRow {
 
 interface RollupRow {
   targetId: string;
+  /** Sem valor = servidor. */
+  vantage?: string;
   bucket: Date;
   samples: number;
   failures: number;
@@ -49,6 +51,8 @@ interface RollupRow {
 /** Uma medição crua (ProbeCheck), com o que a ponta viva do histórico lê. */
 interface CheckRow {
   targetId: string;
+  /** Sem valor = servidor. */
+  vantage?: string;
   at: Date;
   ok: boolean;
   latencyMs: number | null;
@@ -64,6 +68,8 @@ const db = vi.hoisted(() => ({
   calls: [] as { op: string; args: unknown }[],
   /** Quando preenchido, a leitura das janelas falha com esta mensagem. */
   rollupError: null as string | null,
+  /** Linhas da tabela Agents do host .NET. */
+  agents: [] as { Id: string; Label: string }[],
 }));
 
 const mocks = vi.hoisted(() => ({
@@ -82,6 +88,16 @@ vi.mock("@/lib/global-status/probe-runner", () => ({ getLocalConnectivity: mocks
 vi.mock("@/lib/global-status/probes", () => ({ defaultGateway: mocks.defaultGateway }));
 vi.mock("@/lib/prisma", () => {
   type Where = Record<string, unknown>;
+  type TargetFilter = string | { in: string[] };
+  const matchTarget = (filter: TargetFilter, id: string) => (typeof filter === "string" ? filter === id : filter.in.includes(id));
+  // Sem ponto de medição na linha, ela é do servidor; a consulta sem filtro de ponto aceita todos.
+  const matchVantage = (filter: unknown, vantage: string | undefined) => {
+    const v = vantage ?? "server";
+    if (filter === undefined) return true;
+    if (typeof filter === "string") return filter === v;
+    const { startsWith } = filter as { startsWith?: string };
+    return startsWith !== undefined && v.startsWith(startsWith);
+  };
   const record = <T>(op: string, answer: (args: { where?: Where }) => T) => async (args: { where?: Where } = {}) => {
     db.calls.push({ op, args });
     return answer(args);
@@ -113,18 +129,42 @@ vi.mock("@/lib/prisma", () => {
         findMany: record("probeRollup.findMany", ({ where = {} }) => {
           if (db.rollupError) throw new Error(db.rollupError);
           // A consulta de verdade sempre filtra pelos alvos e pelo começo do período; sem um dos dois o teste quebra aqui.
-          const { targetId, bucket } = where as { targetId: { in: string[] }; bucket: { gte: Date } };
-          return (db.rollups as RollupRow[]).filter((r) => targetId.in.includes(r.targetId) && r.bucket >= bucket.gte);
+          const { targetId, bucket } = where as { targetId: TargetFilter; bucket: { gte: Date } };
+          return (db.rollups as RollupRow[]).filter((r) => matchTarget(targetId, r.targetId) && matchVantage(where.vantage, r.vantage) && r.bucket >= bucket.gte);
+        }),
+        groupBy: record("probeRollup.groupBy", ({ where = {} }) => {
+          const { targetId, bucket } = where as { targetId: TargetFilter; bucket: { gte: Date } };
+          const rows = (db.rollups as RollupRow[]).filter((r) => matchTarget(targetId, r.targetId) && matchVantage(where.vantage, r.vantage) && r.bucket >= bucket.gte);
+          const groups = new Map<string, { targetId: string; vantage: string; _sum: { samples: number; failures: number } }>();
+          for (const r of rows) {
+            const key = `${r.targetId}|${r.vantage ?? "server"}`;
+            const g = groups.get(key) ?? { targetId: r.targetId, vantage: r.vantage ?? "server", _sum: { samples: 0, failures: 0 } };
+            g._sum.samples += r.samples;
+            g._sum.failures += r.failures;
+            groups.set(key, g);
+          }
+          return [...groups.values()];
         }),
       },
       probeCheck: {
         findMany: record("probeCheck.findMany", ({ where = {} }) => {
-          // A consulta da ponta viva sempre filtra pelos alvos e pelo trecho, com começo e fim.
-          const { targetId, at } = where as { targetId: { in: string[] }; at: { gte: Date; lte: Date } };
-          return (db.checks as CheckRow[]).filter((c) => targetId.in.includes(c.targetId) && c.at >= at.gte && c.at <= at.lte);
+          // A consulta da ponta viva sempre filtra pelos alvos e pelo trecho, com começo (e fim, menos a das etapas do HTTP).
+          const { targetId, at } = where as { targetId: TargetFilter; at: { gte: Date; lte?: Date } };
+          return (db.checks as CheckRow[]).filter((c) => matchTarget(targetId, c.targetId) && matchVantage(where.vantage, c.vantage) && c.at >= at.gte && (!at.lte || c.at <= at.lte));
         }),
-        findFirst: record("probeCheck.findFirst", ({ where }) => (db.checks as { targetId: string }[]).find((c) => c.targetId === where?.targetId) ?? null),
+        findFirst: record("probeCheck.findFirst", ({ where }) => (db.checks as CheckRow[]).find((c) => c.targetId === where?.targetId && matchVantage(where?.vantage, c.vantage)) ?? null),
+        groupBy: record("probeCheck.groupBy", ({ where = {} }) => {
+          const { targetId } = where as { targetId: TargetFilter };
+          const groups = new Map<string, { vantage: string; _max: { at: Date } }>();
+          for (const c of (db.checks as CheckRow[]).filter((c) => matchTarget(targetId, c.targetId) && matchVantage(where.vantage, c.vantage))) {
+            const vantage = c.vantage ?? "server";
+            const g = groups.get(vantage);
+            if (!g || g._max.at < c.at) groups.set(vantage, { vantage, _max: { at: c.at } });
+          }
+          return [...groups.values()];
+        }),
       },
+      $queryRawUnsafe: async () => db.agents,
     },
   };
 });
@@ -186,6 +226,7 @@ beforeEach(() => {
   db.targets = [target("github", "http", "HTTP"), target("github", "tcp", "TCP"), target("whatsapp", "tcp", "TCP", { host: "g.whatsapp.net", status: "DOWN" })];
   db.rollups = [...hourOfRollups("github-tcp"), ...hourOfRollups("github-http")];
   db.checks = [];
+  db.agents = [];
   db.calls = [];
   db.rollupError = null;
   history.__globalStatusHistory = undefined;
@@ -310,7 +351,9 @@ describe("histórico das medições: janelas gravadas e ponta viva", () => {
     const target = (await getGlobalStatusDetail("github")).targets.find((t) => t.key === "tcp")!;
     return { uptime24h: target.uptime24h, failures: target.spark ? target.spark.fail.reduce((sum, n) => sum + n, 0) : null };
   };
-  const tailQuery = () => (db.calls.find((call) => call.op === "probeCheck.findMany")!.args as { where: { at: unknown } }).where.at;
+  // A ponta viva do histórico é a consulta que filtra por uma lista de alvos.
+  const tailQuery = () =>
+    (db.calls.find((call) => call.op === "probeCheck.findMany" && typeof (call.args as { where: { targetId: unknown } }).where.targetId === "object")!.args as { where: { at: unknown } }).where.at;
 
   it("as medições ainda sem janela gravada entram pela ponta viva", async () => {
     // A janela das 10:00 fechou há 2 min 30 s e ainda não foi gravada.
@@ -445,8 +488,48 @@ describe("getGlobalStatusDetail com as medições ligadas", () => {
   });
 
   it("serviço desconhecido ou identificador vazio: nada a listar, sem erro", async () => {
-    expect(await getGlobalStatusDetail("nao-existe")).toEqual({ components: [], incidents: [], targets: [] });
-    expect(await getGlobalStatusDetail("")).toEqual({ components: [], incidents: [], targets: [] });
-    expect(await getGlobalStatusDetail(42 as never)).toEqual({ components: [], incidents: [], targets: [] });
+    const empty = { components: [], incidents: [], targets: [], vantages: null, phases: null, traceable: false };
+    expect(await getGlobalStatusDetail("nao-existe")).toEqual(empty);
+    expect(await getGlobalStatusDetail("")).toEqual(empty);
+    expect(await getGlobalStatusDetail(42 as never)).toEqual(empty);
+  });
+});
+
+describe("detalhe com o agente Windows como segundo ponto (fase 3)", () => {
+  const AGENT_ID = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+  const AGENT = `agent:${AGENT_ID}`;
+  // O relógio dos testes está parado em T.
+  const NOW = T;
+
+  it("mostra o servidor e o PC no alvo principal, com o nome do PC e a disponibilidade de 30 dias", async () => {
+    db.agents = [{ Id: AGENT_ID.toUpperCase(), Label: "PC-CLAUDIO" }];
+    const bucket = Math.floor((NOW - 60 * MIN) / (5 * MIN)) * 5 * MIN;
+    db.rollups = [
+      ...(db.rollups as RollupRow[]),
+      { targetId: "github-tcp", vantage: AGENT, bucket: new Date(bucket), samples: 10, failures: 1, p50Ms: 30, p95Ms: 40 },
+      // Janela de 20 dias atrás: só entra na disponibilidade de 30 dias.
+      { targetId: "github-tcp", vantage: AGENT, bucket: new Date(NOW - 20 * 24 * 60 * MIN), samples: 90, failures: 0, p50Ms: 30, p95Ms: 40 },
+    ];
+    db.checks = [{ targetId: "github-tcp", vantage: AGENT, at: new Date(NOW - 30_000), ok: true, latencyMs: 31, lossPct: null }];
+    const detail = await getGlobalStatusDetail("github");
+    expect(detail.vantages?.targetLabel).toBe("TCP 443");
+    const [server, pc] = detail.vantages!.rows;
+    expect(server).toMatchObject({ id: "server", label: "Servidor", server: true });
+    expect(pc).toMatchObject({ id: AGENT, label: "PC-CLAUDIO", server: false, p50Ms: 30.5 });
+    expect(pc.uptime30d).toBeCloseTo(99, 6);
+    expect(pc.uptime24h).toBeCloseTo((1 - 1 / 11) * 100, 6);
+    expect(pc.lastAt).toBe(new Date(NOW - 30_000).toISOString());
+    // As medições do PC não entram no que o servidor mostra.
+    expect(detail.targets.find((t) => t.key === "tcp")!.uptime24h).toBe(server.uptime24h);
+    expect(detail.traceable).toBe(true);
+  });
+
+  it("sem a tabela Agents fica um nome genérico; ponto que não é agente é ignorado", async () => {
+    db.checks = [
+      { targetId: "github-tcp", vantage: AGENT, at: new Date(NOW - 30_000), ok: true, latencyMs: 31, lossPct: null },
+      { targetId: "github-tcp", vantage: "agent:invalido", at: new Date(NOW - 30_000), ok: true, latencyMs: 31, lossPct: null },
+    ];
+    const rows = (await getGlobalStatusDetail("github")).vantages!.rows;
+    expect(rows.map((r) => r.label)).toEqual(["Servidor", "PC 3f2504e0"]);
   });
 });

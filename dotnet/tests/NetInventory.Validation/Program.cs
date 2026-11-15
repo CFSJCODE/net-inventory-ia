@@ -184,6 +184,53 @@ Check(await store.RevokeAsync(agentId) && !await store.AuthenticateAsync(agentId
 try { await store.IngestAsync(Sample(agentId, now), credential.Token, now); Check(false, "revogação também na transação"); } catch (UnauthorizedAccessException) { checks++; }
 try { await store.CreateInvitationAsync("Revoked agent", 5, agentId); Check(false, "agente revogado não recebe convite de recadastro"); } catch (ArgumentException) { checks++; }
 
+// Painel "Status global", fase 3: medições do agente gravadas no banco canônico com o esquema real do motor.
+{
+    var probeStore = new InventoryStore(Path.Combine(runDirectory, "probe-store"));
+    Check((await probeStore.ListProbeTargetsAsync()).Length == 0, "sem tabelas do motor o agente não recebe alvos");
+    var emptyBatch = new AgentProbeBatch(agentId, [new AgentProbeResult("t-http", now, true, 10)]);
+    Check((await probeStore.IngestProbeResultsAsync(emptyBatch, now)).Accepted == 0, "sem tabelas do motor nada é gravado");
+    using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = probeStore.DatabasePath }.ToString()))
+    {
+        db.Open();
+        foreach (var migration in Directory.GetDirectories(Path.Combine(root, "..", "prisma", "migrations")).Where(d => Path.GetFileName(d).Contains("global_status", StringComparison.Ordinal)).Order(StringComparer.Ordinal))
+        { using var apply = db.CreateCommand(); apply.CommandText = File.ReadAllText(Path.Combine(migration, "migration.sql")); apply.ExecuteNonQuery(); }
+        using var seed = db.CreateCommand();
+        seed.CommandText = """
+            INSERT INTO "StatusService" ("id","slug","name","category") VALUES ('s1','github','GitHub','DEV');
+            INSERT INTO "ProbeTarget" ("id","serviceId","key","kind","host","url","port","intervalSec","enabled") VALUES
+              ('t-http','s1','http','HTTP','github.com','https://github.com/robots.txt',NULL,60,1),
+              ('t-tcp','s1','tcp','TCP','github.com',NULL,443,30,1),
+              ('t-tls','s1','tls','TLS','github.com',NULL,443,21600,1),
+              ('t-off','s1','ping','ICMP','github.com',NULL,NULL,60,0);
+            """;
+        seed.ExecuteNonQuery();
+    }
+    var probeTargets = await probeStore.ListProbeTargetsAsync();
+    Check(probeTargets.Select(t => t.Id).Order(StringComparer.Ordinal).SequenceEqual(["t-http", "t-tcp"]), "agente recebe só alvos ativos que sabe medir (sem TLS)");
+    Check(probeTargets.First(t => t.Id == "t-tcp") is { Port: 443, IntervalSec: 30, Url: null }, "alvo TCP com porta e intervalo");
+    Check(ProbeValidation.Validate(new AgentProbeBatch(agentId, [new AgentProbeResult("t-http", now, true, LatencyMs: -1)])) is not null, "tempo negativo recusado");
+    Check(ProbeValidation.Validate(new AgentProbeBatch(agentId, [new AgentProbeResult("t-http'--", now, true)])) is not null, "id de alvo com aspas recusado");
+    Check(ProbeValidation.Validate(new AgentProbeBatch(agentId, [new AgentProbeResult("t-http", now, false, Error: "linha\nquebrada")])) is not null, "erro com controle recusado");
+    Check(ProbeValidation.Validate(new AgentProbeBatch(agentId, Enumerable.Repeat(new AgentProbeResult("t-http", now, true), ProbeValidation.MaxResults + 1).ToArray())) is not null, "lote grande demais recusado");
+    var probeBatch = new AgentProbeBatch(agentId, [
+        new AgentProbeResult("t-http", now.AddSeconds(-30), true, 120.5, 200, 3.2, 14.1, 103.2, 120.5),
+        new AgentProbeResult("t-tcp", now.AddSeconds(-20), false, Error: "tempo esgotado na conexão"),
+        new AgentProbeResult("t-tcp", now.AddMinutes(-20), true, 15),
+        new AgentProbeResult("removido", now, true, 15)]);
+    Check(ProbeValidation.Validate(probeBatch) is null, "lote válido");
+    var ingested = await probeStore.IngestProbeResultsAsync(probeBatch, now);
+    Check(ingested is { Accepted: 2, Ignored: 2 }, "medição velha e alvo removido ignorados");
+    using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = probeStore.DatabasePath }.ToString()))
+    {
+        db.Open(); using var read = db.CreateCommand();
+        read.CommandText = "SELECT \"vantage\", typeof(\"at\"), \"at\", \"ok\", \"httpStatus\", \"ttfbMs\" FROM \"ProbeCheck\" WHERE \"targetId\"='t-http'";
+        using var row = read.ExecuteReader(); Check(row.Read(), "medição gravada");
+        Check(row.GetString(0) == "agent:" + agentId.ToString("D") && row.GetString(1) == "integer" && row.GetInt64(2) == now.AddSeconds(-30).ToUnixTimeMilliseconds(), "ponto de medição e data no formato do Prisma");
+        Check(row.GetInt64(3) == 1 && row.GetInt32(4) == 200 && Math.Abs(row.GetDouble(5) - 103.2) < 1e-9, "campos da medição preservados");
+    }
+}
+
 using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var port = ((IPEndPoint)listener.LocalEndpoint).Port; listener.Stop();
 var address = new Uri($"http://127.0.0.1:{port}/");
 var admin = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));

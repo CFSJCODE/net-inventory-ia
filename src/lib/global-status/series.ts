@@ -129,3 +129,53 @@ export function mainLatencyTarget<T extends { kind: string }>(targets: readonly 
   }
   return targets[0] ?? null;
 }
+
+/** Tempos das etapas do HTTP ao longo do dia: a mediana de cada etapa por passo, das medições que deram certo. */
+export interface PhaseSeries {
+  start: string;
+  stepMin: number;
+  dnsMs: (number | null)[];
+  connectMs: (number | null)[];
+  tlsMs: (number | null)[];
+  ttfbMs: (number | null)[];
+}
+
+export interface PhaseCheck {
+  at: Date;
+  ok: boolean;
+  dnsMs: number | null;
+  connectMs: number | null;
+  tlsMs: number | null;
+  ttfbMs: number | null;
+}
+
+/** Mesma grade fixa de `buildSeries`; null quando nenhum passo tem medição ok. */
+export function buildPhaseSeries(checks: readonly PhaseCheck[], options: { end: Date; hours: number; stepMin: number }): PhaseSeries | null {
+  const stepMs = options.stepMin * 60_000;
+  const steps = Math.max(0, Math.round((options.hours * 60) / options.stepMin));
+  const gridEnd = Math.ceil(options.end.getTime() / stepMs) * stepMs;
+  const start = gridEnd - steps * stepMs;
+  const keys = ["dnsMs", "connectMs", "tlsMs", "ttfbMs"] as const;
+  const values = Object.fromEntries(keys.map((k) => [k, Array.from({ length: steps }, () => [] as number[])])) as Record<(typeof keys)[number], number[][]>;
+  let any = false;
+  for (const c of checks) {
+    if (!c.ok) continue;
+    const step = Math.floor((c.at.getTime() - start) / stepMs);
+    if (!(step >= 0 && step < steps)) continue;
+    for (const k of keys) {
+      const v = c[k];
+      if (v !== null && Number.isFinite(v)) {
+        values[k][step].push(v);
+        any = true;
+      }
+    }
+  }
+  if (!any) return null;
+  const series = (k: (typeof keys)[number]) => values[k].map((list) => round1(median(list)));
+  return { start: new Date(start).toISOString(), stepMin: options.stepMin, dnsMs: series("dnsMs"), connectMs: series("connectMs"), tlsMs: series("tlsMs"), ttfbMs: series("ttfbMs") };
+}
+
+/** Disponibilidade a partir das somas de amostras e falhas (o groupBy dos 30 dias de janelas). */
+export function uptimeFromTotals(samples: number | null | undefined, failures: number | null | undefined): number | null {
+  return uptimePct(samples ?? 0, failures ?? 0);
+}

@@ -1013,18 +1013,40 @@ export interface RollupRow extends BucketStats {
 }
 
 /** Resume as medições das janelas pedidas: uma linha por alvo e janela com amostras. */
-export function buildRollups(checks: readonly (CheckSample & { targetId: string; at: Date })[], windows: readonly number[]): RollupRow[] {
+export function buildRollups(checks: readonly (CheckSample & { targetId: string; at: Date; vantage?: string })[], windows: readonly number[]): RollupRow[] {
   const wanted = new Set(windows);
-  const groups = new Map<string, { targetId: string; bucket: number; samples: CheckSample[] }>();
+  const groups = new Map<string, { targetId: string; vantage: string; bucket: number; samples: CheckSample[] }>();
   for (const c of checks) {
     const bucket = bucketStart(c.at.getTime());
     if (!wanted.has(bucket)) continue;
-    const key = `${bucket}|${c.targetId}`;
-    const group = groups.get(key) ?? { targetId: c.targetId, bucket, samples: [] };
+    // Sem ponto de medição informado, a medição é do servidor (as chamadas da fase 2 não mandam o campo).
+    const vantage = c.vantage ?? SERVER_VANTAGE;
+    const key = `${bucket}|${vantage}|${c.targetId}`;
+    const group = groups.get(key) ?? { targetId: c.targetId, vantage, bucket, samples: [] };
     group.samples.push({ ok: c.ok, latencyMs: c.latencyMs, lossPct: c.lossPct });
     groups.set(key, group);
   }
-  return Array.from(groups.values(), (g) => ({ targetId: g.targetId, vantage: SERVER_VANTAGE, bucket: new Date(g.bucket), ...aggregateChecks(g.samples) }));
+  return Array.from(groups.values(), (g) => ({ targetId: g.targetId, vantage: g.vantage, bucket: new Date(g.bucket), ...aggregateChecks(g.samples) }));
+}
+
+/** Prefixo do ponto de medição dos agentes Windows em ProbeCheck.vantage ("agent:<id do agente>"), gravado pelo host .NET. */
+export const AGENT_VANTAGE_PREFIX = "agent:";
+
+/** Quantas janelas fechadas os agentes têm resumidas de novo a cada passada: o lote deles chega até 1 min depois e pode atrasar alguns minutos. */
+export const AGENT_ROLLUP_WINDOWS = 3;
+
+/** Janelas fechadas mais recentes a resumir de novo para os agentes, da mais antiga para a mais nova. */
+export function agentRollupWindows(now: number, count = AGENT_ROLLUP_WINDOWS): number[] {
+  // Mesmo critério de janela fechada do resumo do servidor (closedWindows): fim da janela até agora menos a folga.
+  const lastClosed = bucketStart(now - ROLLUP_SETTLE_MS) - BUCKET_MS;
+  return Array.from({ length: count }, (_, i) => lastClosed - (count - 1 - i) * BUCKET_MS);
+}
+
+/** Id do agente de um ponto de medição, ou null quando é o servidor (ou um valor que não é de agente). */
+export function agentIdOf(vantage: string): string | null {
+  if (!vantage.startsWith(AGENT_VANTAGE_PREFIX)) return null;
+  const id = vantage.slice(AGENT_VANTAGE_PREFIX.length);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id.toLowerCase() : null;
 }
 
 /** Linha de base de cada alvo: as medianas (p50) das suas janelas, na ordem recebida. */

@@ -4,10 +4,11 @@ import { requirePermission, requireSession } from "@/lib/auth/server";
 import { prisma } from "@/lib/prisma";
 import { STATUS_CATALOG } from "@/lib/global-status/catalog";
 import { checkGlobalStatus, ensureCatalogSeeded } from "@/lib/global-status/collector";
-import { SERVER_VANTAGE, isStale, probesEnabled, servedMeasure, sortByCatalog } from "@/lib/global-status/probe-logic";
+import { AGENT_VANTAGE_PREFIX, SERVER_VANTAGE, agentIdOf, isStale, probesEnabled, servedMeasure, sortByCatalog } from "@/lib/global-status/probe-logic";
 import { getLocalConnectivity, runProbesNow } from "@/lib/global-status/probe-runner";
 import { defaultGateway } from "@/lib/global-status/probes";
-import { buildSeries, latencySummary, mainLatencyTarget, tailPoints, uptimeOf, type RollupPoint, type SparkSeries } from "@/lib/global-status/series";
+import { buildPhaseSeries, buildSeries, latencySummary, mainLatencyTarget, tailPoints, uptimeFromTotals, uptimeOf, type PhaseSeries, type RollupPoint, type SparkSeries } from "@/lib/global-status/series";
+import { isTraceableHost, traceRoute, type TraceResult } from "@/lib/global-status/traceroute";
 import { BUCKET_MS, bucketStart } from "@/lib/global-status/stats";
 import { AUTO_GATEWAY, STATUS_SEVERITY, targetAddress, targetLabel, type LocalConnectivity, type ProbeKind, type ServiceStatus, type TargetStatus } from "@/lib/global-status/types";
 
@@ -96,6 +97,8 @@ export interface StatusTargetRow {
   intervalSec: number;
   /** Disponibilidade nas últimas 24 h, em %; null sem amostras. */
   uptime24h: number | null;
+  /** Disponibilidade medida pelo servidor nos últimos 30 dias, em %; null sem amostras. */
+  uptime30d: number | null;
   /** Mediana e p95 da latência nas últimas 24 h, em ms. */
   p50Ms: number | null;
   p95Ms: number | null;
@@ -309,17 +312,140 @@ export async function getGlobalStatus(): Promise<GlobalStatusData> {
   };
 }
 
+/** Um ponto de medição (o servidor ou um agente Windows) no alvo principal do serviço. */
+export interface StatusVantageRow {
+  /** "server" ou "agent:<id>". */
+  id: string;
+  /** "Servidor" ou o nome do PC cadastrado. */
+  label: string;
+  server: boolean;
+  /** Latência das últimas 24 h, em passos de 15 min; null sem medições. */
+  spark: SparkSeries | null;
+  uptime24h: number | null;
+  uptime30d: number | null;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  /** Medição mais nova deste ponto (ISO 8601). */
+  lastAt: string | null;
+}
+
 export interface StatusServiceDetail {
   components: StatusComponentRow[];
   /** Abertos e os resolvidos dos últimos 30 dias, mais recentes primeiro. */
   incidents: StatusIncidentRow[];
   /** Medições próprias do serviço, na ordem do catálogo. */
   targets: StatusTargetRow[];
+  /** Alvo principal medido de cada ponto (servidor primeiro, depois os agentes com medições nas últimas 24 h). */
+  vantages: { targetLabel: string; rows: StatusVantageRow[] } | null;
+  /** Etapas do HTTP medido pelo servidor nas últimas 24 h, em passos de 30 min. */
+  phases: PhaseSeries | null;
+  /** true = o serviço tem um destino que o traceroute sob demanda aceita. */
+  traceable: boolean;
+}
+
+const EMPTY_DETAIL: StatusServiceDetail = { components: [], incidents: [], targets: [], vantages: null, phases: null, traceable: false };
+const PHASE_STEP_MIN = 30;
+
+/** Nome dos agentes pelo id, da tabela Agents do host .NET (só existe no banco canônico; fora dele, nomes genéricos). */
+async function agentLabels(ids: string[]): Promise<Map<string, string>> {
+  const labels = new Map<string, string>();
+  if (!ids.length) return labels;
+  try {
+    const rows = await prisma.$queryRawUnsafe<{ Id: string; Label: string }[]>(
+      `SELECT "Id", "Label" FROM "Agents" WHERE lower("Id") IN (${ids.map(() => "?").join(",")})`,
+      ...ids,
+    );
+    for (const row of rows) labels.set(String(row.Id).toLowerCase(), String(row.Label));
+  } catch {
+    // Sem a tabela do host .NET (instalação só com o motor): fica o nome genérico.
+  }
+  return labels;
+}
+
+/** Destino do traceroute de um serviço: o host do alvo TCP, ou o do HTTP; nunca o gateway nem o DNS do sistema. */
+function traceHost(targets: readonly { kind: string; host: string; url: string | null }[]): string | null {
+  for (const kind of ["TCP", "HTTP", "ICMP"]) {
+    const t = targets.find((x) => x.kind === kind);
+    if (!t) continue;
+    let host = t.host;
+    if (kind === "HTTP" && t.url) {
+      try {
+        host = new URL(t.url).hostname;
+      } catch {
+        continue;
+      }
+    }
+    if (isTraceableHost(host)) return host;
+  }
+  return null;
+}
+
+/** Alvo principal medido por ponto: o servidor (do histórico já carregado) e os agentes, cada um com a sua ponta viva. */
+async function loadVantages(main: { id: string }, serverPoints: RollupPoint[], end: Date): Promise<StatusVantageRow[]> {
+  const now = end.getTime();
+  const [agentRollups, totals, lastServer] = await Promise.all([
+    prisma.probeRollup.findMany({
+      where: { targetId: main.id, vantage: { startsWith: AGENT_VANTAGE_PREFIX }, bucket: { gte: new Date(now - DAY_MS) } },
+      select: { vantage: true, bucket: true, samples: true, failures: true, p50Ms: true, p95Ms: true },
+    }),
+    prisma.probeRollup.groupBy({ by: ["vantage"], where: { targetId: main.id, bucket: { gte: new Date(now - 30 * DAY_MS) } }, _sum: { samples: true, failures: true } }),
+    prisma.probeCheck.findFirst({ where: { targetId: main.id, vantage: SERVER_VANTAGE }, orderBy: { at: "desc" }, select: { at: true } }),
+  ]);
+  const recentAgents = await prisma.probeCheck.groupBy({
+    by: ["vantage"],
+    where: { targetId: main.id, vantage: { startsWith: AGENT_VANTAGE_PREFIX }, at: { gte: new Date(now - DAY_MS) } },
+    _max: { at: true },
+  });
+  const byVantage = new Map<string, RollupPoint[]>();
+  for (const { vantage, ...point } of agentRollups) {
+    const list = byVantage.get(vantage);
+    if (list) list.push(point);
+    else byVantage.set(vantage, [point]);
+  }
+  const lastAt = new Map(recentAgents.map((r) => [r.vantage, r._max.at]));
+  const vantages = [...new Set([...byVantage.keys(), ...lastAt.keys()])].filter((v) => agentIdOf(v) !== null).sort();
+  const labels = await agentLabels(vantages.map((v) => agentIdOf(v)!));
+  const total = new Map(totals.map((r) => [r.vantage, r._sum]));
+
+  const rows: StatusVantageRow[] = [
+    {
+      id: SERVER_VANTAGE,
+      label: "Servidor",
+      server: true,
+      spark: sparkOf(serverPoints, end),
+      uptime24h: uptimeOf(serverPoints),
+      uptime30d: uptimeFromTotals(total.get(SERVER_VANTAGE)?.samples, total.get(SERVER_VANTAGE)?.failures),
+      ...latencySummary(serverPoints),
+      lastAt: lastServer?.at.toISOString() ?? null,
+    },
+  ];
+  for (const vantage of vantages) {
+    const stored = byVantage.get(vantage) ?? [];
+    const tailStart = liveTailStart(stored.map((p) => p.bucket.getTime()), now);
+    const checks = await prisma.probeCheck.findMany({
+      where: { targetId: main.id, vantage, at: { gte: new Date(tailStart), lte: end } },
+      select: { targetId: true, at: true, ok: true, latencyMs: true, lossPct: true },
+    });
+    const points = [...stored.filter((p) => p.bucket.getTime() < tailStart || p.bucket.getTime() > now), ...(tailPoints(checks).get(main.id) ?? [])];
+    const id = agentIdOf(vantage)!;
+    const sum = total.get(vantage);
+    rows.push({
+      id: vantage,
+      label: labels.get(id) ?? `PC ${id.slice(0, 8)}`,
+      server: false,
+      spark: sparkOf(points, end),
+      uptime24h: uptimeOf(points),
+      uptime30d: uptimeFromTotals(sum?.samples, sum?.failures),
+      ...latencySummary(points),
+      lastAt: lastAt.get(vantage)?.toISOString() ?? null,
+    });
+  }
+  return rows;
 }
 
 export async function getGlobalStatusDetail(slug: string): Promise<StatusServiceDetail> {
   await requireSession();
-  if (typeof slug !== "string" || !slug) return { components: [], incidents: [], targets: [] };
+  if (typeof slug !== "string" || !slug) return EMPTY_DETAIL;
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const service = await prisma.statusService.findUnique({
     where: { slug },
@@ -333,7 +459,7 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
       targets: { where: { enabled: true } },
     },
   });
-  if (!service) return { components: [], incidents: [], targets: [] };
+  if (!service) return EMPTY_DETAIL;
 
   // Com as medições desligadas não há alvos a listar: o que está gravado neles é de antes.
   const measuring = probesEnabled(process.env.GLOBAL_STATUS_PROBES);
@@ -345,6 +471,26 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
     // A medição mais nova de cada alvo: um serviço tem dois alvos, e cada busca usa o índice (targetId, at).
     Promise.all(targets.map((t) => prisma.probeCheck.findFirst({ where: { targetId: t.id, vantage: SERVER_VANTAGE }, orderBy: { at: "desc" } }))),
   ]);
+  const end = history?.end ?? new Date();
+  const main = mainLatencyTarget(targets);
+  const http = targets.find((t) => t.kind === "HTTP");
+  const [vantages, phaseChecks, totals30d] = await Promise.all([
+    main ? loadVantages(main, history?.points.get(main.id) ?? [], end) : null,
+    http
+      ? prisma.probeCheck.findMany({
+          where: { targetId: http.id, vantage: SERVER_VANTAGE, at: { gte: new Date(end.getTime() - DAY_MS) } },
+          select: { at: true, ok: true, dnsMs: true, connectMs: true, tlsMs: true, ttfbMs: true },
+        })
+      : null,
+    targets.length
+      ? prisma.probeRollup.groupBy({
+          by: ["targetId"],
+          where: { targetId: { in: targets.map((t) => t.id) }, vantage: SERVER_VANTAGE, bucket: { gte: new Date(end.getTime() - 30 * DAY_MS) } },
+          _sum: { samples: true, failures: true },
+        })
+      : [],
+  ]);
+  const uptime30d = new Map(totals30d.map((r) => [r.targetId, uptimeFromTotals(r._sum.samples, r._sum.failures)]));
 
   return {
     components: service.components.map((c) => ({ name: c.name, groupName: c.groupName, status: c.status as ServiceStatus })),
@@ -365,6 +511,7 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
         lastError: t.lastError,
         intervalSec: t.intervalSec,
         uptime24h: uptimeOf(points),
+        uptime30d: uptime30d.get(t.id) ?? null,
         ...latencySummary(points),
         last: last && {
           at: last.at.toISOString(),
@@ -382,7 +529,19 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
         spark: history ? sparkOf(points, history.end) : null,
       };
     }),
+    vantages: main && vantages ? { targetLabel: targetLabel({ kind: main.kind as ProbeKind, port: main.port }), rows: vantages } : null,
+    phases: phaseChecks ? buildPhaseSeries(phaseChecks, { end, hours: SPARK_HOURS, stepMin: PHASE_STEP_MIN }) : null,
+    traceable: measuring && traceHost(targets) !== null,
   };
+}
+
+/** Traceroute sob demanda do servidor até o destino do serviço (não fica gravado; a rota com ASN e cabo é a fase 5). */
+export async function traceServiceRoute(slug: string): Promise<TraceResult> {
+  await requirePermission("network.operate");
+  const service = typeof slug === "string" && slug ? await prisma.statusService.findUnique({ where: { slug }, include: { targets: { where: { enabled: true } } } }) : null;
+  const host = service ? traceHost(service.targets) : null;
+  if (!host) return { ok: false, host: "", tool: null, hops: [], reached: false, error: "serviço sem destino para traceroute" };
+  return traceRoute(host);
 }
 
 /** Consulta todas as fontes oficiais e mede todos os alvos agora, ignorando intervalos, agenda e cache. */

@@ -4,6 +4,7 @@ import { mapWithConcurrency } from "@/lib/network/concurrency";
 import { STATUS_CATALOG } from "./catalog";
 import { ensureCatalogSeeded } from "./collector";
 import {
+  AGENT_VANTAGE_PREFIX,
   BASELINE_REFRESH_MS,
   BASELINE_WINDOW_MS,
   CLEARED_TARGET_DATA,
@@ -11,6 +12,7 @@ import {
   SERVER_VANTAGE,
   TARGET_CACHE_MS,
   advanceAgenda,
+  agentRollupWindows,
   buildRollups,
   cleanupCutoffs,
   clearedServiceData,
@@ -410,6 +412,10 @@ async function maintain(r: RunnerState): Promise<void> {
       const message = `[global-status] falha ao resumir as janelas de 5 min: ${errorText(err)}`;
       report(r, message, () => console.warn(message));
     });
+    await rollUpAgents(now).catch((err) => {
+      const message = `[global-status] falha ao resumir as medições dos agentes: ${errorText(err)}`;
+      report(r, message, () => console.warn(message));
+    });
   }
   if (due.cleanup) {
     r.cleanupAt = now;
@@ -452,6 +458,28 @@ async function rollUp(r: RunnerState, now: number): Promise<void> {
     );
   });
   r.lastRolled = plan.lastRolled;
+}
+
+/**
+ * Resumo dos agentes Windows (fase 3): as últimas janelas fechadas são resumidas de novo a cada passada,
+ * porque o lote do agente chega até um minuto depois da medição e pode atrasar com a rede do PC.
+ * O upsert deixa a passada repetida sem efeito quando nada mudou.
+ */
+async function rollUpAgents(now: number): Promise<void> {
+  const windows = agentRollupWindows(now);
+  await serialized(async () => {
+    const checks = await prisma.probeCheck.findMany({
+      where: { vantage: { startsWith: AGENT_VANTAGE_PREFIX }, at: { gte: new Date(windows[0]), lt: new Date(windows[windows.length - 1] + BUCKET_MS) } },
+      select: { targetId: true, vantage: true, at: true, ok: true, latencyMs: true, lossPct: true },
+    });
+    const rows = buildRollups(checks, windows);
+    if (!rows.length) return;
+    await prisma.$transaction(
+      rows.map(({ targetId, vantage, bucket, ...stats }) =>
+        prisma.probeRollup.upsert({ where: { targetId_vantage_bucket: { targetId, vantage, bucket } }, create: { targetId, vantage, bucket, ...stats }, update: stats }),
+      ),
+    );
+  });
 }
 
 /** Apaga as medições cruas com mais de 48 h e as janelas com mais de 30 dias. */
