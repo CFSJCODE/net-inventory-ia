@@ -32,7 +32,7 @@ public sealed partial class InventoryStore
             while (reader.Read())
                 targets.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3),
                     reader.IsDBNull(4) ? null : reader.GetInt32(4), reader.GetInt32(5)));
-            return targets.ToArray();
+            return [.. targets];
         }
         finally { gate.Release(); }
     }

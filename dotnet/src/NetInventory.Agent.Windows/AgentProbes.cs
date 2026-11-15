@@ -129,17 +129,20 @@ public static class AgentProbes
         for (var i = 0; i < PingCount; i++)
         {
             cancellation.ThrowIfCancellationRequested();
-            try
-            {
-                var reply = await ping.SendPingAsync(host, TimeSpan.FromSeconds(1), cancellationToken: cancellation);
-                if (reply.Status == IPStatus.Success) rtts.Add(reply.RoundtripTime);
-            }
-            catch (PingException) { }
+            var reply = await SendPing(ping, host, cancellation);
+            if (reply?.Status == IPStatus.Success) rtts.Add(reply.RoundtripTime);
             if (i < PingCount - 1) await Task.Delay(200, cancellation);
         }
         var loss = Math.Round(100.0 * (PingCount - rtts.Count) / PingCount, 1);
         if (rtts.Count == 0) return new(target.Id, at, false, LossPct: loss, Error: "sem resposta ao ping");
         return new(target.Id, at, true, Math.Round(rtts.Average(), 3), LossPct: loss, JitterMs: Math.Round(Jitter(rtts), 3));
+    }
+
+    /// <summary>Um pacote; erro de envio (rede sem rota, nome que não resolve) volta null e conta como perdido, como no ping do servidor.</summary>
+    private static async Task<PingReply?> SendPing(Ping ping, string host, CancellationToken cancellation)
+    {
+        try { return await ping.SendPingAsync(host, TimeSpan.FromSeconds(1), cancellationToken: cancellation); }
+        catch (PingException) { return null; }
     }
 
     private static async Task<AgentProbeResult> Dns(AgentProbeTarget target, DateTimeOffset at, string server, string name, CancellationToken cancellation)
@@ -193,7 +196,7 @@ public static class AgentProbes
         buffer.AddRange(header.ToArray());
         foreach (var label in labels) { var bytes = Encoding.ASCII.GetBytes(label); buffer.Add((byte)bytes.Length); buffer.AddRange(bytes); }
         buffer.AddRange([0, 0, 1, 0, 1]); // fim do nome, QTYPE=A, QCLASS=IN
-        return buffer.ToArray();
+        return [.. buffer];
     }
 
     /// <summary>Lê o cabeçalho da resposta: null quando não é a resposta desta consulta.</summary>
@@ -233,75 +236,7 @@ public static class AgentProbes
     private static double Ms(TimeSpan elapsed) => Math.Round(elapsed.TotalMilliseconds, 1);
     private static string Short(string text)
     {
-        var clean = new string(text.Where(c => !char.IsControl(c)).ToArray()).Trim();
+        var clean = new string([.. text.Where(c => !char.IsControl(c))]).Trim();
         return clean.Length <= ProbeValidation.MaxErrorLength ? clean : clean[..ProbeValidation.MaxErrorLength];
-    }
-}
-
-/// <summary>Agenda as medições: lista de alvos renovada a cada 10 min, cada alvo no seu intervalo, um lote por minuto.</summary>
-internal sealed class ProbeWorker(AgentRunner runner, IConfiguration config, ILogger<ProbeWorker> logger) : BackgroundService
-{
-    private static readonly TimeSpan TargetsRefresh = TimeSpan.FromMinutes(10);
-    private const int MaxParallel = 8;
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        if (!config.GetValue("Agent:StatusProbes", true)) return;
-        AgentProbeTarget[] targets = [];
-        DateTimeOffset targetsAt = DateTimeOffset.MinValue;
-        var due = new Dictionary<string, DateTimeOffset>();
-        var pending = new List<AgentProbeResult>();
-        string? lastProblem = null;
-        // Registra só a mudança de situação, para não encher o log do Windows a cada minuto.
-        void Problem(string? problem)
-        {
-            if (problem == lastProblem) return;
-            if (problem is null) logger.LogInformation("Medições do painel de status enviadas ao servidor.");
-            else logger.LogWarning("Medições do painel de status não enviadas: {Problem}", problem);
-            lastProblem = problem;
-        }
-        // Espera o primeiro envio do inventário: é ele que confirma o servidor e a credencial.
-        await Task.Delay(TimeSpan.FromSeconds(20), stoppingToken);
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            var started = DateTimeOffset.UtcNow;
-            if (runner.Connection is { } connection)
-            {
-                using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = connection.Server, Timeout = TimeSpan.FromSeconds(15) };
-                http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", connection.Token);
-                try
-                {
-                    if (started - targetsAt > TargetsRefresh || targets.Length == 0 && started - targetsAt > TimeSpan.FromMinutes(1))
-                    {
-                        targets = await http.GetFromJsonAsync<AgentProbeTarget[]>($"api/v1/agents/{connection.AgentId}/probe-targets", AgentState.Json, stoppingToken) ?? [];
-                        targetsAt = started;
-                    }
-                    var now = DateTimeOffset.UtcNow;
-                    var batch = targets.Where(t => !due.TryGetValue(t.Id, out var next) || next <= now).ToArray();
-                    using var gate = new SemaphoreSlim(MaxParallel);
-                    var results = await Task.WhenAll(batch.Select(async target =>
-                    {
-                        await gate.WaitAsync(stoppingToken);
-                        try { return await AgentProbes.Run(target, stoppingToken); } finally { gate.Release(); }
-                    }));
-                    foreach (var target in batch) due[target.Id] = now.AddSeconds(Math.Clamp(target.IntervalSec, 30, 3600));
-                    pending.AddRange(results);
-                    pending.RemoveAll(r => r.At < DateTimeOffset.UtcNow - ProbeValidation.MaxAge);
-                    if (pending.Count > ProbeValidation.MaxResults) pending.RemoveRange(0, pending.Count - ProbeValidation.MaxResults);
-                    if (pending.Count > 0)
-                    {
-                        using var response = await http.PostAsJsonAsync($"api/v1/agents/{connection.AgentId}/probe-results", new AgentProbeBatch(connection.AgentId, pending.ToArray()), AgentState.Json, stoppingToken);
-                        if (response.IsSuccessStatusCode) { pending.Clear(); Problem(null); }
-                        else Problem($"HTTP {(int)response.StatusCode}");
-                    }
-                }
-                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException && !stoppingToken.IsCancellationRequested)
-                {
-                    Problem("sem conexão com o servidor");
-                }
-            }
-            var wait = TimeSpan.FromSeconds(60) - (DateTimeOffset.UtcNow - started);
-            await Task.Delay(wait > TimeSpan.FromSeconds(5) ? wait : TimeSpan.FromSeconds(5), stoppingToken);
-        }
     }
 }
