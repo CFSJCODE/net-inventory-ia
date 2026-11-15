@@ -111,6 +111,24 @@ async function ageChecks(minutes: number): Promise<void> {
   await db.$transaction(checks.map((c) => db.probeCheck.update({ where: { id: c.id }, data: { at: new Date(c.at.getTime() - minutes * 60_000) } })));
 }
 
+/**
+ * Recoloca as medições gravadas no tempo, como numa parada curta do servidor: a mais nova de cada alvo
+ * fica a `newestMinutes` de agora e as anteriores a 30 s uma da outra. Com a mais nova a 9,2 min, só
+ * duas das medições de antes da parada ainda estão dentro dos 10 min que contam como recentes.
+ */
+async function spaceChecks(newestMinutes: number): Promise<void> {
+  const now = Date.now();
+  const checks = await db.probeCheck.findMany({ select: { id: true, targetId: true }, orderBy: [{ at: "desc" }, { id: "desc" }] });
+  const older = new Map<string, number>();
+  await db.$transaction(
+    checks.map((c) => {
+      const position = older.get(c.targetId) ?? 0;
+      older.set(c.targetId, position + 1);
+      return db.probeCheck.update({ where: { id: c.id }, data: { at: new Date(now - newestMinutes * 60_000 - position * 30_000) } });
+    }),
+  );
+}
+
 /** `count` passos seguidos medindo todos os alvos. */
 async function rounds(count: number): Promise<void> {
   for (let i = 0; i < count; i++) await runProbeTick({ force: true });
@@ -385,7 +403,7 @@ describe("medições ligadas", () => {
       link = "fora";
       await rounds(1);
       await page.see();
-      // O banco guarda o GitHub como pausado; as últimas medições dele são as de antes da queda.
+      // O banco guarda o GitHub como pausado; as últimas medições dele são as de antes da queda, e voltam como as recentes.
       restart();
       await ageChecks(30);
       await rounds(1);
@@ -394,7 +412,8 @@ describe("medições ligadas", () => {
       await rounds(1);
       await page.see();
 
-      expect(await githubAfterReturn(page)).toEqual([STILL_DOWN, STILL_DOWN, "DOWN HTTP: 3 falhas seguidas"]);
+      // Os mesmos cards do caso sem reinício.
+      expect(await githubAfterReturn(page)).toEqual([STILL_DOWN, STILL_DOWN, STILL_DOWN]);
       expect(page.notices).toEqual(ONLY_THE_CONNECTION);
     });
 
@@ -408,7 +427,7 @@ describe("medições ligadas", () => {
       await ageChecks(30);
       link = "ok";
 
-      expect(await githubAfterReturn(page)).toEqual([STILL_DOWN, STILL_DOWN, "DOWN HTTP: 3 falhas seguidas"]);
+      expect(await githubAfterReturn(page)).toEqual([STILL_DOWN, STILL_DOWN, STILL_DOWN]);
       expect(page.notices).toEqual(ONLY_THE_CONNECTION);
     });
 
@@ -429,7 +448,7 @@ describe("medições ligadas", () => {
     });
   });
 
-  describe("veredito de antes da pausa refeito ao reiniciar: valem as medições mais novas do alvo, falhas ou não", () => {
+  describe("medições recentes do alvo pausado ao reiniciar: voltam as últimas dele, falhas ou não, da mais nova para a mais velha", () => {
     let githubHttp: "ok" | "503";
 
     beforeEach(async () => {
@@ -446,11 +465,11 @@ describe("medições ligadas", () => {
       expect(await page.github()).toBe(STILL_DOWN);
       await outageWithRestart(page);
 
-      expect(await githubAfterReturn(page)).toEqual([STILL_DOWN, STILL_DOWN, "DOWN HTTP: 3 falhas seguidas"]);
+      expect(await githubAfterReturn(page)).toEqual([STILL_DOWN, STILL_DOWN, STILL_DOWN]);
       expect(page.notices).toEqual(ONLY_THE_CONNECTION);
     });
 
-    it("o GitHub tinha caído e já estava normal de novo: a queda antiga não vira o veredito de antes da pausa", async () => {
+    it("o GitHub tinha caído e já estava normal de novo: a queda antiga não conta", async () => {
       const page = openPage();
       githubHttp = "503";
       await rounds(3);
@@ -465,13 +484,47 @@ describe("medições ligadas", () => {
       expect(await page.github()).toBe("OK null");
       expect(page.notices).toEqual(ONLY_THE_CONNECTION);
     });
+
+    it("o GitHub tinha acabado de voltar (3 falhas e depois 2 respostas): as falhas de depois da volta contam do zero", async () => {
+      const page = openPage();
+      githubHttp = "503";
+      await rounds(3);
+      githubHttp = "ok";
+      await rounds(2);
+      expect(await page.github()).toBe("OK null");
+      await outageWithRestart(page);
+      githubHttp = "503";
+
+      // Com as últimas medições de trás para a frente, a primeira falha já seria a quarta seguida.
+      expect(await githubAfterReturn(page)).toEqual(["OK null", "DEGRADED HTTP: 2 falhas seguidas", "DOWN HTTP: 3 falhas seguidas"]);
+      expect(page.notices).toEqual([...ONLY_THE_CONNECTION, "GitHub: degradado", "GitHub: fora do ar"]);
+    });
+
+    it("o GitHub tinha acabado de cair (5 respostas e depois 3 falhas): segue fora do ar, e as falhas de depois da volta continuam a contagem", async () => {
+      const page = openPage();
+      await rounds(5);
+      githubHttp = "503";
+      await rounds(3);
+      expect(await page.github()).toBe("DOWN HTTP: 3 falhas seguidas");
+      await outageWithRestart(page);
+
+      // As 5 últimas são 3 falhas e 2 respostas: com as 5 mais velhas, ou de trás para a frente, a primeira falha seria isolada.
+      expect(await githubAfterReturn(page)).toEqual(["DOWN HTTP: 4 falhas seguidas", STILL_DOWN, STILL_DOWN]);
+      expect(page.notices).toEqual(ONLY_THE_CONNECTION);
+    });
   });
 
-  describe("serviço que estava lento quando a conexão do servidor caiu e para de responder depois da volta", () => {
+  describe("serviço que estava lento quando a conexão do servidor caiu", () => {
     const SLOW = "DEGRADED TCP 443: latência 10,0× acima do normal (200 ms)";
     // O card não passa por "normal": segue degradado até a terceira falha, e a página só anuncia a queda de verdade.
     const SLOW_THEN_DOWN = [SLOW, "DEGRADED TCP 443: 2 falhas seguidas", "DOWN TCP 443: 3 falhas seguidas"];
     const ONE_REAL_OUTAGE = [...ONLY_THE_CONNECTION, "GitHub: fora do ar"];
+    // Quanto tempo o servidor ficou parado, contado da última medição de antes da queda (o TCP mede a cada 30 s).
+    const STOPPED: [string, number][] = [
+      ["30 min: nenhuma medição de antes da queda ainda é recente", 30],
+      ["9,7 min: só a mais nova ainda é recente", 9.7],
+      ["9,2 min: só as duas mais novas ainda são recentes", 9.2],
+    ];
     let githubTcp: "lento" | "mudo";
 
     beforeEach(async () => {
@@ -488,54 +541,161 @@ describe("medições ligadas", () => {
       await db.probeRollup.createMany({ data: Array.from({ length: 18 }, (_, i) => ({ targetId: tcp.id, vantage: "server", bucket: new Date(newest - i * window), samples: 10, failures: 0, p50Ms: 20, p95Ms: 22 })) });
     });
 
-    /** O processo de antes: cinco rodadas com o TCP do GitHub em 200 ms, e a página já mostrou o GitHub degradado. */
-    async function githubAlreadySlow(page: ReturnType<typeof openPage>): Promise<void> {
+    /** O processo de antes: cinco rodadas com o TCP do GitHub em 200 ms, a página já mostrou o GitHub degradado, e a conexão cai. */
+    async function slowThenOutage(page: ReturnType<typeof openPage>): Promise<void> {
       await rounds(5);
       expect(await page.github()).toBe(SLOW);
+      link = "fora";
+      await rounds(1);
+      await page.see();
     }
 
-    it("sem reinício: a página avisa da conexão e, depois, só da queda de verdade", async () => {
-      const page = openPage();
-      await githubAlreadySlow(page);
-      link = "fora";
-      await rounds(1);
-      await page.see();
+    /** A conexão volta sem o servidor ter parado. */
+    async function returnWithoutRestart(page: ReturnType<typeof openPage>): Promise<void> {
       link = "ok";
       await rounds(1);
       await page.see();
-      githubTcp = "mudo";
+    }
 
-      expect(await githubAfterReturn(page)).toEqual(SLOW_THEN_DOWN);
-      expect(page.notices).toEqual(ONE_REAL_OUTAGE);
-    });
-
-    it("a conexão voltou enquanto o servidor estava parado: os mesmos avisos, sem \"normalizado\" nem \"degradado\" falsos", async () => {
-      const page = openPage();
-      await githubAlreadySlow(page);
-      await outageWithRestart(page);
-      githubTcp = "mudo";
-
-      expect(await githubAfterReturn(page)).toEqual(SLOW_THEN_DOWN);
-      expect(page.notices).toEqual(ONE_REAL_OUTAGE);
-    });
-
-    it("o servidor reinicia com a pausa já gravada e a conexão ainda fora: os mesmos avisos", async () => {
-      const page = openPage();
-      await githubAlreadySlow(page);
-      link = "fora";
-      await rounds(1);
-      await page.see();
+    /** O servidor para durante a queda e sobe `minutes` depois, com a conexão já de volta. */
+    async function returnWhileStopped(minutes: number): Promise<void> {
       restart();
-      await ageChecks(30);
+      await spaceChecks(minutes);
+      link = "ok";
+    }
+
+    /** O servidor para durante a queda, sobe `minutes` depois com a conexão ainda fora, e ela volta em seguida. */
+    async function restartStillOffline(page: ReturnType<typeof openPage>, minutes: number): Promise<void> {
+      restart();
+      await spaceChecks(minutes);
       await rounds(1);
       expect((await page.see()).connectivity.state).toBe("offline");
-      link = "ok";
-      await rounds(1);
-      await page.see();
-      githubTcp = "mudo";
+      await returnWithoutRestart(page);
+    }
 
-      expect(await githubAfterReturn(page)).toEqual(SLOW_THEN_DOWN);
-      expect(page.notices).toEqual(ONE_REAL_OUTAGE);
+    describe("e para de responder depois da volta", () => {
+      it("sem reinício: a página avisa da conexão e, depois, só da queda de verdade", async () => {
+        const page = openPage();
+        await slowThenOutage(page);
+        await returnWithoutRestart(page);
+        githubTcp = "mudo";
+
+        expect(await githubAfterReturn(page)).toEqual(SLOW_THEN_DOWN);
+        expect(page.notices).toEqual(ONE_REAL_OUTAGE);
+      });
+
+      it.each(STOPPED)("a conexão voltou enquanto o servidor estava parado, %s: os mesmos avisos, sem \"normalizado\" nem \"degradado\" falsos", async (_, minutes) => {
+        const page = openPage();
+        await slowThenOutage(page);
+        await returnWhileStopped(minutes);
+        githubTcp = "mudo";
+
+        expect(await githubAfterReturn(page)).toEqual(SLOW_THEN_DOWN);
+        expect(page.notices).toEqual(ONE_REAL_OUTAGE);
+      });
+
+      it.each(STOPPED)("o servidor reinicia com a pausa já gravada e a conexão ainda fora, %s: os mesmos avisos", async (_, minutes) => {
+        const page = openPage();
+        await slowThenOutage(page);
+        await restartStillOffline(page, minutes);
+        githubTcp = "mudo";
+
+        expect(await githubAfterReturn(page)).toEqual(SLOW_THEN_DOWN);
+        expect(page.notices).toEqual(ONE_REAL_OUTAGE);
+      });
+    });
+
+    describe("e segue lento depois da volta", () => {
+      it("sem reinício: a página só avisa da conexão, e o GitHub segue degradado sem aviso novo", async () => {
+        const page = openPage();
+        await slowThenOutage(page);
+        await returnWithoutRestart(page);
+
+        expect(await githubAfterReturn(page)).toEqual([SLOW, SLOW, SLOW]);
+        expect(page.notices).toEqual(ONLY_THE_CONNECTION);
+      });
+
+      it.each(STOPPED)("a conexão voltou enquanto o servidor estava parado, %s: o card não passa por \"normal\" até juntar três medições lentas de novo", async (_, minutes) => {
+        const page = openPage();
+        await slowThenOutage(page);
+        await returnWhileStopped(minutes);
+
+        expect(await githubAfterReturn(page)).toEqual([SLOW, SLOW, SLOW]);
+        expect(page.notices).toEqual(ONLY_THE_CONNECTION);
+      });
+
+      it.each(STOPPED)("o servidor reinicia com a pausa já gravada e a conexão ainda fora, %s: o mesmo", async (_, minutes) => {
+        const page = openPage();
+        await slowThenOutage(page);
+        await restartStillOffline(page, minutes);
+
+        expect(await githubAfterReturn(page)).toEqual([SLOW, SLOW, SLOW]);
+        expect(page.notices).toEqual(ONLY_THE_CONNECTION);
+      });
+    });
+  });
+
+  describe("serviços lentos e um que é sempre demorado: cada alvo é julgado pela linha de base dele", () => {
+    // O TCP do GitHub e o HTTP do Discord costumam responder em 20 ms; o TCP do WhatsApp, em 200 ms. Os três medem 200 ms.
+    const AT_200_MS = new Set(["github.com TCP", "discord.com HTTP", "web.whatsapp.com TCP"]);
+    const EACH_BY_ITS_OWN = {
+      github: "DEGRADED TCP 443: latência 10,0× acima do normal (200 ms)",
+      discord: "DEGRADED HTTP: latência 10,0× acima do normal (200 ms)",
+      whatsapp: "OK null",
+    };
+    let silent: boolean;
+
+    beforeEach(async () => {
+      await withInternetStrip();
+      silent = false;
+      fixture.runProbe.mockImplementation(async (spec: { kind: string; host: string }) => {
+        if (link === "fora" || !AT_200_MS.has(`${spec.host} ${spec.kind}`)) return answering();
+        return silent ? { ok: false, latencyMs: null, error: "prazo esgotado", failedAt: "connect" } : { ok: true, latencyMs: 200 };
+      });
+      // 18 janelas de 5 min para cada um dos três alvos, a mais nova de 20 min atrás.
+      const window = 5 * 60_000;
+      const newest = Math.floor(Date.now() / window) * window - 4 * window;
+      for (const [slug, key, p50Ms] of [["github", "tcp", 20], ["discord", "http", 20], ["whatsapp", "tcp", 200]] as const) {
+        const target = await db.probeTarget.findFirstOrThrow({ where: { key, service: { slug } } });
+        await db.probeRollup.createMany({ data: Array.from({ length: 18 }, (_, i) => ({ targetId: target.id, vantage: "server", bucket: new Date(newest - i * window), samples: 10, failures: 0, p50Ms, p95Ms: p50Ms + 2 })) });
+      }
+    });
+
+    /** Os cards dos três serviços como a página os mostra agora. */
+    async function cards(page: ReturnType<typeof openPage>) {
+      const { services } = await page.see();
+      return Object.fromEntries(services.filter((s) => s.slug in EACH_BY_ITS_OWN).map((s) => [s.slug, `${s.status} ${s.measuredReason}`]));
+    }
+
+    it("medindo sem parar: 200 ms é lentidão no GitHub e no Discord, e o normal do WhatsApp", async () => {
+      const page = openPage();
+      await rounds(3);
+
+      expect(await cards(page)).toEqual(EACH_BY_ITS_OWN);
+      expect(page.notices).toEqual([]);
+    });
+
+    it("o servidor reinicia durante uma queda da conexão: na volta, uma medição basta para cada card mostrar o mesmo de antes", async () => {
+      const page = openPage();
+      await rounds(5);
+      expect(await cards(page)).toEqual(EACH_BY_ITS_OWN);
+      await outageWithRestart(page);
+      await rounds(1);
+
+      expect(await cards(page)).toEqual(EACH_BY_ITS_OWN);
+      expect(page.notices).toEqual(ONLY_THE_CONNECTION);
+    });
+
+    it("o mesmo quando a primeira medição depois da volta falha: uma falha isolada não muda nenhum dos três", async () => {
+      const page = openPage();
+      await rounds(5);
+      expect(await cards(page)).toEqual(EACH_BY_ITS_OWN);
+      await outageWithRestart(page);
+      silent = true;
+      await rounds(1);
+
+      expect(await cards(page)).toEqual(EACH_BY_ITS_OWN);
+      expect(page.notices).toEqual(ONLY_THE_CONNECTION);
     });
   });
 

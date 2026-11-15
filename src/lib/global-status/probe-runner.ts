@@ -169,7 +169,7 @@ async function refreshTargets(r: RunnerState, now: number, force: boolean): Prom
   });
   const loaded: LoadedTarget[] = rows.map(({ service, kind, ...row }) => ({ ...row, kind: kind as ProbeKind, serviceSlug: service.slug, category: service.category, sourceType: service.sourceType }));
   const { targets, added } = reconcileTargets(r.targets, sortByCatalog(loaded, STATUS_CATALOG), now);
-  await hydrate(targets, added, now, r.baselines);
+  await hydrate(targets, added, now);
   r.targets = targets;
   r.targetsAt = now;
   if (!r.announced) {
@@ -180,8 +180,9 @@ async function refreshTargets(r: RunnerState, now: number, force: boolean): Prom
 
 /**
  * Últimas medições de cada alvo que o banco guarda como pausado (o servidor parou durante uma queda da
- * conexão local), de qualquer idade: nada foi medido durante a pausa, então são elas que dizem como
- * o alvo estava antes. Uma consulta por alvo, pelo índice (targetId, at); só acontece nessa partida.
+ * conexão local), de qualquer idade e da mais nova para a mais velha: nada foi medido durante a pausa,
+ * então são elas as medições recentes que o alvo tinha em memória (ver `hydrateTarget`). Uma consulta
+ * por alvo, pelo índice (targetId, at); só acontece nessa partida.
  */
 async function lastChecksOfPaused(targets: TargetState[]): Promise<Map<string, RecentCheck[]>> {
   const last = new Map<string, RecentCheck[]>();
@@ -199,9 +200,9 @@ async function lastChecksOfPaused(targets: TargetState[]): Promise<Map<string, R
 
 /**
  * Histórico dos alvos que acabaram de entrar em memória: as medições recentes e, nos de Internet, se já
- * responderam alguma vez. Os gravados como pausados recebem também as últimas medições e a linha de base.
+ * responderam alguma vez. Os gravados como pausados recebem também as últimas medições, de qualquer idade.
  */
-async function hydrate(targets: Map<string, TargetState>, added: string[], now: number, baselines: ReadonlyMap<string, readonly number[]>): Promise<void> {
+async function hydrate(targets: Map<string, TargetState>, added: string[], now: number): Promise<void> {
   if (!added.length) return;
   const fresh = added.map((id) => targets.get(id)!);
 
@@ -233,7 +234,7 @@ async function hydrate(targets: Map<string, TargetState>, added: string[], now: 
 
   const lastChecks = await lastChecksOfPaused(fresh);
   for (const t of fresh) {
-    targets.set(t.id, hydrateTarget(t, { checks: checks.get(t.id) ?? [], everOk: answered.has(t.id), lastChecks: lastChecks.get(t.id), baseline: baselines.get(t.id) }, now));
+    targets.set(t.id, hydrateTarget(t, { checks: checks.get(t.id) ?? [], everOk: answered.has(t.id), lastChecks: lastChecks.get(t.id) }, now));
   }
 }
 
@@ -252,9 +253,8 @@ async function refreshBaselines(r: RunnerState, now: number): Promise<void> {
 async function tick(r: RunnerState, force: boolean): Promise<void> {
   await ensureCatalogSeeded();
   const now = Date.now();
-  // A linha de base vem antes dos alvos: o alvo que sobe com a pausa gravada é julgado por ela (hydrateTarget).
-  await refreshBaselines(r, now);
   await refreshTargets(r, now, force);
+  await refreshBaselines(r, now);
   // Se o relógio do sistema voltou, os vencimentos que ficaram longe no futuro voltam para dentro do intervalo.
   r.targets = realignAgenda(r.targets, now);
 

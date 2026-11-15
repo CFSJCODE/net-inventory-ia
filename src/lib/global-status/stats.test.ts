@@ -260,6 +260,23 @@ describe("evaluateTarget", () => {
     it("vale o certificado da medição mais nova (o provedor já renovou)", () => {
       expect(evaluateTarget([ok(20, { certDays: 89 }), ok(20, { certDays: -1 })], baseline)).toEqual(OK);
     });
+
+    it("uma falha isolada que não chegou ao certificado não apaga o vencimento que a medição anterior viu", () => {
+      expect(evaluateTarget([fail(), ok(20, { certDays: -1 }), ok(20, { certDays: -1 })], baseline)).toEqual({ status: "DEGRADED", reason: "certificado vencido" });
+      // Nem inventa um: a medição anterior viu o certificado em dia.
+      expect(evaluateTarget([fail(), ok(20, { certDays: 30 }), ok(20, { certDays: -1 })], baseline)).toEqual(OK);
+      // Sem nenhuma medição que tenha chegado ao certificado não há o que dizer dele.
+      expect(evaluateTarget([fail()], baseline)).toEqual(OK);
+    });
+
+    it("a falha que chegou ao certificado (um HTTP 5xx) vale por ele, vencido ou em dia", () => {
+      expect(evaluateTarget([fail({ certDays: -1 }), ok(20, { certDays: 89 })], baseline)).toEqual({ status: "DEGRADED", reason: "certificado vencido" });
+      expect(evaluateTarget([fail({ certDays: 89 }), ok(20, { certDays: -1 })], baseline)).toEqual(OK);
+    });
+
+    it("a resposta que não traz certificado também vale por si: o que uma medição mais velha viu não conta", () => {
+      expect(evaluateTarget([ok(), ok(20, { certDays: -1 })], baseline)).toEqual(OK);
+    });
   });
 
   describe("perda de pacotes", () => {
