@@ -5,7 +5,7 @@ export type IncidentImpact = "MINOR" | "MAJOR" | "CRITICAL" | "MAINTENANCE";
 /** INTERNET = a conexão do próprio servidor (faixa "Sua Internet"); REGIONAL = visão de fora (IODA e rotas BGP, faixa "Internet no Brasil"). */
 export type ServiceCategory = "CLOUD" | "CDN" | "DEV" | "AI" | "SOCIAL" | "STREAMING" | "INTERNET" | "REGIONAL";
 /** IODA = alertas de queda de Internet por país ou ASN (Georgia Tech); RIPESTAT = visibilidade BGP dos prefixos dos serviços (RIPE RIS). */
-export type SourceType = "STATUSPAGE" | "GCP" | "AZURE_RSS" | "AWS" | "IODA" | "RIPESTAT" | "NONE";
+export type SourceType = "STATUSPAGE" | "GCP" | "AZURE_RSS" | "AWS" | "NETFLIX" | "IODA" | "RIPESTAT" | "NONE";
 
 export interface NormalizedComponent {
   externalId: string;

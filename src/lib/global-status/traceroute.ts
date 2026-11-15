@@ -4,7 +4,7 @@ import net from "node:net";
 /**
  * Traceroute sob demanda do painel "Status global" (fase 3): o caminho do servidor até o destino de um
  * serviço, salto a salto. Sem nomes reversos (-n): fica rápido e não depende do DNS; ASN, cidade e cabo
- * provável entram na fase 5. Nada é gravado no banco.
+ * provável vêm da fase 5 (`route-runner.ts`), que grava a rota.
  *
  * Ferramentas, na ordem: `traceroute` (pacote traceroute), `tracepath` (iputils, presente no Ubuntu Server)
  * e `tracert` no Windows. A saída é lida por parsers puros, testados com saídas reais.
@@ -22,6 +22,8 @@ export interface TraceHop {
 export interface TraceResult {
   ok: boolean;
   host: string;
+  /** IP em que o host resolveu (o destino rastreado); null quando nem resolveu. */
+  address: string | null;
   /** Ferramenta usada (traceroute, tracepath ou tracert); null quando nenhuma rodou. */
   tool: string | null;
   hops: TraceHop[];
@@ -37,6 +39,24 @@ const HOSTNAME = /^(?!-)[A-Za-z0-9.-]{1,253}$/;
 
 export function isTraceableHost(host: unknown): host is string {
   return typeof host === "string" && (net.isIP(host) !== 0 || HOSTNAME.test(host));
+}
+
+/** Destino do traceroute de um serviço: o host do alvo TCP, ou o do HTTP; nunca o gateway nem o DNS do sistema. */
+export function traceHost(targets: readonly { kind: string; host: string; url: string | null }[]): string | null {
+  for (const kind of ["TCP", "HTTP", "ICMP"]) {
+    const t = targets.find((x) => x.kind === kind);
+    if (!t) continue;
+    let host = t.host;
+    if (kind === "HTTP" && t.url) {
+      try {
+        host = new URL(t.url).hostname;
+      } catch {
+        continue;
+      }
+    }
+    if (isTraceableHost(host)) return host;
+  }
+  return null;
 }
 
 const IP_TOKEN = /^\(?([0-9a-fA-F:.]+)\)?$/;
@@ -153,19 +173,20 @@ async function resolveHost(host: string): Promise<string | null> {
 }
 
 export async function traceRoute(host: string): Promise<TraceResult> {
-  if (!isTraceableHost(host)) return { ok: false, host: String(host), tool: null, hops: [], reached: false, error: "endereço inválido para traceroute" };
+  if (!isTraceableHost(host)) return { ok: false, host: String(host), address: null, tool: null, hops: [], reached: false, error: "endereço inválido para traceroute" };
   const destination = await resolveHost(host);
-  if (!destination) return { ok: false, host, tool: null, hops: [], reached: false, error: "nome não encontrado" };
+  if (!destination) return { ok: false, host, address: null, tool: null, hops: [], reached: false, error: "nome não encontrado" };
   for (const tool of process.platform === "win32" ? WINDOWS_TOOLS : LINUX_TOOLS) {
     const { stdout, missing } = await run(tool, destination);
     if (missing) continue;
     const { hops, reached } = finishHops(tool.parse(stdout), destination);
-    if (!hops.length) return { ok: false, host, tool: tool.name, hops: [], reached: false, error: "nenhum salto respondeu" };
-    return { ok: true, host, tool: tool.name, hops, reached, error: null };
+    if (!hops.length) return { ok: false, host, address: destination, tool: tool.name, hops: [], reached: false, error: "nenhum salto respondeu" };
+    return { ok: true, host, address: destination, tool: tool.name, hops, reached, error: null };
   }
   return {
     ok: false,
     host,
+    address: destination,
     tool: null,
     hops: [],
     reached: false,

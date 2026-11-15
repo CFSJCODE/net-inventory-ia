@@ -1,8 +1,8 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Route } from "lucide-react";
-import { traceServiceRoute, type StatusServiceDetail } from "@/app/actions/global-status-actions";
+import { traceServiceRoute, type StatusRouteDetail, type StatusServiceDetail } from "@/app/actions/global-status-actions";
 import { useCan } from "@/components/auth/user-provider";
 import { Button } from "@/components/ui/button";
 import type { PhaseSeries } from "@/lib/global-status/series";
@@ -14,7 +14,7 @@ import { HTTP_PHASE_STYLE, SERVICE_STATUS_STYLE } from "./status-style";
 
 /**
  * Seções da fase 3 no detalhe do serviço: o mesmo alvo medido do servidor e do PC (agente Windows), as
- * etapas do HTTP ao longo do dia e o traceroute sob demanda. Mesmos blocos e tipografia das seções que
+ * etapas do HTTP ao longo do dia e a rota até o destino (fase 5). Mesmos blocos e tipografia das seções que
  * já existem no detalhe (título text-sm, caixas com borda, leituras em text-xs).
  */
 
@@ -134,11 +134,45 @@ export function BgpRoute({ bgp }: { bgp: NonNullable<StatusServiceDetail["bgp"]>
   );
 }
 
-/** Traceroute sob demanda do servidor até o destino. O resultado não fica gravado. */
-export function RouteSection({ slug }: { slug: string }) {
+const VERDICT: Record<string, { label: string; className: string }> = {
+  DOMESTIC: { label: "Servido no Brasil", className: "text-emerald-400" },
+  OPERATOR_CACHE: { label: "Cache na sua operadora", className: "text-emerald-400" },
+  INTERNATIONAL: { label: "Servido de fora do Brasil", className: "text-sky-400" },
+  UNDETERMINED: { label: "Origem indefinida", className: "text-muted-foreground" },
+};
+const CONFIDENCE: Record<string, string> = { HIGH: "alta", MEDIUM: "média", LOW: "baixa" };
+
+type RouteHopRow = StatusRouteDetail["hops"][number];
+
+/** Saltos seguidos do mesmo ASN viram um grupo; os sem ASN público (rede local, CGNAT) ficam juntos. */
+function groupByAsn(hops: RouteHopRow[]): { key: string; label: string; hops: RouteHopRow[] }[] {
+  const groups: { key: string; label: string; hops: RouteHopRow[] }[] = [];
+  for (const hop of hops) {
+    const label = hop.asn ? `AS${hop.asn}${hop.asName ? ` · ${hop.asName}` : ""}` : hop.ip ? "Sem ASN público" : "Sem resposta";
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.hops.push(hop);
+    else groups.push({ key: `${hop.ttl}`, label, hops: [hop] });
+  }
+  return groups;
+}
+
+/**
+ * Rota até o destino (fase 5): a rota gravada mais nova (o servidor rastreia cada serviço a cada 30 min),
+ * com onde o serviço é servido, o cabo submarino provável e os saltos agrupados por ASN.
+ */
+export function RouteSection({ slug, route }: { slug: string; route: StatusRouteDetail | null }) {
   const canTrace = useCan("network.operate");
-  const trace = useMutation({ mutationFn: () => traceServiceRoute(slug) });
-  const result = trace.data;
+  const queryClient = useQueryClient();
+  const trace = useMutation({
+    mutationFn: async () => {
+      const result = await traceServiceRoute(slug);
+      if (!result) throw new Error("Sem traceroute no servidor ou serviço sem destino para rastrear.");
+      return result;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["global-status-detail", slug] }),
+  });
+  const current = trace.data ?? route;
+  const verdict = current ? (VERDICT[current.verdict] ?? VERDICT.UNDETERMINED) : null;
   return (
     <section className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
@@ -146,32 +180,70 @@ export function RouteSection({ slug }: { slug: string }) {
         {canTrace && (
           <Button variant="outline" size="xs" onClick={() => trace.mutate()} disabled={trace.isPending}>
             {trace.isPending ? <Loader2 className="size-3 animate-spin" /> : <Route className="size-3" />}
-            {trace.isPending ? "Rastreando…" : result ? "Rastrear de novo" : "Rastrear rota"}
+            {trace.isPending ? "Rastreando…" : current ? "Rastrear de novo" : "Rastrear rota"}
           </Button>
         )}
       </div>
-      {!result && !trace.isPending && (
+      {!current && !trace.isPending && (
         <p className="text-xs text-muted-foreground">
-          {canTrace ? "Mostra cada roteador entre o servidor e o destino. Leva até um minuto." : "Só quem opera a rede pode rastrear a rota."}
+          O servidor rastreia a rota de cada serviço a cada 30 minutos. {canTrace ? "Para ver agora, rastreie: leva até um minuto." : ""}
         </p>
       )}
-      {trace.isError && <p className="text-xs text-destructive">Não foi possível rastrear a rota agora.</p>}
-      {result && !result.ok && <p className="text-xs text-amber-400">{result.error}</p>}
-      {result && result.ok && (
-        <div className="rounded-lg border p-3 text-xs">
-          <div className="mb-2 text-muted-foreground">
-            {result.host} · {result.hops.length} salto{result.hops.length === 1 ? "" : "s"} · {result.reached ? "destino alcançado" : "o destino não respondeu ao rastreio"}
+      {trace.isError && <p className="text-xs text-destructive">{trace.error.message}</p>}
+      {current && verdict && (
+        <div className="flex flex-col gap-2 rounded-lg border p-3 text-xs">
+          <div className="flex items-start justify-between gap-3">
+            <span className={cn("font-medium", verdict.className)}>{verdict.label}</span>
+            <span className="shrink-0 text-muted-foreground" title={formatDateTime(current.at)}>
+              {formatRelativeTime(current.at)}
+            </span>
           </div>
-          <ol className="flex flex-col gap-1">
-            {result.hops.map((hop) => (
-              <li key={hop.ttl} className="flex items-center gap-3 tabular-nums">
-                <span className="w-5 shrink-0 text-right text-muted-foreground">{hop.ttl}</span>
-                <span className={cn("min-w-0 flex-1 truncate", hop.ip ? "text-foreground" : "text-muted-foreground")}>{hop.ip ?? "sem resposta"}</span>
-                <span className="shrink-0 text-muted-foreground">{formatLatency(hop.rttMs)}</span>
-              </li>
-            ))}
-          </ol>
+          {/* O cabo, a confiança e os outros candidatos aparecem logo abaixo, em leituras: a frase para antes deles. */}
+          <p className="text-muted-foreground">{current.cableName ? current.summary.split(" Cabo provável:")[0] : current.summary}</p>
+          {current.cableName && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+              <InlineReading label="Cabo provável" value={current.cableName} />
+              {current.confidence && <InlineReading label="Confiança" value={CONFIDENCE[current.confidence] ?? current.confidence} />}
+              {current.candidates.length > 0 && <InlineReading label="Outros possíveis" value={current.candidates.join(", ")} />}
+            </div>
+          )}
+          {current.hops.length > 0 && (
+            <ol className="flex flex-col gap-2 border-t pt-2">
+              {groupByAsn(current.hops).map((group) => (
+                <li key={group.key} className="flex flex-col gap-1">
+                  <span className="truncate font-medium text-foreground">{group.label}</span>
+                  <ol className="flex flex-col gap-0.5">
+                    {group.hops.map((hop) => (
+                      <li key={hop.ttl} className="flex items-center gap-3 tabular-nums">
+                        <span className="w-5 shrink-0 text-right text-muted-foreground">{hop.ttl}</span>
+                        <span className={cn("min-w-0 flex-1 truncate", hop.ip ? "text-foreground" : "text-muted-foreground")} title={hop.rdns && hop.ip ? hop.ip : undefined}>
+                          {hop.rdns ?? hop.ip ?? "sem resposta"}
+                        </span>
+                        {hop.city && <span className="shrink-0 text-muted-foreground">{hop.city}</span>}
+                        <span className="w-14 shrink-0 text-right text-muted-foreground">{formatLatency(hop.rttMs)}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </li>
+              ))}
+            </ol>
+          )}
+          <div className="border-t pt-2 text-muted-foreground">
+            {current.host}
+            {current.destIp && current.destIp !== current.host ? ` (${current.destIp})` : ""} · {current.hops.length} salto{current.hops.length === 1 ? "" : "s"} ·{" "}
+            {current.reached ? "destino alcançado" : "o destino não respondeu ao rastreio"}
+            {current.destRttMs !== null && <> · {formatLatency(current.destRttMs)} até o destino</>}
+          </div>
         </div>
+      )}
+      {current?.cableName && (
+        <p className="text-xs text-muted-foreground">
+          Inferência pela rota e pelo tempo de resposta: o traceroute só enxerga roteadores, não o cabo. Dados dos cabos:{" "}
+          <a href={current.cableSource} target="_blank" rel="noreferrer" className="hover:underline">
+            TeleGeography, Submarine Cable Map
+          </a>
+          .
+        </p>
       )}
     </section>
   );

@@ -8,11 +8,13 @@ export async function register() {
     const { startAlertMonitor } = await import("@/lib/alerts/alert-monitor");
     const { startGlobalStatusMonitor } = await import("@/lib/global-status/collector");
     const { startProbeRunner } = await import("@/lib/global-status/probe-runner");
+    const { startRouteRunner } = await import("@/lib/global-status/route-runner");
     startLinkMonitor();
     startScanScheduler();
     startAlertMonitor();
     startGlobalStatusMonitor();
     startProbeRunner();
+    startRouteRunner();
     // Funde duplicados gravados por versões anteriores logo ao subir, sem esperar o próximo scan.
     void mergeDuplicateDevices().catch((err) => console.error("[device-merge] falha ao fundir duplicados:", err));
   }

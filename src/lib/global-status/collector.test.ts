@@ -390,6 +390,37 @@ describe("fontes oficiais além da Statuspage", () => {
   });
 });
 
+describe("Netflix: avisos da página \"A Netflix está fora do ar?\"", () => {
+  const NETFLIX: CatalogEntry = { slug: "netflix", name: "Netflix", category: "STREAMING", sourceType: "NETFLIX", sourceUrl: "https://help.netflix.com/pt/api/notifications", pageUrl: "https://help.netflix.com/pt/is-netflix-down", targets: web("https://www.netflix.com/robots.txt") };
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("um aviso de queda abre o incidente, e a lista vazia o encerra", async () => {
+    await seed(NETFLIX);
+    const notice = { type: "NOTIFICATION", notificationId: "n-1", level: "ERROR", downNotification: true, cannedMessage: "<h1>Estamos com problemas para transmitir</h1><p>Nossa equipe está trabalhando nisso.</p>" };
+    let body: unknown[] = [notice];
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await checkGlobalStatus(true);
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://help.netflix.com/pt/api/notifications");
+    let netflix = await db.statusService.findUniqueOrThrow({ where: { slug: "netflix" }, include: { incidents: true } });
+    expect(netflix).toMatchObject({ officialState: "DOWN", officialStatus: "Estamos com problemas para transmitir", lastError: null });
+    expect(netflix.incidents.map((i) => [i.externalId, i.resolvedAt])).toEqual([["n-1", null]]);
+
+    body = [];
+    await checkGlobalStatus(true);
+
+    netflix = await db.statusService.findUniqueOrThrow({ where: { slug: "netflix" }, include: { incidents: true } });
+    expect(netflix).toMatchObject({ officialState: "OK", officialStatus: "A Netflix está funcionando" });
+    expect(netflix.incidents[0].resolvedAt).not.toBeNull();
+  });
+});
+
 describe("visão de fora: IODA e RIPEstat (fase 4)", () => {
   const collector = globalThis as { __globalStatusSources?: unknown; __globalStatusRun?: unknown; __globalStatusPrefixes?: unknown };
   const IODA = "https://api.ioda.inetintel.cc.gatech.edu/v2/outages/alerts";

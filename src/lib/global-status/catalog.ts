@@ -58,7 +58,7 @@ const IODA_ALERTS = "https://api.ioda.inetintel.cc.gatech.edu/v2/outages/alerts"
  * Serviços acompanhados. A ordem é a de exibição dentro de cada categoria.
  *
  * Fonte oficial (verificadas em 13/11/2026): os provedores com página de status aberta. Novos provedores
- * Statuspage entram só com uma linha aqui. Redes sociais e streaming sem página aberta ficam com
+ * Statuspage entram só com uma linha aqui. A Netflix tem um leitor próprio para o JSON da página "A Netflix está fora do ar?". Redes sociais e streaming sem página aberta ficam com
  * `sourceType: "NONE"`: o estado deles vem só das medições deste servidor.
  *
  * Endereços medidos (conferidos em 14/11/2026 com o agente de usuário da sonda; qualquer resposta abaixo
@@ -101,7 +101,7 @@ export const STATUS_CATALOG: CatalogEntry[] = [
   { slug: "telegram", name: "Telegram", category: "SOCIAL", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: web("https://api.telegram.org/") },
   { slug: "discord", name: "Discord", category: "SOCIAL", sourceType: "STATUSPAGE", sourceUrl: "https://discordstatus.com", pageUrl: "https://discordstatus.com/", targets: web("https://discord.com/api/v10/gateway") },
   { slug: "reddit", name: "Reddit", category: "SOCIAL", sourceType: "STATUSPAGE", sourceUrl: "https://www.redditstatus.com", pageUrl: "https://www.redditstatus.com/", targets: web("https://www.reddit.com/robots.txt") },
-  { slug: "netflix", name: "Netflix", category: "STREAMING", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: web("https://www.netflix.com/robots.txt") },
+  { slug: "netflix", name: "Netflix", category: "STREAMING", sourceType: "NETFLIX", sourceUrl: "https://help.netflix.com/pt/api/notifications", pageUrl: "https://help.netflix.com/pt/is-netflix-down", targets: web("https://www.netflix.com/robots.txt") },
   { slug: "prime-video", name: "Prime Video", category: "STREAMING", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: web("https://www.primevideo.com/robots.txt") },
   { slug: "disney-plus", name: "Disney+", category: "STREAMING", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: web("https://www.disneyplus.com/robots.txt") },
   { slug: "globoplay", name: "Globoplay", category: "STREAMING", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: web("https://globoplay.globo.com/robots.txt") },
