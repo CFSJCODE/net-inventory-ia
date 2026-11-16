@@ -131,10 +131,10 @@ export function latencyLimit(baseline: number[]): { median: number; limit: numbe
  * anterior viu), e o alvo volta a "ok" na primeira resposta depois de uma queda, sem ficar minutos em
  * "perda de 60%" por causa das falhas que ainda estão na janela.
  */
-export function evaluateTarget(recent: RecentCheck[], baseline: number[]): TargetVerdict {
+export function evaluateTarget(recent: RecentCheck[], baseline: number[], seasonal: number[] = []): TargetVerdict {
   const window = recent.slice(0, WINDOW_SIZE);
   if (!window.length) return { status: "UNKNOWN", reason: null };
-  return failureVerdict(window) ?? certVerdict(window) ?? lossVerdict(window) ?? latencyVerdict(window, baseline) ?? { status: "OK", reason: null };
+  return failureVerdict(window) ?? certVerdict(window) ?? lossVerdict(window) ?? latencyVerdict(window, baseline, seasonal) ?? { status: "OK", reason: null };
 }
 
 // Cada regra abaixo devolve o veredito quando se aplica, ou null para a regra seguinte decidir.
@@ -175,12 +175,47 @@ function lossVerdict(window: RecentCheck[]): TargetVerdict | null {
   return loss > LOSS_DEGRADED_PCT ? { status: "DEGRADED", reason: `perda de ${Math.round(loss)}% dos pacotes` } : null;
 }
 
-/** Latência sustentada: a mediana da janela acima do limite da linha de base. */
-function latencyVerdict(window: RecentCheck[], baseline: number[]): TargetVerdict | null {
+/**
+ * Latência sustentada: a mediana da janela acima do limite da linha de base de 24 h e, quando há
+ * histórico suficiente, também acima do limite da linha de base deste horário (ver `seasonalWindows`).
+ * Assim a lentidão de todo dia no horário de pico não vira "degradado".
+ */
+function latencyVerdict(window: RecentCheck[], baseline: number[], seasonal: number[]): TargetVerdict | null {
   const latencies = window.filter((c) => c.ok).map((c) => c.latencyMs).filter((v): v is number => v !== null);
   const base = latencyLimit(baseline);
   if (!base || latencies.length < 3) return null;
   const current = median(latencies)!;
   if (!(current > base.limit && base.median > 0)) return null;
-  return { status: "DEGRADED", reason: `latência ${(current / base.median).toFixed(1).replace(".", ",")}× acima do normal (${Math.round(current)} ms)` };
+  const hourly = latencyLimit(seasonal);
+  if (hourly && current <= hourly.limit) return null;
+  const usual = hourly ? `; neste horário costuma ficar em ${Math.round(hourly.median)} ms` : "";
+  return { status: "DEGRADED", reason: `latência ${(current / base.median).toFixed(1).replace(".", ",")}× acima do normal (${Math.round(current)} ms${usual})` };
+}
+
+// ---------------------------------------------------------------- linha de base por horário
+
+/** Dias anteriores olhados pela linha de base por horário. */
+export const SEASONAL_DAYS = 7;
+/** Meia largura da janela em torno do mesmo horário de cada dia anterior (±1 h). */
+export const SEASONAL_HALF_WIDTH_MS = 60 * 60_000;
+const DAY_MS = 24 * 60 * 60_000;
+
+/**
+ * Intervalos da linha de base por horário: o mesmo horário (±1 h) em cada um dos 7 dias anteriores.
+ * Um alvo que todo dia às 21 h fica mais lento (pico na operadora) é comparado com as 21 h dos outros
+ * dias, e não só com a madrugada que está dentro das últimas 24 h.
+ */
+export function seasonalWindows(now: number, days = SEASONAL_DAYS): { from: Date; to: Date }[] {
+  const out: { from: Date; to: Date }[] = [];
+  for (let d = 1; d <= days; d++) {
+    const center = now - d * DAY_MS;
+    out.push({ from: new Date(center - SEASONAL_HALF_WIDTH_MS), to: new Date(center + SEASONAL_HALF_WIDTH_MS) });
+  }
+  return out;
+}
+
+/** Linha de base por horário de um alvo: as medianas e os p95 das janelas de 5 min daqueles intervalos. */
+export interface SeasonalBase {
+  p50: number[];
+  p95: number[];
 }

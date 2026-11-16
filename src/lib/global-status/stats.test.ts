@@ -14,6 +14,7 @@ import {
   mad,
   median,
   percentile,
+  seasonalWindows,
   uptimePct,
   type RecentCheck,
 } from "./stats";
@@ -310,6 +311,20 @@ describe("evaluateTarget", () => {
       expect(evaluateTarget([ok(70), ok(70), ok(70), ok(70), ok(70)], baseline)).toEqual({ status: "DEGRADED", reason: "latência 3,5× acima do normal (70 ms)" });
     });
 
+    it("dentro do habitual deste horário nos outros dias não é degradação (pico de todo dia)", () => {
+      const evening = Array.from({ length: 12 }, () => 70);
+      expect(evaluateTarget([ok(70), ok(70), ok(70), ok(70), ok(70)], baseline, evening)).toEqual(OK);
+      // Acima também do habitual do horário: degradado, e a frase diz quanto costuma ser.
+      expect(evaluateTarget([ok(200), ok(200), ok(200)], baseline, evening)).toEqual({
+        status: "DEGRADED",
+        reason: "latência 10,0× acima do normal (200 ms; neste horário costuma ficar em 70 ms)",
+      });
+    });
+
+    it("histórico do horário curto demais é ignorado", () => {
+      expect(evaluateTarget([ok(70), ok(70), ok(70)], baseline, [70, 70, 70]).status).toBe("DEGRADED");
+    });
+
     it("um pico isolado, ou dois, não alarma", () => {
       expect(evaluateTarget([ok(500), ok(20), ok(20), ok(20), ok(20)], baseline)).toEqual(OK);
       expect(evaluateTarget([ok(500), ok(500), ok(20), ok(20), ok(20)], baseline)).toEqual(OK);
@@ -353,5 +368,15 @@ describe("evaluateTarget", () => {
       const check = ok(900, { lossPct: 60 });
       expect(evaluateTarget([check, check, check, check, check], baseline)).toEqual({ status: "DEGRADED", reason: "perda de 60% dos pacotes" });
     });
+  });
+});
+
+describe("seasonalWindows", () => {
+  it("o mesmo horário, ±1 h, em cada um dos 7 dias anteriores", () => {
+    const now = Date.UTC(2026, 10, 16, 21, 0);
+    const w = seasonalWindows(now);
+    expect(w).toHaveLength(7);
+    expect(w[0]).toEqual({ from: new Date(Date.UTC(2026, 10, 15, 20, 0)), to: new Date(Date.UTC(2026, 10, 15, 22, 0)) });
+    expect(w[6].from).toEqual(new Date(Date.UTC(2026, 10, 9, 20, 0)));
   });
 });

@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { formatLatency, formatPercent, formatUptime, isWorseThanOfficial } from "./format";
 import { BgpRoute, PhaseChart, RouteSection, VantageList } from "./detail-sections";
 import { ProbeTimeline } from "./probe-timeline";
+import { DiagnosisBar } from "./diagnosis-bar";
 import { InternetHealthBar } from "./internet-health-bar";
 import { RegionalBar } from "./regional-bar";
 import { TransitSection } from "./transit-section";
@@ -562,6 +563,7 @@ export function GlobalStatusPanel() {
       <InternetHealthBar services={internet} connectivity={data.connectivity} onOpen={setOpenSlug} />
       <RegionalBar services={regional} onOpen={setOpenSlug} />
       <Counters services={providers} />
+      <DiagnosisBar data={data} onOpen={setOpenSlug} />
       <IncidentTicker incidents={data.incidents} onOpen={setOpenSlug} />
 
       {byCategory.map(([category, list]) => (

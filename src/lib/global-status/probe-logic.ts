@@ -1,6 +1,6 @@
 import { isIP } from "node:net";
 import type { CatalogEntry } from "./catalog";
-import { BUCKET_MS, WINDOW_SIZE, aggregateChecks, bucketStart, evaluateTarget, type BucketStats, type CheckSample, type RecentCheck, type TargetVerdict } from "./stats";
+import { BUCKET_MS, WINDOW_SIZE, aggregateChecks, bucketStart, evaluateTarget, latencyLimit, type BucketStats, type CheckSample, type RecentCheck, type SeasonalBase, type TargetVerdict } from "./stats";
 import { TRAIL_MAX, windowStats, type WindowSample } from "./window-stats";
 import {
   AUTO_GATEWAY,
@@ -836,10 +836,13 @@ function unmeasured(state: TargetState, at: Date, reason: string, error: string 
  * degradado quando o p95 das últimas N medições passa de 1,5× a mediana das 100 anteriores (e da cauda
  * normal delas; ver `windowStats`). Não vale para o certificado TLS, que mede uma vez a cada 6 h.
  */
-export function windowVerdict(kind: ProbeKind, trail: readonly WindowSample[], windowSize?: number): TargetVerdict | null {
+export function windowVerdict(kind: ProbeKind, trail: readonly WindowSample[], windowSize?: number, seasonalP95: readonly number[] = []): TargetVerdict | null {
   if (kind === "TLS") return null;
   const stats = windowStats(trail, { size: windowSize });
   if (!stats.degraded || stats.p95Ms === null || stats.ratio === null) return null;
+  // Com histórico deste horário: um p95 dentro do que é comum nesta hora nos outros dias não é degradação.
+  const hourly = latencyLimit([...seasonalP95]);
+  if (hourly && stats.p95Ms <= hourly.limit) return null;
   return { status: "DEGRADED", reason: `p95 ${stats.ratio.toFixed(1).replace(".", ",")}× a mediana das 100 medições anteriores (${Math.round(stats.p95Ms)} ms)` };
 }
 
@@ -852,8 +855,8 @@ export function windowVerdict(kind: ProbeKind, trail: readonly WindowSample[], w
  * da pausa, quando ele está voltando de uma. Um alvo "Sem dados" segue assim, já sem o motivo antigo,
  * que podia ser o de uma pausa que acabou.
  */
-function judge(state: Pick<TargetState, "status" | "reason" | "beforePause">, ring: RecentCheck[], baseline: readonly number[]): TargetVerdict {
-  const fresh = evaluateTarget(ring, [...baseline]);
+function judge(state: Pick<TargetState, "status" | "reason" | "beforePause">, ring: RecentCheck[], baseline: readonly number[], seasonal: readonly number[] = []): TargetVerdict {
+  const fresh = evaluateTarget(ring, [...baseline], [...seasonal]);
   if (ring.some((c) => c.ok)) return fresh;
   const before = state.beforePause ?? state;
   const kept: TargetVerdict = before.status === "UNKNOWN" ? { status: "UNKNOWN", reason: null } : { status: before.status, reason: before.reason };
@@ -871,7 +874,7 @@ function judge(state: Pick<TargetState, "status" | "reason" | "beforePause">, ri
  *   de `evaluateTarget` com a linha de base do alvo, sem melhorar o estado enquanto só houver falhas
  *   (ver `judge`).
  */
-export function recordResult(state: TargetState, result: ProbeResult, at: Date, baseline: readonly number[] = [], windowSize?: number): RecordedResult {
+export function recordResult(state: TargetState, result: ProbeResult, at: Date, baseline: readonly number[] = [], windowSize?: number, seasonal?: SeasonalBase): RecordedResult {
   const error = cutError(result.error);
   if (result.unsupported) return unmeasured(state, at, error ?? "A sonda não pôde rodar neste servidor.", error);
   if (isInternetTarget(state) && !state.everOk && !result.ok) return unmeasured(state, at, neverAnsweredReason(state.kind), error);
@@ -881,8 +884,8 @@ export function recordResult(state: TargetState, result: ProbeResult, at: Date, 
   const check: RecentCheck = { ok, latencyMs, lossPct: finite(result.lossPct), certDays: whole(result.certDays) };
   const ring = [check, ...state.ring].slice(0, WINDOW_SIZE);
   const trail = [...(state.trail ?? []), { ok, latencyMs, lossPct: check.lossPct }].slice(-TRAIL_MAX);
-  const judged = judge(state, ring, baseline);
-  const verdict = judged.status === "OK" ? (windowVerdict(state.kind, trail, windowSize) ?? judged) : judged;
+  const judged = judge(state, ring, baseline, seasonal?.p50);
+  const verdict = judged.status === "OK" ? (windowVerdict(state.kind, trail, windowSize, seasonal?.p95) ?? judged) : judged;
   const lastError = ok ? null : error;
   return {
     state: { ...state, ring, trail, status: verdict.status, reason: verdict.reason, lastLatencyMs: latencyMs, everOk: state.everOk || ok, beforePause: null },
@@ -986,7 +989,13 @@ export interface TickOutcome {
 }
 
 /** Aplica os resultados de um passo ao estado em memória e monta as gravações (`recordResult` e `summarizeService`). */
-export function recordTick(targets: ReadonlyMap<string, TargetState>, record: readonly Measurement[], baselines: ReadonlyMap<string, readonly number[]>, windowSize?: number): TickOutcome {
+export function recordTick(
+  targets: ReadonlyMap<string, TargetState>,
+  record: readonly Measurement[],
+  baselines: ReadonlyMap<string, readonly number[]>,
+  windowSize?: number,
+  seasonal: ReadonlyMap<string, SeasonalBase> = new Map(),
+): TickOutcome {
   const next = new Map(targets);
   const rows: CheckRow[] = [];
   const targetUpdates: TickOutcome["targetUpdates"] = [];
@@ -994,7 +1003,7 @@ export function recordTick(targets: ReadonlyMap<string, TargetState>, record: re
   for (const m of record) {
     const state = next.get(m.target.id);
     if (!state) continue;
-    const recorded = recordResult(state, m.result, m.at, baselines.get(state.id), windowSize);
+    const recorded = recordResult(state, m.result, m.at, baselines.get(state.id), windowSize, seasonal.get(state.id));
     next.set(state.id, recorded.state);
     if (recorded.row) rows.push(recorded.row);
     targetUpdates.push({ id: state.id, data: recorded.update });
@@ -1109,6 +1118,18 @@ export function groupBaseline(rollups: readonly { targetId: string; p50Ms: numbe
     else baselines.set(r.targetId, [r.p50Ms]);
   }
   return baselines;
+}
+
+/** Linha de base por horário de cada alvo, a partir das janelas de 5 min do mesmo horário nos dias anteriores. */
+export function groupSeasonal(rollups: readonly { targetId: string; p50Ms: number | null; p95Ms: number | null }[]): Map<string, SeasonalBase> {
+  const out = new Map<string, SeasonalBase>();
+  for (const r of rollups) {
+    const base = out.get(r.targetId) ?? { p50: [], p95: [] };
+    if (r.p50Ms !== null) base.p50.push(r.p50Ms);
+    if (r.p95Ms !== null) base.p95.push(r.p95Ms);
+    out.set(r.targetId, base);
+  }
+  return out;
 }
 
 /** Até quando o histórico é mantido: medições cruas 48 h, janelas de 5 min 30 dias. */

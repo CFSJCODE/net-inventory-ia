@@ -1284,6 +1284,12 @@ describe("gatilho da janela deslizante no estado do alvo (fase 6)", () => {
     expect(windowVerdict("ICMP", [...stable(100, 20), ...stable(20, 900)])?.status).toBe("DEGRADED");
   });
 
+  it("não dispara quando o p95 está dentro do habitual deste horário nos outros dias", () => {
+    const trail = [...stable(100, 20), ...stable(20, 900)];
+    expect(windowVerdict("ICMP", trail, undefined, Array.from({ length: 12 }, () => 900))).toBeNull();
+    expect(windowVerdict("ICMP", trail, undefined, Array.from({ length: 12 }, () => 100))?.status).toBe("DEGRADED");
+  });
+
   it("o histórico do banco entra no alvo ao carregar", () => {
     const hydrated = hydrateTarget(target({ id: "x" }), { checks: [], everOk: true, trail: stable(400, 5) }, T0);
     expect(hydrated.trail).toHaveLength(300);
