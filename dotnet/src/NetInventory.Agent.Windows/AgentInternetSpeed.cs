@@ -9,7 +9,7 @@ namespace NetInventory.Agent.Windows;
 /// servidor do teste da Cloudflare, atendido pelo PoP mais próximo). Mede o caminho PC → modem → operadora →
 /// Internet, que o iperf3 até a máquina do painel não mede. A taxa conta só a transferência do corpo, sem o
 /// tempo até o primeiro byte, e o resultado vai na mesma tabela do iperf3 (servidor speed.cloudflare.com,
-/// porta 443).
+/// porta 443). Cada direção tem prazo; o que chegou até ele ainda vira taxa.
 /// </summary>
 public static class AgentInternetSpeed
 {
@@ -23,13 +23,23 @@ public static class AgentInternetSpeed
         using var handler = new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false, UseProxy = false, AutomaticDecompression = DecompressionMethods.None };
         using var http = new HttpClient(handler) { BaseAddress = new Uri($"https://{Host}/"), Timeout = Timeout.InfiniteTimeSpan };
         http.DefaultRequestHeaders.UserAgent.ParseAdd(AgentProbes.UserAgent);
+        // Cada direção tem o seu prazo; uma que falha não impede a outra.
         var download = await Measure(() => Download(http, downloadBytes, timeout, cancellation), cancellation);
-        if (download.Error is not null) return new(at, Host, Port, null, null, null, null, download.Error);
         var upload = await Measure(() => Upload(http, uploadBytes, timeout, cancellation), cancellation);
-        return new(at, Host, Port, upload.Mbps, download.Mbps, null, Math.Round((download.Seconds ?? 0) + (upload.Seconds ?? 0), 2), upload.Error);
+        var error = (download.Error, upload.Error) switch
+        {
+            (null, null) => null,
+            ({ } d, null) => $"download: {d}",
+            (null, { } u) => $"upload: {u}",
+            ({ } d, { } u) => d == u ? d : $"download: {d}; upload: {u}",
+        };
+        return new(at, Host, Port, upload.Mbps, download.Mbps, null, Math.Round((download.Seconds ?? 0) + (upload.Seconds ?? 0), 2), error);
     }
 
     private sealed record Reading(double? Mbps, double? Seconds, string? Error);
+
+    /// <summary>Menos que isso transferido até o prazo não dá taxa confiável.</summary>
+    private const long MinBytes = 256 * 1024;
 
     private static async Task<Reading> Measure(Func<Task<Reading>> run, CancellationToken cancellation)
     {
@@ -39,6 +49,10 @@ public static class AgentInternetSpeed
         catch (IOException) { return new(null, null, "conexão interrompida"); }
     }
 
+    /// <summary>
+    /// Baixa até <paramref name="bytes"/>; se o prazo chega antes, a taxa é a do que chegou até ali (conexão
+    /// lenta continua medida, em vez de virar falha).
+    /// </summary>
     private static async Task<Reading> Download(HttpClient http, long bytes, TimeSpan timeout, CancellationToken cancellation)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
@@ -49,25 +63,42 @@ public static class AgentInternetSpeed
         var buffer = new byte[BufferSize];
         long total = 0;
         var clock = Stopwatch.StartNew();
-        int read;
-        while ((read = await body.ReadAsync(buffer, cts.Token)) > 0) total += read;
+        try
+        {
+            int read;
+            while ((read = await body.ReadAsync(buffer, cts.Token)) > 0) total += read;
+        }
+        catch (OperationCanceledException) when (!cancellation.IsCancellationRequested && total >= MinBytes)
+        {
+            // Prazo esgotado no meio: vale o que chegou.
+        }
         clock.Stop();
         return Rate(total, clock.Elapsed);
     }
 
+    /// <summary>
+    /// Envia até <paramref name="bytes"/>. O tempo vai da primeira à última leitura do corpo pelo HttpClient,
+    /// sem a espera pela resposta do servidor depois do envio; se o prazo chega antes, vale o que saiu.
+    /// </summary>
     private static async Task<Reading> Upload(HttpClient http, long bytes, TimeSpan timeout, CancellationToken cancellation)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         cts.CancelAfter(timeout);
         // Corpo de zeros gerado na hora: nada do disco nem da memória do PC vai para fora.
-        using var content = new StreamContent(new ZeroStream(bytes), BufferSize);
+        var body = new ZeroStream(bytes);
+        using var content = new StreamContent(body, BufferSize);
         content.Headers.ContentLength = bytes;
         content.Headers.ContentType = new("application/octet-stream");
-        var clock = Stopwatch.StartNew();
-        using var response = await http.PostAsync("__up", content, cts.Token);
-        clock.Stop();
-        response.EnsureSuccessStatusCode();
-        return Rate(bytes, clock.Elapsed);
+        try
+        {
+            using var response = await http.PostAsync("__up", content, cts.Token);
+            response.EnsureSuccessStatusCode();
+        }
+        catch (OperationCanceledException) when (!cancellation.IsCancellationRequested && body.Position >= MinBytes)
+        {
+            // Prazo esgotado no meio: vale o que saiu.
+        }
+        return Rate(body.Position, body.Elapsed);
     }
 
     private static Reading Rate(long bytes, TimeSpan elapsed)
@@ -77,10 +108,15 @@ public static class AgentInternetSpeed
         return new(Math.Round(bytes * 8 / seconds / 1_000_000, 1), Math.Round(seconds, 2), null);
     }
 
-    /// <summary>Fluxo só de leitura com <paramref name="length"/> bytes zerados.</summary>
+    /// <summary>
+    /// Fluxo só de leitura com <paramref name="length"/> bytes zerados, que anota o tempo entre a primeira e
+    /// a última leitura (o envio do corpo, sem a espera pela resposta).
+    /// </summary>
     private sealed class ZeroStream(long length) : Stream
     {
         private long position;
+        private readonly Stopwatch clock = new();
+        public TimeSpan Elapsed => clock.Elapsed;
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
@@ -88,10 +124,16 @@ public static class AgentInternetSpeed
         public override long Position { get => position; set => throw new NotSupportedException(); }
         public override int Read(byte[] buffer, int offset, int count)
         {
+            if (!clock.IsRunning && position == 0) clock.Start();
             var n = (int)Math.Min(count, length - position);
-            if (n <= 0) return 0;
+            if (n <= 0)
+            {
+                clock.Stop();
+                return 0;
+            }
             Array.Clear(buffer, offset, n);
             position += n;
+            if (position >= length) clock.Stop();
             return n;
         }
         public override void Flush() { }
