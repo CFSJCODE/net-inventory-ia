@@ -125,6 +125,9 @@ export const STATUS_CATALOG: CatalogEntry[] = [
   { slug: "dns-cloudflare", name: "Cloudflare DNS (1.1.1.1)", category: "INTERNET", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: resolver("1.1.1.1") },
   { slug: "dns-google", name: "Google DNS (8.8.8.8)", category: "INTERNET", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: resolver("8.8.8.8") },
   { slug: "dns-quad9", name: "Quad9 (9.9.9.9)", category: "INTERNET", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: resolver("9.9.9.9") },
+  // DNS recursivo da operadora (Claro/NET Virtua), para comparar com os públicos. Só responde a clientes da
+  // própria operadora: em outra rede ele nunca responde e fica "Sem dados" (ver `neverAnsweredReason`).
+  { slug: "dns-claro", name: "Claro DNS (181.213.132.8)", category: "INTERNET", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: resolver("181.213.132.8") },
   {
     slug: "internet-brasil",
     name: "Internet no Brasil",
