@@ -22,20 +22,29 @@ public static class ThroughputValidation
         if (batch.Results is null || batch.Results.Length > MaxResults) return "Lote inválido.";
         foreach (var r in batch.Results)
         {
-            if (r is null) return "Lote inválido.";
-            if (string.IsNullOrWhiteSpace(r.Server) || r.Server.Length > MaxHostLength || r.Server.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('.' or '-' or ':'))) return "Servidor inválido.";
-            if (r.Port is < 1 or > 65535) return "Porta inválida.";
-            if (!Rate(r.UploadMbps) || !Rate(r.DownloadMbps)) return "Taxa inválida.";
-            if (r.Retransmits is < 0) return "Retransmissões inválidas.";
-            if (r.DurationSec is { } d && (!double.IsFinite(d) || d < 0 || d > 600)) return "Duração inválida.";
-            if (r.Error is { } e && (e.Length > ProbeValidation.MaxErrorLength || e.Any(char.IsControl))) return "Erro inválido.";
+            if (Check(r) is { } error) return error;
         }
         return null;
     }
 
+    private static string? Check(AgentThroughputResult? r)
+    {
+        if (r is null) return "Lote inválido.";
+        if (!ValidHost(r.Server)) return "Servidor inválido.";
+        if (r.Port is < 1 or > 65535) return "Porta inválida.";
+        if (!Rate(r.UploadMbps) || !Rate(r.DownloadMbps)) return "Taxa inválida.";
+        if (r.Retransmits is < 0) return "Retransmissões inválidas.";
+        if (r.DurationSec is { } d && !(double.IsFinite(d) && d is >= 0 and <= 600)) return "Duração inválida.";
+        if (r.Error is { } e && (e.Length > ProbeValidation.MaxErrorLength || e.Any(char.IsControl))) return "Erro inválido.";
+        return null;
+    }
+
+    private static bool ValidHost(string? host) =>
+        !string.IsNullOrWhiteSpace(host) && host.Length <= MaxHostLength && host.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or ':');
+
     public static bool Fresh(AgentThroughputResult r, DateTimeOffset now) => r.At <= now.AddMinutes(2) && r.At >= now - MaxAge;
 
-    private static bool Rate(double? mbps) => mbps is null || double.IsFinite(mbps.Value) && mbps.Value >= 0 && mbps.Value <= MaxMbps;
+    private static bool Rate(double? mbps) => mbps is null || (double.IsFinite(mbps.Value) && mbps.Value is >= 0 and <= MaxMbps);
 
     /// <summary>
     /// Lê a saída de <c>iperf3 -J</c>. A taxa é a do lado que recebeu (<c>end.sum_received</c>), que

@@ -1,6 +1,7 @@
 "use server";
 
 import { requirePermission, requireSession } from "@/lib/auth/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { STATUS_CATALOG } from "@/lib/global-status/catalog";
 import { checkGlobalStatus, ensureCatalogSeeded } from "@/lib/global-status/collector";
@@ -575,6 +576,44 @@ async function loadVantages(main: { id: string }, serverPoints: RollupPoint[], e
   return rows;
 }
 
+type DetailTarget = Prisma.ProbeTargetGetPayload<object>;
+type LastCheck = Prisma.ProbeCheckGetPayload<object> | null;
+
+/** Uma linha de alvo do detalhe, com o histórico de 24 h, a última medição e a disponibilidade de 30 dias. */
+function targetRow(t: DetailTarget, ctx: { points: RollupPoint[]; historyEnd: Date | null; last: LastCheck; gateway: string | null; uptime30d: number | null }): StatusTargetRow {
+  const spec = { kind: t.kind as ProbeKind, host: t.host, url: t.url, port: t.port };
+  const { points, last } = ctx;
+  return {
+    key: t.key,
+    kind: spec.kind,
+    label: targetLabel(spec),
+    address: targetAddress(spec, ctx.gateway),
+    status: t.status as TargetStatus,
+    statusReason: t.statusReason,
+    lastCheckAt: t.lastCheckAt?.toISOString() ?? null,
+    lastLatencyMs: t.lastLatencyMs,
+    lastError: t.lastError,
+    intervalSec: t.intervalSec,
+    uptime24h: uptimeOf(points),
+    uptime30d: ctx.uptime30d,
+    ...latencySummary(points),
+    last: last && {
+      at: last.at.toISOString(),
+      ok: last.ok,
+      httpStatus: last.httpStatus,
+      dnsMs: last.dnsMs,
+      connectMs: last.connectMs,
+      tlsMs: last.tlsMs,
+      ttfbMs: last.ttfbMs,
+      totalMs: last.totalMs,
+      lossPct: last.lossPct,
+      jitterMs: last.jitterMs,
+      certDays: last.certDays,
+    },
+    spark: ctx.historyEnd ? sparkOf(points, ctx.historyEnd) : null,
+  };
+}
+
 export async function getGlobalStatusDetail(slug: string): Promise<StatusServiceDetail> {
   await requireSession();
   if (typeof slug !== "string" || !slug) return EMPTY_DETAIL;
@@ -631,40 +670,7 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
   return {
     components: service.components.map((c) => ({ name: c.name, groupName: c.groupName, status: c.status as ServiceStatus })),
     incidents: service.incidents.map((i) => incidentRow({ ...i, service: { slug: service.slug, name: service.name } })),
-    targets: targets.map((t, index): StatusTargetRow => {
-      const spec = { kind: t.kind as ProbeKind, host: t.host, url: t.url, port: t.port };
-      const points = history?.points.get(t.id) ?? [];
-      const last = lasts[index];
-      return {
-        key: t.key,
-        kind: spec.kind,
-        label: targetLabel(spec),
-        address: targetAddress(spec, gateway),
-        status: t.status as TargetStatus,
-        statusReason: t.statusReason,
-        lastCheckAt: t.lastCheckAt?.toISOString() ?? null,
-        lastLatencyMs: t.lastLatencyMs,
-        lastError: t.lastError,
-        intervalSec: t.intervalSec,
-        uptime24h: uptimeOf(points),
-        uptime30d: uptime30d.get(t.id) ?? null,
-        ...latencySummary(points),
-        last: last && {
-          at: last.at.toISOString(),
-          ok: last.ok,
-          httpStatus: last.httpStatus,
-          dnsMs: last.dnsMs,
-          connectMs: last.connectMs,
-          tlsMs: last.tlsMs,
-          ttfbMs: last.ttfbMs,
-          totalMs: last.totalMs,
-          lossPct: last.lossPct,
-          jitterMs: last.jitterMs,
-          certDays: last.certDays,
-        },
-        spark: history ? sparkOf(points, history.end) : null,
-      };
-    }),
+    targets: targets.map((t, index) => targetRow(t, { points: history?.points.get(t.id) ?? [], historyEnd: history?.end ?? null, last: lasts[index], gateway, uptime30d: uptime30d.get(t.id) ?? null })),
     vantages: main && vantages ? { targetLabel: targetLabel({ kind: main.kind as ProbeKind, port: main.port }), rows: vantages } : null,
     phases: phaseChecks ? buildPhaseSeries(phaseChecks, { end, hours: SPARK_HOURS, stepMin: PHASE_STEP_MIN }) : null,
     traceable: measuring && routesEnabled() && traceHost(targets) !== null,
