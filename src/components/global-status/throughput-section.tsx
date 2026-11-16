@@ -27,20 +27,23 @@ function RecentBars({ tests }: { tests: ThroughputTestView[] }) {
 }
 
 /**
- * "Banda da rede local (iperf3)": o teste que cada agente faz contra o servidor iperf3 da máquina do
- * painel, com o habitual da semana e um aviso quando cai pela metade. Some quando não há testes.
+ * "Banda": os testes de cada agente, um cartão por destino (rede local com iperf3 contra a máquina do
+ * painel; Internet no speed.cloudflare.com), com o habitual da semana e um aviso quando cai pela metade.
+ * Some quando não há testes.
  */
 export function ThroughputSection() {
   const { data } = useQuery({ queryKey: ["global-status-throughput"], queryFn: () => getThroughput(), refetchInterval: 120_000 });
   if (!data?.length) return null;
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-sm font-medium text-muted-foreground">Banda da rede local (iperf3)</h2>
+      <h2 className="text-sm font-medium text-muted-foreground">Banda (rede local e Internet)</h2>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {data.map((s) => (
-          <div key={s.vantage} className="flex flex-col gap-2 rounded-lg border p-3 text-xs">
+          <div key={s.id} className="flex flex-col gap-2 rounded-lg border p-3 text-xs">
             <div className="flex items-baseline justify-between gap-2">
-              <span className="truncate font-medium text-foreground">{s.label}</span>
+              <span className="truncate font-medium text-foreground">
+                {s.label} · {s.scope === "internet" ? "Internet" : "rede local"}
+              </span>
               <span className="shrink-0 text-muted-foreground">{formatRelativeTime(s.latest.at)}</span>
             </div>
             <div className="flex items-end justify-between gap-3">

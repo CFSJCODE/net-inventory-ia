@@ -698,7 +698,7 @@ export async function getRouteOverview(): Promise<RouteOverview | null> {
 }
 
 /** Segunda opinião do RIPE Atlas (fase 10): sondas públicas no Brasil até o mesmo destino. Sob demanda, em cache por 6 h. */
-/** Banda da rede local (iperf3) por agente, dos testes dos últimos 30 dias. Vazia sem testes ou sem a tabela. */
+/** Banda por agente e destino (rede local com iperf3, Internet com a Cloudflare), dos testes dos últimos 30 dias. Vazia sem testes ou sem a tabela. */
 export async function getThroughput(): Promise<ThroughputSummary[]> {
   await requireSession();
   const now = Date.now();

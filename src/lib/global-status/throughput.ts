@@ -1,10 +1,19 @@
 import { median } from "./stats";
 
 /**
- * Banda da rede local (iperf3): os testes que os agentes fazem contra o servidor iperf3 da máquina do
- * painel, resumidos por agente. Mede o caminho agente → switch → servidor, que as sondas de latência não
- * medem: um cabo negociando a 100 Mbit/s ou uma porta com erros aparece aqui antes de aparecer na latência.
+ * Banda medida pelos agentes, resumida por agente e destino:
+ * - rede local (iperf3): contra o servidor iperf3 da máquina do painel. Mede o caminho agente → switch →
+ *   servidor, que as sondas de latência não medem: um cabo negociando a 100 Mbit/s ou uma porta com erros
+ *   aparece aqui antes de aparecer na latência;
+ * - Internet: download e upload por HTTPS no speed.cloudflare.com (PoP mais próximo, no Rio), o caminho
+ *   agente → modem → operadora → Internet.
  */
+
+/** Destino do teste de banda de Internet do agente (porta 443). */
+export const INTERNET_SPEED_HOST = "speed.cloudflare.com";
+
+/** Teste de banda de Internet (Cloudflare), e não da rede local (iperf3). */
+export const isInternetTest = (r: { server: string }) => r.server === INTERNET_SPEED_HOST;
 
 /** Uma linha de ThroughputTest. */
 export interface ThroughputRow {
@@ -27,8 +36,12 @@ export interface ThroughputTestView {
 }
 
 export interface ThroughputSummary {
+  /** Chave do resumo: agente e destino. */
+  id: string;
   vantage: string;
   label: string;
+  /** "internet" = Cloudflare; "lan" = iperf3 até a máquina do painel. */
+  scope: "lan" | "internet";
   server: string;
   latest: ThroughputTestView;
   /** Mediana dos testes que deram certo nos últimos 7 dias (sem o mais novo); null com menos de 3. */
@@ -70,28 +83,39 @@ export function throughputWarning(latest: ThroughputRow, usualUp: number | null,
   if (usualDown && latest.downloadMbps !== null && latest.downloadMbps < usualDown * THROUGHPUT_DROP_SHARE) drops.push(`download ${formatMbps(latest.downloadMbps)} (costuma ser ${formatMbps(usualDown)})`);
   if (usualUp && latest.uploadMbps !== null && latest.uploadMbps < usualUp * THROUGHPUT_DROP_SHARE) drops.push(`upload ${formatMbps(latest.uploadMbps)} (costuma ser ${formatMbps(usualUp)})`);
   if (!drops.length) return null;
+  if (isInternetTest(latest)) {
+    return `Banda de Internet abaixo do habitual: ${drops.join(", ")}. Confira se há outra transferência grande na rede; se a rede local estiver normal, a queda é do modem ou da operadora.`;
+  }
   return `Banda da rede local abaixo do habitual: ${drops.join(", ")}. Confira o cabo, a velocidade negociada na porta do switch e se há outra transferência grande na rede.`;
 }
 
-/** Resumo por agente, do agente com teste mais novo para o mais velho. Pura. */
+/**
+ * Resumo por agente e destino (a rede local e a Internet têm habituais diferentes), do teste mais novo
+ * para o mais velho; no mesmo agente, a rede local antes da Internet. Pura.
+ */
 export function summarizeThroughput(rows: readonly ThroughputRow[], labels: ReadonlyMap<string, string>, now: number): ThroughputSummary[] {
-  const byVantage = new Map<string, ThroughputRow[]>();
+  const groups = new Map<string, ThroughputRow[]>();
   for (const r of rows) {
-    const list = byVantage.get(r.vantage) ?? [];
+    const key = `${r.vantage}|${isInternetTest(r) ? "internet" : "lan"}`;
+    const list = groups.get(key) ?? [];
     list.push(r);
-    byVantage.set(r.vantage, list);
+    groups.set(key, list);
   }
   const out: ThroughputSummary[] = [];
-  for (const [vantage, list] of byVantage) {
+  for (const [id, list] of groups) {
+    const vantage = list[0].vantage;
     const sorted = [...list].sort((a, b) => b.at.getTime() - a.at.getTime());
     const [latest, ...older] = sorted;
     const week = older.filter((r) => !r.error && now - r.at.getTime() <= WEEK_MS);
     const usualUploadMbps = usual(week, (r) => r.uploadMbps);
     const usualDownloadMbps = usual(week, (r) => r.downloadMbps);
+    const internet = isInternetTest(latest);
     out.push({
+      id,
       vantage,
       label: labels.get(vantage) ?? "Agente",
-      server: `${latest.server}:${latest.port}`,
+      scope: internet ? "internet" : "lan",
+      server: internet ? `${latest.server} (Cloudflare)` : `${latest.server}:${latest.port}`,
       latest: view(latest),
       usualUploadMbps,
       usualDownloadMbps,
@@ -99,5 +123,6 @@ export function summarizeThroughput(rows: readonly ThroughputRow[], labels: Read
       recent: sorted.slice(0, RECENT).map(view),
     });
   }
-  return out.sort((a, b) => b.latest.at.localeCompare(a.latest.at));
+  const scopeOrder = (s: ThroughputSummary) => (s.scope === "lan" ? 0 : 1);
+  return out.sort((a, b) => (a.vantage === b.vantage ? scopeOrder(a) - scopeOrder(b) : b.latest.at.localeCompare(a.latest.at)));
 }
