@@ -46,6 +46,19 @@ describe("observe", () => {
     ]);
   });
 
+  it("erros de interface (Switch Health): alerta a partir do limite e diz a porta", () => {
+    const t = { ...thresholds, ifErrorsPerMin: 10 };
+    const errs = { ...snmp, cpuPct: 10, ifErrorsPerMin: 25, ifErrorsPort: "GE1/0/7" };
+    const o = observe(errs, t, false).find((x) => x.kind === "ifErrors");
+    expect(o).toMatchObject({ bad: true, value: 25 });
+    expect(o?.detail).toContain("GE1/0/7");
+    expect(observe({ ...errs, ifErrorsPerMin: 3 }, t, false).find((x) => x.kind === "ifErrors")?.bad).toBe(false);
+    expect(observe({ ...errs, ifErrorsPerMin: null }, t, false).some((x) => x.kind === "ifErrors")).toBe(false);
+    const email = buildAlertEmail({ ...common, settings: { ...settings, thresholds: t }, target: sw, observation: o!, reading: errs, checks: 2, snmpConfigured: true });
+    expect(email.subject).toContain("Erros de interface");
+    expect(email.text).toContain("GE1/0/7");
+  });
+
   it("degradado por latência ou por perda", () => {
     const slow = { ...online, latencyMs: 230 };
     const lossy = { ...online, pingsReceived: 3, lossPct: 25 };

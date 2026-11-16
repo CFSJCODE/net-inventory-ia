@@ -13,6 +13,11 @@ export interface AlertThresholds {
   criticalLatencyMs: number;
   /** Perda de pacotes a partir disso = desempenho degradado. */
   lossPct: number;
+  /**
+   * Switch Health: erros de interface por minuto numa porta a partir dos quais há alerta. Não é gravado
+   * aqui: vem da configuração da seção Switch Health (switchHealth.settings), única fonte do limite.
+   */
+  ifErrorsPerMin?: number;
 }
 
 export interface EmailAlertSettings {

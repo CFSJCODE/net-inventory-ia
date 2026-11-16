@@ -18,6 +18,7 @@ import { AUTO_INTERVALS, intervalKey, intervalMinutes, type AutoIntervalKey } fr
 import type { ToolResult } from "@/app/actions/tool-actions";
 import { EquipmentFormDialog } from "./equipment-form-dialog";
 import { EquipmentStatusPanel } from "./equipment-status-panel";
+import { SwitchHealthCard } from "./switch-health-card";
 
 async function unwrap<T>(promise: Promise<ToolResult<T>>): Promise<T> {
   const result = await promise;
@@ -145,6 +146,9 @@ export function EquipmentDetailSection({ equipment }: { equipment: EquipmentRow 
           <EquipmentStatusPanel data={detail.data} isFetching={detail.isFetching} onRefresh={() => detail.refetch()} controls={<AutoReadControl equipment={equipment} />} />
         </>
       ) : null}
+
+      {/* Fora da leitura ao vivo: com a switch sem responder, o histórico gravado continua visível. */}
+      <SwitchHealthCard equipmentId={equipment.id} />
     </section>
   );
 }

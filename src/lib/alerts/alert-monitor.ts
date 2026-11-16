@@ -5,6 +5,8 @@ import { decrypt } from "@/lib/ai/settings";
 import { displayName } from "@/lib/device-name";
 import { mapWithConcurrency } from "@/lib/network/concurrency";
 import { readHealthMetrics } from "@/lib/network/equipment-status";
+import { latestHealthByIp } from "@/lib/network/switch-health/poller";
+import { getSwitchHealthSettings } from "@/lib/network/switch-health/settings";
 import { getEmailAlertConfig, recordDelivery, type EmailAlertConfig } from "./email-settings";
 import { sendResendEmail } from "./resend";
 import { EMPTY_STATE, evaluate, lossPct, parsePingOutput, type CheckState, type PingStats, type RuleOptions } from "./rules";
@@ -47,6 +49,8 @@ const RULES: Record<CheckKind, Omit<RuleOptions, "cooldownMs">> = {
   cpu: { badToFire: 1, goodToClear: 2 },
   mem: { badToFire: 1, goodToClear: 2 },
   temp: { badToFire: 1, goodToClear: 2 },
+  // Erros de interface vêm em rajadas: dois minutos seguidos acima do limite para alertar, três limpos para encerrar.
+  ifErrors: { badToFire: 2, goodToClear: 3 },
 };
 
 interface QueuedEmail {
@@ -60,6 +64,8 @@ interface QueuedEmail {
 
 interface PersistedState {
   checks: Record<string, CheckState>;
+  /** Rodada do coletor Switch Health já contada em cada checagem de erros de interface (por chave). */
+  samples?: Record<string, number>;
   outbox: QueuedEmail[];
   /** Última leitura de cada equipamento (por IP). */
   readings: Record<string, HostReading>;
@@ -156,7 +162,33 @@ async function measure(target: Target, prev: HostReading | undefined): Promise<H
     // Hora e latência do último ping respondido andam juntas (o SNMP pode responder sem o ping).
     lastPingAt: latencyMs !== null ? at : (prev?.lastPingAt ?? null),
     lastLatencyMs: latencyMs ?? prev?.lastLatencyMs ?? null,
+    ...interfaceErrors(target.host),
   };
+}
+
+/**
+ * Erros de interface da última rodada do coletor Switch Health (lê os contadores a cada minuto). Independe
+ * da community: um equipamento SNMPv3 também é lido pelo coletor.
+ */
+function interfaceErrors(host: string): Pick<HostReading, "ifErrorsPerMin" | "ifErrorsPort" | "ifSampleAt"> {
+  const health = latestHealthByIp(host);
+  if (!health) return { ifErrorsPerMin: null, ifErrorsPort: null, ifSampleAt: null };
+  return {
+    ifErrorsPerMin: health.worstPortErrorsPerMin ?? (health.errorsPerMin !== null ? 0 : null),
+    ifErrorsPort: health.worstPort,
+    ifSampleAt: health.at,
+  };
+}
+
+/**
+ * Erros de interface: o coletor lê a cada minuto e a checagem roda a cada 15 s. Cada rodada do coletor conta
+ * uma vez só, senão uma única leitura ruim bastaria para as 2 seguidas do alerta. Devolve se esta é nova.
+ */
+function isNewSample(state: PersistedState, key: string, sampleAt: number | null | undefined): boolean {
+  state.samples ??= {};
+  if (sampleAt == null || state.samples[key] === sampleAt) return false;
+  state.samples[key] = sampleAt;
+  return true;
 }
 
 /** Mede todos os equipamentos agora e guarda as leituras (os e-mails e o teste mostram essas leituras). */
@@ -225,20 +257,25 @@ async function runChecks(): Promise<void> {
   const watched = new Set(config.targets);
   const cooldownMs = config.cooldownMinutes * 60_000;
   const results = await collectReadings(config);
+  // O limite de erros de interface é o da seção Switch Health (o mesmo que colore as portas na tela).
+  const switchHealth = await getSwitchHealthSettings();
+  const thresholds = { ...config.thresholds, ifErrorsPerMin: switchHealth.errorsPerMin };
+  const settings = { ...config, thresholds };
 
   const at = now();
   const seen = new Set<string>();
   for (const { target, reading } of results) {
-    const observations = selectAlertObservations(observe(reading, config.thresholds, watched.has(target.host)), config.mode);
+    const observations = selectAlertObservations(observe(reading, thresholds, watched.has(target.host)), config.mode);
     const newAlerts: { observation: Observation; since: number | null }[] = [];
     for (const o of observations) {
       const key = `${target.host}|${o.kind}`;
       seen.add(key);
       const prev = state.checks[key] ?? EMPTY_STATE;
+      if (o.kind === "ifErrors" && !isNewSample(state, key, reading.ifSampleAt)) continue;
       const { state: next, event } = evaluate(prev, o.bad, at, { ...RULES[o.kind], cooldownMs });
       next.value = o.value;
       state.checks[key] = next;
-      const common = { target, observation: o, reading, at, intervalMs: ALERT_CHECK_INTERVAL_MS, settings: config, snmpConfigured: target.equipment !== null };
+      const common = { target, observation: o, reading, at, intervalMs: ALERT_CHECK_INTERVAL_MS, settings, snmpConfigured: target.equipment !== null };
       if (event === "alert") {
         newAlerts.push({ observation: o, since: next.since });
         console.log(`[alertas] ${alertTitle(o.kind)}: ${targetName(target)} — ${o.detail}`);
@@ -259,7 +296,7 @@ async function runChecks(): Promise<void> {
         reading,
         at,
         intervalMs: ALERT_CHECK_INTERVAL_MS,
-        settings: config,
+        settings,
         snmpConfigured: target.equipment !== null,
         checks: 1,
         since: primary.since,
@@ -271,6 +308,7 @@ async function runChecks(): Promise<void> {
   // Checagem que deixou de existir (equipamento tirado da lista, SNMP descadastrado): esquece o estado,
   // senão ficaria como problema ativo para sempre.
   for (const key of Object.keys(state.checks)) if (!seen.has(key)) delete state.checks[key];
+  for (const key of Object.keys(state.samples ?? {})) if (!seen.has(key)) delete state.samples![key];
 
   await flushOutbox(state, config);
   await saveState(state);
