@@ -229,7 +229,8 @@ try { await store.CreateInvitationAsync("Revoked agent", 5, agentId); Check(fals
     Check((await probeStore.ListProbeTargetsAsync()).Length == 0, "serviço desligado não manda alvos ao agente");
     using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = probeStore.DatabasePath }.ToString()))
     {
-        db.Open(); using var read = db.CreateCommand();
+        db.Open();
+        using var read = db.CreateCommand();
         read.CommandText = "SELECT \"vantage\", typeof(\"at\"), \"at\", \"ok\", \"httpStatus\", \"ttfbMs\" FROM \"ProbeCheck\" WHERE \"targetId\"='t-http'";
         using var row = read.ExecuteReader(); Check(row.Read(), "medição gravada");
         Check(row.GetString(0) == "agent:" + agentId.ToString("D") && row.GetString(1) == "integer" && row.GetInt64(2) == now.AddSeconds(-30).ToUnixTimeMilliseconds(), "ponto de medição e data no formato do Prisma");
@@ -274,7 +275,8 @@ try { await store.CreateInvitationAsync("Revoked agent", 5, agentId); Check(fals
     {
         db.Open(); using var read = db.CreateCommand();
         read.CommandText = "SELECT t.\"vantage\", t.\"verdict\", t.\"reached\", typeof(t.\"at\"), COUNT(h.\"id\") FROM \"RouteTrace\" t JOIN \"RouteHop\" h ON h.\"traceId\" = t.\"id\" GROUP BY t.\"id\"";
-        using var row = read.ExecuteReader(); Check(row.Read(), "rota do agente gravada");
+        using var row = read.ExecuteReader();
+        Check(row.Read(), "rota do agente gravada");
         Check(row.GetString(0) == "agent:" + agentId.ToString("D") && row.GetString(1) == InventoryStore.PendingVerdict && row.GetInt64(2) == 1 && row.GetString(3) == "integer" && row.GetInt64(4) == 3, "rota pendente com os saltos, no formato do Prisma");
     }
 }

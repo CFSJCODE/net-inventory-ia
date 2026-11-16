@@ -73,7 +73,9 @@ public sealed partial class InventoryStore
                 {
                     exists.Transaction = transaction;
                     exists.CommandText = "SELECT COUNT(*) FROM \"RouteTrace\" WHERE \"serviceId\" = $s AND \"vantage\" = $v AND \"at\" = $at";
-                    exists.Parameters.AddWithValue("$s", r.ServiceId); exists.Parameters.AddWithValue("$v", vantage); exists.Parameters.AddWithValue("$at", at);
+                    exists.Parameters.AddWithValue("$s", r.ServiceId);
+                    exists.Parameters.AddWithValue("$v", vantage);
+                    exists.Parameters.AddWithValue("$at", at);
                     if (Convert.ToInt32(exists.ExecuteScalar()) > 0) { ignored++; continue; }
                 }
                 var id = "ag" + Guid.NewGuid().ToString("N");
@@ -84,10 +86,16 @@ public sealed partial class InventoryStore
                         INSERT INTO "RouteTrace" ("id","serviceId","vantage","at","host","destIp","tool","reached","verdict","summary","error")
                         VALUES ($id,$s,$v,$at,$host,$dest,$tool,$reached,$verdict,$summary,$error)
                         """;
-                    insert.Parameters.AddWithValue("$id", id); insert.Parameters.AddWithValue("$s", r.ServiceId); insert.Parameters.AddWithValue("$v", vantage);
-                    insert.Parameters.AddWithValue("$at", at); insert.Parameters.AddWithValue("$host", r.Host); insert.Parameters.AddWithValue("$dest", (object?)r.DestIp ?? DBNull.Value);
-                    insert.Parameters.AddWithValue("$tool", r.Tool); insert.Parameters.AddWithValue("$reached", r.Reached ? 1 : 0);
-                    insert.Parameters.AddWithValue("$verdict", PendingVerdict); insert.Parameters.AddWithValue("$summary", "Aguardando a análise do servidor.");
+                    insert.Parameters.AddWithValue("$id", id);
+                    insert.Parameters.AddWithValue("$s", r.ServiceId);
+                    insert.Parameters.AddWithValue("$v", vantage);
+                    insert.Parameters.AddWithValue("$at", at);
+                    insert.Parameters.AddWithValue("$host", r.Host);
+                    insert.Parameters.AddWithValue("$dest", (object?)r.DestIp ?? DBNull.Value);
+                    insert.Parameters.AddWithValue("$tool", r.Tool);
+                    insert.Parameters.AddWithValue("$reached", r.Reached ? 1 : 0);
+                    insert.Parameters.AddWithValue("$verdict", PendingVerdict);
+                    insert.Parameters.AddWithValue("$summary", "Aguardando a análise do servidor.");
                     insert.Parameters.AddWithValue("$error", (object?)r.Error ?? DBNull.Value);
                     insert.ExecuteNonQuery();
                 }
@@ -96,8 +104,10 @@ public sealed partial class InventoryStore
                     using var hop = db.CreateCommand();
                     hop.Transaction = transaction;
                     hop.CommandText = "INSERT INTO \"RouteHop\" (\"traceId\",\"ttl\",\"ip\",\"rttMs\") VALUES ($t,$ttl,$ip,$rtt)";
-                    hop.Parameters.AddWithValue("$t", id); hop.Parameters.AddWithValue("$ttl", h.Ttl);
-                    hop.Parameters.AddWithValue("$ip", (object?)h.Ip ?? DBNull.Value); hop.Parameters.AddWithValue("$rtt", (object?)h.RttMs ?? DBNull.Value);
+                    hop.Parameters.AddWithValue("$t", id);
+                    hop.Parameters.AddWithValue("$ttl", h.Ttl);
+                    hop.Parameters.AddWithValue("$ip", (object?)h.Ip ?? DBNull.Value);
+                    hop.Parameters.AddWithValue("$rtt", (object?)h.RttMs ?? DBNull.Value);
                     hop.ExecuteNonQuery();
                 }
                 accepted++;
