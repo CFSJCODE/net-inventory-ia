@@ -63,6 +63,26 @@ function LaneRow({ lane, timeline, selected, onSelect }: { lane: LaneKey; timeli
   );
 }
 
+/** Trilha "Rota" (fase 9): o passo em que a rota do servidor até o serviço mudou fica marcado. */
+function RouteRow({ timeline, marks }: { timeline: Timeline; marks: { at: number; text: string }[] }) {
+  const byStep = timeline.steps.map((stepStart) => marks.filter((m) => m.at >= stepStart && m.at < stepStart + timeline.stepMs));
+  const changed = marks.length > 0;
+  return (
+    <div className="flex items-center gap-2">
+      <span className={cn("w-24 shrink-0 truncate", changed ? "text-sky-400" : "text-muted-foreground")}>Rota</span>
+      <div className="flex h-4 min-w-0 flex-1 gap-px" role="img" aria-label={changed ? `Rota: ${marks.length} troca(s) na janela` : "Rota: sem trocas na janela"}>
+        {byStep.map((list, i) => (
+          <span
+            key={i}
+            title={`${timeOf(timeline.steps[i])} · ${list.length ? list.map((m) => m.text).join(" · ") : "sem troca de rota"}`}
+            className={cn("h-full min-w-0 flex-1 rounded-[1px]", list.length ? "bg-sky-500" : "bg-zinc-800")}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function StepDetail({ timeline, index }: { timeline: Timeline; index: number }) {
   return (
     <div className="flex flex-col gap-1 rounded-md bg-muted/40 p-2">
@@ -181,7 +201,7 @@ export function ProbeTimeline({ slug, vantages }: { slug: string; vantages: Stat
           ))}
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">Gateway, WAN, DNS e HTTPS no mesmo relógio. A primeira faixa vermelha ou amarela, de cima para baixo, é por onde começar.</p>
+      <p className="text-xs text-muted-foreground">Gateway, WAN, DNS, HTTPS e as trocas de rota no mesmo relógio. A primeira faixa vermelha ou amarela, de cima para baixo, é por onde começar.</p>
       {points.length > 1 && (
         <div className="flex flex-wrap gap-1">
           {points.map((p) => (
@@ -208,6 +228,7 @@ export function ProbeTimeline({ slug, vantages }: { slug: string; vantages: Stat
             {LANE_ORDER.map((lane) => (
               <LaneRow key={lane} lane={lane} timeline={timeline} selected={selected} onSelect={setSelected} />
             ))}
+            {vantage === "server" && data?.routeMarks && <RouteRow timeline={timeline} marks={data.routeMarks} />}
             <div className="flex justify-between pl-26 text-muted-foreground tabular-nums">
               <span>{timeOf(timeline.start)}</span>
               <span>{timeOf(timeline.start + (timeline.end - timeline.start) / 2)}</span>

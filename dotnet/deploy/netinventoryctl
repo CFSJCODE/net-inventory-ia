@@ -26,6 +26,8 @@ Uso: sudo netinventoryctl <comando>
                              com o id, o convite so recadastra aquele agente (ex.: banco migrado)
   backup [pasta]             Copia consistente dos bancos, config.json e chaves (padrao /var/backups/netinventory-dotnet)
   firewall [rede/cidr]       Libera a porta no ufw para a rede (padrao 192.168.0.0/16)
+  rota-tcp [on|off|status]   Traceroute TCP 443 no Status global (padrao on): da ao servico CAP_NET_RAW
+                             por um drop-in do systemd e reinicia; off remove
 
 As alteracoes de "set" valem depois de "apply".
 EOF
@@ -200,5 +202,29 @@ case "$cmd" in
         cidr=${2:-192.168.0.0/16}
         [[ $cidr =~ ^[0-9.]+/[0-9]{1,2}$ ]] || fail 'Informe a rede como 192.168.0.0/24.' 2
         ufw allow from "$cidr" to any port "$(port)" proto tcp ;;
+    rota-tcp)
+        # O traceroute -T precisa de socket bruto. Com NoNewPrivileges=true no servico, setcap no binario e
+        # sudo nao valem; a capacidade ambiente do systemd passa para os processos filhos (motor -> traceroute).
+        need_root
+        dropin_dir=/etc/systemd/system/$unit.d
+        dropin=$dropin_dir/rota-tcp.conf
+        case ${2:-on} in
+            on)
+                command -v traceroute >/dev/null || fail 'traceroute ausente: sudo apt install traceroute' 2
+                install -d -m 0755 -o root -g root "$dropin_dir"
+                printf '%s\n' '# netinventoryctl rota-tcp: traceroute TCP 443 do Status global.' '[Service]' 'AmbientCapabilities=CAP_NET_RAW' > "$dropin"
+                chmod 0644 "$dropin"
+                systemctl daemon-reload
+                systemctl restart "$unit"
+                echo 'Traceroute TCP liberado (CAP_NET_RAW no servico). Servico reiniciado.' ;;
+            off)
+                rm -f -- "$dropin"
+                systemctl daemon-reload
+                systemctl restart "$unit"
+                echo 'Traceroute TCP desligado. Servico reiniciado.' ;;
+            status)
+                if [[ -f $dropin ]]; then echo 'rota-tcp: on'; else echo 'rota-tcp: off'; fi ;;
+            *) usage; exit 2 ;;
+        esac ;;
     *) usage; exit 2 ;;
 esac

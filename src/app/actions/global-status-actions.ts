@@ -9,7 +9,13 @@ import { getLocalConnectivity, runProbesNow } from "@/lib/global-status/probe-ru
 import { defaultGateway } from "@/lib/global-status/probes";
 import { buildPhaseSeries, buildSeries, latencySummary, mainLatencyTarget, tailPoints, uptimeFromTotals, uptimeOf, type PhaseSeries, type RollupPoint, type SparkSeries } from "@/lib/global-status/series";
 import { traceHost } from "@/lib/global-status/traceroute";
-import { ROUTE_ORIGIN, routesEnabled, traceServiceNow } from "@/lib/global-status/route-runner";
+import { parseEdge } from "@/lib/global-status/edge-pop";
+import { loadRouteOverview, type RouteOverview } from "@/lib/global-status/route-overview";
+import { pathHistory } from "@/lib/global-status/route-history";
+import { monthlyRoutes } from "@/lib/global-status/route-daily";
+import { atlasCompare, type AtlasComparison } from "@/lib/global-status/atlas";
+import { interconnectionText, interconnections } from "@/lib/global-status/route-peering";
+import { ROUTE_ORIGIN, readRouteToolState, routesEnabled, traceServiceNow, type RouteToolState } from "@/lib/global-status/route-runner";
 import { CABLE_MAP_PAGE } from "@/lib/global-status/subsea-cables";
 import { BUCKET_MS, bucketStart } from "@/lib/global-status/stats";
 import { storedIsp } from "@/lib/global-status/internet-signals";
@@ -368,6 +374,10 @@ export interface StatusRouteHopRow {
   rdns: string | null;
   city: string | null;
   country: string | null;
+  /** Outros IPs no mesmo salto (ECMP). */
+  altIps: string[];
+  /** PEERING | IX | INTL_EDGE | CORE | AGGREGATION | ACCESS */
+  role: string | null;
 }
 
 export interface StatusRouteDetail {
@@ -386,14 +396,76 @@ export interface StatusRouteDetail {
   /** HIGH | MEDIUM | LOW */
   confidence: string | null;
   error: string | null;
+  /** Modo das sondas: udp | paris | tcp | union. */
+  mode: string | null;
+  /** Rota que não chegou: o TTL do último roteador que respondeu. */
+  lastVisibleTtl: number | null;
+  /** Onde a rota passa de uma rede para outra (fase 8): "Embratel → Google em Rio de Janeiro (peering direto)". */
+  interconnections: string[];
+  /** Borda do CDN que atendeu a última sonda HTTP do servidor (fase 8). */
+  edge: { provider: string; pop: string | null; city: string | null } | null;
+  /** Trechos de 7 dias com a mesma rota, do mais novo ao mais antigo (fase 9). */
+  history: { from: string; to: string; asPath: string | null; place: string; traces: number }[];
+  /** Resumo dos últimos 30 dias (fase 10, tabela RouteDaily); null até o primeiro dia fechado. */
+  monthly: { days: number; abroadDays: number; pathChanges: number; exits: string[]; avgDestRttMs: number | null } | null;
+  /** A rota mais nova vista de cada agente (fase 10): o mesmo serviço a partir de outra rede. */
+  agents: { vantage: string; label: string; at: string; verdict: string; summary: string; reached: boolean; destRttMs: number | null; hops: number }[];
   hops: StatusRouteHopRow[];
   /** Página do mapa de cabos (atribuição dos dados dos cabos). */
   cableSource: string;
 }
 
+function parseIpList(json: string | null): string[] {
+  if (!json) return [];
+  try {
+    const list: unknown = JSON.parse(json);
+    return Array.isArray(list) ? list.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** A rota mais nova de cada agente até o serviço, já analisada pelo servidor (as pendentes ficam de fora). */
+async function loadAgentRoutes(serviceId: string): Promise<StatusRouteDetail["agents"]> {
+  const latest = await prisma.routeTrace.groupBy({
+    by: ["vantage"],
+    where: { serviceId, vantage: { startsWith: AGENT_VANTAGE_PREFIX }, verdict: { not: "PENDING" }, at: { gte: new Date(Date.now() - 2 * DAY_MS) } },
+    _max: { at: true },
+  });
+  if (!latest.length) return [];
+  const traces = await prisma.routeTrace.findMany({
+    where: { serviceId, OR: latest.map((l) => ({ vantage: l.vantage, at: l._max.at ?? new Date(0) })) },
+    include: { _count: { select: { hops: true } } },
+  });
+  const labels = await agentLabels(traces.map((t) => agentIdOf(t.vantage)).filter((id): id is string => !!id));
+  return traces
+    .map((t) => ({
+      vantage: t.vantage,
+      label: labels.get(agentIdOf(t.vantage) ?? "") ?? `Agente ${agentIdOf(t.vantage)?.slice(0, 8) ?? ""}`.trim(),
+      at: t.at.toISOString(),
+      verdict: t.verdict,
+      summary: t.summary,
+      reached: t.reached,
+      destRttMs: t.destRttMs,
+      hops: t._count.hops,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
 async function loadRoute(serviceId: string): Promise<StatusRouteDetail | null> {
-  const t = await prisma.routeTrace.findFirst({ where: { serviceId }, orderBy: { at: "desc" }, include: { hops: { orderBy: { ttl: "asc" } } } });
+  const t = await prisma.routeTrace.findFirst({ where: { serviceId, vantage: "server" }, orderBy: { at: "desc" }, include: { hops: { orderBy: { ttl: "asc" } } } });
   if (!t) return null;
+  const lastEdge = await prisma.probeCheck.findFirst({ where: { vantage: "server", edge: { not: null }, target: { serviceId, kind: "HTTP" } }, orderBy: { at: "desc" }, select: { edge: true } });
+  const edge = parseEdge(lastEdge?.edge);
+  const destAsn = Number(t.asPath?.split(" ").pop()) || null;
+  const week = await prisma.routeTrace.findMany({
+    where: { serviceId, vantage: "server", error: null, at: { gte: new Date(Date.now() - 7 * 24 * 3_600_000) } },
+    select: { at: true, asPath: true, verdict: true, cableName: true, destCountry: true },
+  });
+  const history = pathHistory(week.map((w) => ({ ...w, at: w.at.getTime() })))
+    .slice(0, 8)
+    .map((h) => ({ ...h, from: new Date(h.from).toISOString(), to: new Date(h.to).toISOString() }));
+  const [monthly, agents] = await Promise.all([monthlyRoutes(serviceId).catch(() => null), loadAgentRoutes(serviceId)]);
   return {
     at: t.at.toISOString(),
     host: t.host,
@@ -408,7 +480,14 @@ async function loadRoute(serviceId: string): Promise<StatusRouteDetail | null> {
     candidates: t.candidates ? t.candidates.split(" · ").filter((c) => c && c !== t.cableName) : [],
     confidence: t.confidence,
     error: t.error,
-    hops: t.hops.map((h) => ({ ttl: h.ttl, ip: h.ip, rttMs: h.rttMs, asn: h.asn, asName: h.asName, rdns: h.rdns, city: h.city, country: h.country })),
+    mode: t.mode,
+    lastVisibleTtl: t.lastVisibleTtl,
+    interconnections: interconnections(t.hops, { asn: destAsn, asName: null }).map(interconnectionText),
+    edge: edge && { provider: edge.provider, pop: edge.pop, city: edge.city },
+    history,
+    monthly,
+    agents,
+    hops: t.hops.map((h) => ({ ttl: h.ttl, ip: h.ip, rttMs: h.rttMs, asn: h.asn, asName: h.asName, rdns: h.rdns, city: h.city, country: h.country, altIps: parseIpList(h.altIps), role: h.role })),
     cableSource: CABLE_MAP_PAGE,
   };
 }
@@ -594,6 +673,25 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
   };
 }
 
+/** Rotas e trânsito de todos os serviços (fases 8 e 9): seção "Rotas e trânsito" da página. */
+export async function getRouteOverview(): Promise<RouteOverview | null> {
+  await requireSession();
+  if (!probesEnabled(process.env.GLOBAL_STATUS_PROBES) || !routesEnabled()) return null;
+  return loadRouteOverview();
+}
+
+/** Segunda opinião do RIPE Atlas (fase 10): sondas públicas no Brasil até o mesmo destino. Sob demanda, em cache por 6 h. */
+export async function compareRouteWithAtlas(slug: string): Promise<AtlasComparison | null> {
+  await requireSession();
+  if (typeof slug !== "string" || !slug || !routesEnabled()) return null;
+  const service = await prisma.statusService.findUnique({ where: { slug }, select: { id: true } });
+  if (!service) return null;
+  const t = await prisma.routeTrace.findFirst({ where: { serviceId: service.id, vantage: "server", error: null }, orderBy: { at: "desc" }, select: { host: true, destRttMs: true, verdict: true, asPath: true } });
+  if (!t) return null;
+  const ispAsn = Number(t.asPath?.split(" ")[0]) || null;
+  return atlasCompare(t.host, { rttMs: t.destRttMs, verdict: t.verdict, ispAsn });
+}
+
 /** Rastreia a rota até o serviço agora ("Rastrear rota"), grava e devolve a rota interpretada. */
 export async function traceServiceRoute(slug: string): Promise<StatusRouteDetail | null> {
   await requirePermission("network.operate");
@@ -623,21 +721,27 @@ export interface GlobalStatusConfig {
   /** O e-mail sai pela configuração de Alertas → Configurar e-mails: chave do Resend e destinatário. */
   email: { ready: boolean; to: string | null };
   services: { slug: string; name: string; category: string; enabled: boolean }[];
+  /** Ferramenta da rota até os serviços (fase 7): traceroute, modo TCP e a última rota gravada. */
+  routeTool: RouteToolState | null;
+  routesEnabled: boolean;
 }
 
 async function loadConfig(): Promise<GlobalStatusConfig> {
   await ensureCatalogSeeded();
-  const [settings, isp, email, services] = await Promise.all([
+  const [settings, isp, email, services, routeTool] = await Promise.all([
     getGlobalStatusSettings(),
     storedIsp(),
     getEmailAlertConfig(),
     prisma.statusService.findMany({ orderBy: { position: "asc" }, select: { slug: true, name: true, category: true, enabled: true } }),
+    readRouteToolState(),
   ]);
   return {
     settings,
     isp: isp && { asn: isp.asn, name: isp.name },
     email: { ready: !!email.apiKey && !!email.to.trim(), to: email.to.trim() || null },
     services,
+    routeTool,
+    routesEnabled: routesEnabled(),
   };
 }
 

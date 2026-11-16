@@ -268,6 +268,7 @@ model StatusService {
   incidents      StatusIncident[]
   targets        ProbeTarget[]
   routes         RouteTrace[]
+  routeDays      RouteDaily[]
 }
 
 /// Componente declarado pelo provedor (ex.: "Git Operations", "São Paulo, Brazil - (GRU)").
@@ -364,6 +365,8 @@ model ProbeCheck {
   ttlSec     Int?
   /// DNS composto: JSON com a resposta de cada resolvedor (sistema, 8.8.8.8, 1.1.1.1).
   dnsAnswers String?
+  /// HTTP (fase 8): borda do CDN que atendeu, pelos cabeçalhos ("Cloudflare GRU", "Akamai").
+  edge       String?
   target     ProbeTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
 
   @@index([targetId, at])
@@ -419,6 +422,10 @@ model RouteTrace {
   /// Sequência de ASNs da rota ("28573 4230 15169"), para detectar mudança.
   asPath      String?
   error       String?
+  /// Modo das sondas (fase 7): udp | paris | tcp | union.
+  mode        String?
+  /// Rota que não chegou ao destino: o TTL do último roteador que respondeu antes do silêncio.
+  lastVisibleTtl Int?
   service     StatusService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   hops        RouteHop[]
 
@@ -439,7 +446,34 @@ model RouteHop {
   /// Cidade deduzida do rDNS (ex.: "São Paulo") e o país (ISO alfa-2).
   city     String?
   country  String?
+  /// Outros IPs no mesmo salto (ECMP), JSON ["200.230.1.2", …]; null quando só um respondeu (fase 7).
+  altIps   String?
+  /// PEERING | IX | INTL_EDGE | CORE | AGGREGATION | ACCESS, pelo nome reverso.
+  role     String?
   trace    RouteTrace @relation(fields: [traceId], references: [id], onDelete: Cascade)
 
   @@index([traceId])
+}
+
+/// Resumo diário das rotas de um serviço (fase 10): as rotas cruas ficam 7 dias; o resumo fica 400 dias.
+model RouteDaily {
+  serviceId     String
+  vantage       String   @default("server")
+  /// Dia no horário de Brasília (AAAA-MM-DD).
+  day           String
+  traces        Int
+  /// Rotas servidas de fora do país e no país (Brasil, borda de CDN ou cache da operadora).
+  international Int
+  domestic      Int
+  /// Trocas de caminho (ASNs ou lugar) dentro do dia.
+  pathChanges   Int
+  topVerdict    String?
+  topAsPath     String?
+  /// Saída internacional mais vista ("Embratel → Miami").
+  topExit       String?
+  avgDestRttMs  Float?
+  service       StatusService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([serviceId, vantage, day])
+  @@index([day])
 }

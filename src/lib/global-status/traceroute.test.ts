@@ -11,10 +11,10 @@ describe("parseTracerouteOutput", () => {
       " 4  1.1.1.1  12.1 ms !H  11.9 ms",
     ].join("\n");
     expect(parseTracerouteOutput(out)).toEqual([
-      { ttl: 1, ip: "192.168.0.1", rttMs: 0.4 },
-      { ttl: 2, ip: null, rttMs: null },
-      { ttl: 3, ip: "10.15.0.1", rttMs: 8.2 },
-      { ttl: 4, ip: "1.1.1.1", rttMs: 11.9 },
+      { ttl: 1, ip: "192.168.0.1", rttMs: 0.4, altIps: [] },
+      { ttl: 2, ip: null, rttMs: null, altIps: [] },
+      { ttl: 3, ip: "10.15.0.1", rttMs: 8.2, altIps: ["177.10.0.9"] },
+      { ttl: 4, ip: "1.1.1.1", rttMs: 11.9, altIps: [] },
     ]);
   });
 });
@@ -30,9 +30,9 @@ describe("parseTracepathOutput", () => {
       "     Resume: pmtu 1500 hops 3 back 4 ",
     ].join("\n");
     expect(parseTracepathOutput(out)).toEqual([
-      { ttl: 1, ip: "192.168.0.1", rttMs: 0.6 },
-      { ttl: 2, ip: null, rttMs: null },
-      { ttl: 3, ip: "200.160.1.1", rttMs: 10.3 },
+      { ttl: 1, ip: "192.168.0.1", rttMs: 0.6, altIps: [] },
+      { ttl: 2, ip: null, rttMs: null, altIps: [] },
+      { ttl: 3, ip: "200.160.1.1", rttMs: 10.3, altIps: [] },
     ]);
   });
 });
@@ -49,9 +49,9 @@ describe("parseTracertOutput", () => {
       "Rastreamento concluído.",
     ].join("\r\n");
     expect(parseTracertOutput(out)).toEqual([
-      { ttl: 1, ip: "192.168.0.1", rttMs: 1 },
-      { ttl: 2, ip: null, rttMs: null },
-      { ttl: 3, ip: "1.1.1.1", rttMs: 11 },
+      { ttl: 1, ip: "192.168.0.1", rttMs: 1, altIps: [] },
+      { ttl: 2, ip: null, rttMs: null, altIps: [] },
+      { ttl: 3, ip: "1.1.1.1", rttMs: 11, altIps: [] },
     ]);
   });
 });
@@ -59,9 +59,9 @@ describe("parseTracertOutput", () => {
 describe("finishHops", () => {
   it("corta os saltos mudos do fim e diz se chegou", () => {
     const hops = [
-      { ttl: 1, ip: "192.168.0.1", rttMs: 1 },
-      { ttl: 2, ip: "1.1.1.1", rttMs: 10 },
-      { ttl: 3, ip: null, rttMs: null },
+      { ttl: 1, ip: "192.168.0.1", rttMs: 1, altIps: [] },
+      { ttl: 2, ip: "1.1.1.1", rttMs: 10, altIps: [] },
+      { ttl: 3, ip: null, rttMs: null, altIps: [] },
     ];
     expect(finishHops(hops, "1.1.1.1")).toEqual({ hops: hops.slice(0, 2), reached: true });
     expect(finishHops(hops, "8.8.8.8").reached).toBe(false);

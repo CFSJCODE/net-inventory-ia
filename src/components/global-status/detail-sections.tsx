@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Route } from "lucide-react";
-import { traceServiceRoute, type StatusRouteDetail, type StatusServiceDetail } from "@/app/actions/global-status-actions";
+import { compareRouteWithAtlas, traceServiceRoute, type StatusRouteDetail, type StatusServiceDetail } from "@/app/actions/global-status-actions";
 import { useCan } from "@/components/auth/user-provider";
 import { Button } from "@/components/ui/button";
 import type { PhaseSeries } from "@/lib/global-status/series";
@@ -136,11 +136,25 @@ export function BgpRoute({ bgp }: { bgp: NonNullable<StatusServiceDetail["bgp"]>
 
 const VERDICT: Record<string, { label: string; className: string }> = {
   DOMESTIC: { label: "Servido no Brasil", className: "text-emerald-400" },
+  CDN_EDGE: { label: "Servido pela borda do CDN no Brasil", className: "text-emerald-400" },
   OPERATOR_CACHE: { label: "Cache na sua operadora", className: "text-emerald-400" },
   INTERNATIONAL: { label: "Servido de fora do Brasil", className: "text-sky-400" },
   UNDETERMINED: { label: "Origem indefinida", className: "text-muted-foreground" },
 };
 const CONFIDENCE: Record<string, string> = { HIGH: "alta", MEDIUM: "média", LOW: "baixa" };
+const ROLE: Record<string, string> = { PEERING: "peering", IX: "IX", INTL_EDGE: "borda internacional", CORE: "núcleo", AGGREGATION: "agregação", ACCESS: "acesso" };
+const MODE: Record<string, string> = { udp: "UDP", paris: "UDP com fluxo fixo (Paris)", tcp: "TCP 443", union: "UDP, Paris e TCP 443 juntos" };
+
+/** Rota que parou antes do destino: o último roteador que respondeu, e o que a sonda TCP diz do destino. */
+function silenceText(route: StatusRouteDetail): string | null {
+  if (route.reached || route.lastVisibleTtl === null) return null;
+  const hop = route.hops.find((h) => h.ttl === route.lastVisibleTtl);
+  if (!hop) return null;
+  const name = hop.rdns ?? hop.ip ?? `salto ${hop.ttl}`;
+  const where = hop.city ? ` (${hop.city})` : "";
+  const dest = route.destRttMs !== null ? `; o destino responde no TCP em ${formatLatency(route.destRttMs)}` : "";
+  return `Depois de ${name}${where} os roteadores não respondem ao rastreio, o que é comum depois da borda dos CDNs${dest}.`;
+}
 
 type RouteHopRow = StatusRouteDetail["hops"][number];
 
@@ -154,6 +168,150 @@ function groupByAsn(hops: RouteHopRow[]): { key: string; label: string; hops: Ro
     else groups.push({ key: `${hop.ttl}`, label, hops: [hop] });
   }
   return groups;
+}
+
+const SEGMENT_COLORS = ["bg-zinc-500", "bg-emerald-500/70", "bg-sky-500/70", "bg-violet-500/70", "bg-amber-500/70", "bg-rose-500/70"];
+
+/**
+ * Rota em trechos (fase 9): quanto do tempo de ida e volta cada rede soma, pelo "piso" do RTT (o menor
+ * RTT dali até o fim, que não sobe com os roteadores lentos para responder ao rastreio).
+ */
+export function routeSegments(hops: RouteHopRow[], destRttMs: number | null): { label: string; ms: number }[] {
+  const floors = new Map<number, number>();
+  let min = destRttMs ?? Infinity;
+  for (let i = hops.length - 1; i >= 0; i--) {
+    if (hops[i].rttMs !== null) min = Math.min(min, hops[i].rttMs!);
+    floors.set(hops[i].ttl, min);
+  }
+  let prev = 0;
+  const out: { label: string; ms: number }[] = [];
+  for (const group of groupByAsn(hops)) {
+    if (group.label === "Sem resposta") continue;
+    const end = floors.get(group.hops[group.hops.length - 1].ttl) ?? Infinity;
+    if (!Number.isFinite(end)) continue;
+    const label = group.label === "Sem ASN público" ? (out.length ? "Sem ASN público" : "Rede local e CGNAT") : group.label.replace(/^AS\d+ · /, "");
+    out.push({ label, ms: Math.max(0, Math.round((end - prev) * 10) / 10) });
+    prev = Math.max(prev, end);
+  }
+  if (destRttMs !== null && destRttMs > prev + 0.5) out.push({ label: "Até o destino", ms: Math.round((destRttMs - prev) * 10) / 10 });
+  return out;
+}
+
+function SegmentBar({ route }: { route: StatusRouteDetail }) {
+  const segments = routeSegments(route.hops, route.destRttMs);
+  const total = segments.reduce((sum, s) => sum + s.ms, 0);
+  if (segments.length < 2 || total <= 0) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex h-2 overflow-hidden rounded-full" role="img" aria-label={segments.map((s) => `${s.label} ${formatLatency(s.ms)}`).join(", ")}>
+        {segments.map((s, i) => (
+          <span key={`${s.label}-${i}`} className={SEGMENT_COLORS[i % SEGMENT_COLORS.length]} style={{ width: `${Math.max(2, (s.ms / total) * 100)}%` }} title={`${s.label}: ${formatLatency(s.ms)}`} />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground">
+        {segments.map((s, i) => (
+          <span key={`${s.label}-${i}`} className="inline-flex items-center gap-1">
+            <span className={cn("size-2 rounded-full", SEGMENT_COLORS[i % SEGMENT_COLORS.length])} />
+            {s.label} <span className="tabular-nums text-foreground">{formatLatency(s.ms)}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PathHistory({ route }: { route: StatusRouteDetail }) {
+  if (route.history.length < 2) return null;
+  return (
+    <div className="flex flex-col gap-1 border-t pt-2">
+      <span className="font-medium text-foreground">Caminho nos últimos 7 dias</span>
+      <ol className="flex flex-col gap-0.5 text-muted-foreground">
+        {route.history.map((h, i) => (
+          <li key={h.from} className="flex justify-between gap-3">
+            <span className="min-w-0 truncate" title={h.asPath ? `ASNs ${h.asPath}` : undefined}>
+              {h.place}
+              {h.asPath ? ` · AS ${h.asPath.replaceAll(" ", " → ")}` : ""}
+            </span>
+            <span className="shrink-0 tabular-nums">
+              {formatDateTime(h.from)}
+              {i === 0 ? " até agora" : ` a ${formatDateTime(h.to)}`}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** Os últimos 30 dias da rota, do resumo diário (fase 10). */
+function MonthlySummary({ route }: { route: StatusRouteDetail }) {
+  const m = route.monthly;
+  if (!m) return null;
+  return (
+    <div className="flex flex-col gap-1 border-t pt-2">
+      <span className="font-medium text-foreground">Últimos {m.days} dias</span>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+        <InlineReading label="Dias servido de fora" value={String(m.abroadDays)} />
+        <InlineReading label="Trocas de caminho" value={String(m.pathChanges)} />
+        <InlineReading label="Média até o destino" value={formatLatency(m.avgDestRttMs)} />
+        {m.exits.length > 0 && <InlineReading label="Saídas do país" value={m.exits.join(", ")} />}
+      </div>
+    </div>
+  );
+}
+
+/** A rota vista de cada PC com o agente (fase 10): quando difere da do servidor, a diferença é da rede do PC. */
+function AgentRoutes({ route }: { route: StatusRouteDetail }) {
+  if (!route.agents.length) return null;
+  return (
+    <div className="flex flex-col gap-1 border-t pt-2">
+      <span className="font-medium text-foreground">Rota vista dos agentes</span>
+      <ol className="flex flex-col gap-0.5 text-muted-foreground">
+        {route.agents.map((a) => {
+          const verdict = VERDICT[a.verdict] ?? VERDICT.UNDETERMINED;
+          return (
+            <li key={a.vantage} className="flex items-center justify-between gap-3">
+              <span className="min-w-0 truncate" title={a.summary}>
+                <span className="text-foreground">{a.label}</span> · <span className={verdict.className}>{verdict.label}</span>
+              </span>
+              <span className="shrink-0 tabular-nums" title={formatDateTime(a.at)}>
+                {a.hops} salto{a.hops === 1 ? "" : "s"}
+                {a.destRttMs !== null && ` · ${formatLatency(a.destRttMs)}`} · {formatRelativeTime(a.at)}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+/** Segunda opinião (fase 10): as rotas que sondas públicas do RIPE Atlas no Brasil fizeram até o mesmo destino. */
+function AtlasCompare({ slug }: { slug: string }) {
+  const compare = useMutation({
+    mutationFn: async () => {
+      const result = await compareRouteWithAtlas(slug);
+      if (!result) throw new Error("Sem rota gravada do servidor para comparar.");
+      return result;
+    },
+  });
+  return (
+    <div className="flex flex-col gap-1 border-t pt-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium text-foreground">Comparar com o RIPE Atlas</span>
+        <Button variant="ghost" size="xs" onClick={() => compare.mutate()} disabled={compare.isPending}>
+          {compare.isPending && <Loader2 className="size-3 animate-spin" />}
+          {compare.isPending ? "Consultando…" : compare.data ? "Consultar de novo" : "Comparar"}
+        </Button>
+      </div>
+      {compare.isError && <p className="text-destructive">Não foi possível consultar o RIPE Atlas: {compare.error.message}</p>}
+      {compare.data ? (
+        <p className="text-muted-foreground">{compare.data.summary}</p>
+      ) : (
+        !compare.isPending && <p className="text-muted-foreground">Mostra se outras redes do Brasil chegam a este destino pelo mesmo caminho que a sua operadora.</p>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -186,7 +344,7 @@ export function RouteSection({ slug, route }: { slug: string; route: StatusRoute
       </div>
       {!current && !trace.isPending && (
         <p className="text-xs text-muted-foreground">
-          O servidor rastreia a rota de cada serviço a cada 30 minutos. {canTrace ? "Para ver agora, rastreie: leva até um minuto." : ""}
+          O servidor rastreia a rota de cada serviço a cada 30 minutos. {canTrace ? "Para ver agora, rastreie: com os três tipos de sonda leva até três minutos." : ""}
         </p>
       )}
       {trace.isError && <p className="text-xs text-destructive">{trace.error.message}</p>}
@@ -200,6 +358,19 @@ export function RouteSection({ slug, route }: { slug: string; route: StatusRoute
           </div>
           {/* O cabo, a confiança e os outros candidatos aparecem logo abaixo, em leituras: a frase para antes deles. */}
           <p className="text-muted-foreground">{current.cableName ? current.summary.split(" Cabo provável:")[0] : current.summary}</p>
+          {(current.edge || current.interconnections.length > 0) && (
+            <div className="flex flex-col gap-1 text-muted-foreground">
+              {current.edge && (
+                <InlineReading
+                  label="Borda que atendeu o HTTP"
+                  value={`${current.edge.provider}${current.edge.city ? ` em ${current.edge.city}` : ""}${current.edge.pop ? ` (${current.edge.pop})` : ""}`}
+                />
+              )}
+              {current.interconnections.map((text) => (
+                <InlineReading key={text} label="Interconexão" value={text} />
+              ))}
+            </div>
+          )}
           {current.cableName && (
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
               <InlineReading label="Cabo provável" value={current.cableName} />
@@ -207,6 +378,7 @@ export function RouteSection({ slug, route }: { slug: string; route: StatusRoute
               {current.candidates.length > 0 && <InlineReading label="Outros possíveis" value={current.candidates.join(", ")} />}
             </div>
           )}
+          <SegmentBar route={current} />
           {current.hops.length > 0 && (
             <ol className="flex flex-col gap-2 border-t pt-2">
               {groupByAsn(current.hops).map((group) => (
@@ -219,6 +391,12 @@ export function RouteSection({ slug, route }: { slug: string; route: StatusRoute
                         <span className={cn("min-w-0 flex-1 truncate", hop.ip ? "text-foreground" : "text-muted-foreground")} title={hop.rdns && hop.ip ? hop.ip : undefined}>
                           {hop.rdns ?? hop.ip ?? "sem resposta"}
                         </span>
+                        {hop.altIps.length > 0 && (
+                          <span className="shrink-0 text-muted-foreground" title={[hop.ip, ...hop.altIps].join("\n")}>
+                            {hop.altIps.length + 1} caminhos
+                          </span>
+                        )}
+                        {hop.role && <span className="shrink-0 text-muted-foreground">{ROLE[hop.role] ?? hop.role}</span>}
                         {hop.city && <span className="shrink-0 text-muted-foreground">{hop.city}</span>}
                         <span className="w-14 shrink-0 text-right text-muted-foreground">{formatLatency(hop.rttMs)}</span>
                       </li>
@@ -228,11 +406,17 @@ export function RouteSection({ slug, route }: { slug: string; route: StatusRoute
               ))}
             </ol>
           )}
+          {silenceText(current) && <p className="text-muted-foreground">{silenceText(current)}</p>}
+          <PathHistory route={current} />
+          <MonthlySummary route={current} />
+          <AgentRoutes route={current} />
+          <AtlasCompare slug={slug} />
           <div className="border-t pt-2 text-muted-foreground">
             {current.host}
             {current.destIp && current.destIp !== current.host ? ` (${current.destIp})` : ""} · {current.hops.length} salto{current.hops.length === 1 ? "" : "s"} ·{" "}
             {current.reached ? "destino alcançado" : "o destino não respondeu ao rastreio"}
             {current.destRttMs !== null && <> · {formatLatency(current.destRttMs)} até o destino</>}
+            {current.mode && MODE[current.mode] && <> · sondas {MODE[current.mode]}</>}
           </div>
         </div>
       )}

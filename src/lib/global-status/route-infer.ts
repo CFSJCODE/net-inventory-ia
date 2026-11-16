@@ -1,5 +1,6 @@
 import { countryName, distanceKm, type City } from "./route-cities";
 import type { EnrichedHop } from "./route-enrich";
+import { cdnName } from "./route-peering";
 import type { Cable, Landing } from "./subsea-cables";
 
 /**
@@ -23,7 +24,8 @@ import type { Cable, Landing } from "./subsea-cables";
  *   destino visto num nome reverso, até 3 candidatos ou dono coincidente), baixa (o resto).
  */
 
-export type RouteVerdict = "DOMESTIC" | "OPERATOR_CACHE" | "INTERNATIONAL" | "UNDETERMINED";
+/** CDN_EDGE (fase 8): servido no Brasil pela borda de um CDN (Cloudflare, Google, Akamai…), não por um servidor de origem. */
+export type RouteVerdict = "DOMESTIC" | "CDN_EDGE" | "OPERATOR_CACHE" | "INTERNATIONAL" | "UNDETERMINED";
 export type RouteConfidence = "HIGH" | "MEDIUM" | "LOW";
 
 /** Velocidade da luz na fibra: ~200 km por ms, ou 100 km de distância por ms de ida e volta. */
@@ -174,6 +176,15 @@ export function inferRoute(input: RouteInput): RouteInference {
   const foreignSeen = answered.some((h) => h.city && h.city.country !== "BR");
   if (rtt < DOMESTIC_MAX_RTT_MS && !foreignSeen) {
     const where = lastCity(answered, "BR");
+    const cdn = cdnName(input.destAsn);
+    if (cdn) {
+      return {
+        ...base,
+        verdict: "CDN_EDGE",
+        destCountry: "BR",
+        summary: `Servido pela borda da ${cdn} no Brasil${where ? `, provavelmente em ${where.name}` : ""}: ${fmtMs(rtt)} de ida e volta, no máximo ${fmtKm(rtt * KM_PER_RTT_MS)}; o conteúdo vem de um cache perto de você, não da origem.`,
+      };
+    }
     return {
       ...base,
       verdict: "DOMESTIC",

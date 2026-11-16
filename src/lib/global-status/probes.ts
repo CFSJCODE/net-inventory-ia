@@ -11,6 +11,7 @@ import { readRouteTable, type RouteEntry } from "@/lib/network/tools/route-table
 import { probeDnsComposite } from "./dns-composite";
 import { jitter } from "./stats";
 import { AUTO_GATEWAY, AUTO_SYSTEM_DNS, DEFAULT_DNS_NAME, type ProbePhase, type ProbeResult, type ProbeSpec } from "./types";
+import { edgeFromHeaders, formatEdge } from "./edge-pop";
 
 /**
  * Sondas de medição própria: HTTP(S) com os tempos de cada etapa, handshake TCP, ping ICMP, DNS e
@@ -279,6 +280,7 @@ export function probeHttp(url: string, options: ProbeOptions = {}): Promise<Prob
         ttfbMs: round1(responseAt - (trace.secureAt ?? trace.connectAt ?? trace.t0)),
         totalMs,
         certDays: trace.certDays,
+        edge: formatEdge(edgeFromHeaders(res.headers)),
       };
       // Redirecionamento, 401, 403 e 404 também são resposta: o serviço está no ar. Só 5xx conta como falha.
       finish(status < 500 ? { ok: true, latencyMs: totalMs, ...measured } : { ok: false, latencyMs: null, ...measured, error: `HTTP ${status}`, failedAt: "http" });

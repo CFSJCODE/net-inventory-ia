@@ -229,11 +229,55 @@ try { await store.CreateInvitationAsync("Revoked agent", 5, agentId); Check(fals
     Check((await probeStore.ListProbeTargetsAsync()).Length == 0, "serviço desligado não manda alvos ao agente");
     using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = probeStore.DatabasePath }.ToString()))
     {
-        db.Open(); using var read = db.CreateCommand();
+        db.Open();
+        using var read = db.CreateCommand();
         read.CommandText = "SELECT \"vantage\", typeof(\"at\"), \"at\", \"ok\", \"httpStatus\", \"ttfbMs\" FROM \"ProbeCheck\" WHERE \"targetId\"='t-http'";
         using var row = read.ExecuteReader(); Check(row.Read(), "medição gravada");
         Check(row.GetString(0) == "agent:" + agentId.ToString("D") && row.GetString(1) == "integer" && row.GetInt64(2) == now.AddSeconds(-30).ToUnixTimeMilliseconds(), "ponto de medição e data no formato do Prisma");
         Check(row.GetInt64(3) == 1 && row.GetInt32(4) == 200 && Math.Abs(row.GetDouble(5) - 103.2) < 1e-9, "campos da medição preservados");
+    }
+}
+
+// Painel "Status global", fase 10: rotas do agente gravadas como PENDING para o motor completar.
+{
+    var routeStore = new InventoryStore(Path.Combine(runDirectory, "route-store"));
+    Check((await routeStore.ListRouteTargetsAsync()).Length == 0, "sem tabelas do motor o agente não recebe destinos de rota");
+    using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = routeStore.DatabasePath }.ToString()))
+    {
+        db.Open();
+        foreach (var migration in Directory.GetDirectories(Path.Combine(root, "..", "prisma", "migrations")).Where(d => Path.GetFileName(d).Contains("global_status", StringComparison.Ordinal) || Path.GetFileName(d).Contains("route_diagnostics", StringComparison.Ordinal)).Order(StringComparer.Ordinal))
+        { using var apply = db.CreateCommand(); apply.CommandText = File.ReadAllText(Path.Combine(migration, "migration.sql")); apply.ExecuteNonQuery(); }
+        using var seed = db.CreateCommand();
+        seed.CommandText = """
+            INSERT INTO "StatusService" ("id","slug","name","category","position") VALUES ('s1','github','GitHub','DEV',1),('s2','wan','WAN','INTERNET',0),('s3','mit','MIT','DEV',2);
+            INSERT INTO "ProbeTarget" ("id","serviceId","key","kind","host","url","port","intervalSec","enabled") VALUES
+              ('r-http','s1','http','HTTP','github.com','https://www.github.com/robots.txt',NULL,60,1),
+              ('r-tcp','s1','tcp','TCP','github.com',NULL,443,30,1),
+              ('r-wan','s2','ping','ICMP','1.1.1.1',NULL,NULL,60,1),
+              ('r-mit','s3','http','HTTP','mit.edu','https://web.mit.edu/',NULL,60,1);
+            """;
+        seed.ExecuteNonQuery();
+    }
+    var routeTargets = await routeStore.ListRouteTargetsAsync();
+    Check(routeTargets.Length == 2 && routeTargets[0] == new AgentRouteTarget("s1", "github.com") && routeTargets[1] == new AgentRouteTarget("s3", "web.mit.edu"), "um destino por serviço: TCP antes do HTTP, host da URL, sem a faixa da Internet");
+    var hops = new[] { new AgentRouteHop(1, "192.168.0.1", 0.8), new AgentRouteHop(2, null, null), new AgentRouteHop(3, "140.82.112.3", 120.4) };
+    var routeBatch = new AgentRouteBatch(agentId, [
+        new AgentRouteResult("s1", "github.com", now.AddMinutes(-1), "140.82.112.3", true, "icmp", hops),
+        new AgentRouteResult("s3", "web.mit.edu", now.AddHours(-3), "23.1.1.1", false, "icmp", []),
+        new AgentRouteResult("removido", "x.com", now, null, false, "icmp", [])]);
+    Check(RouteValidation.Validate(routeBatch) is null, "lote de rotas válido");
+    Check(RouteValidation.Validate(new AgentRouteBatch(agentId, [new AgentRouteResult("s1", "github.com; rm", now, null, false, "icmp", [])])) is not null, "destino com caractere estranho recusado");
+    Check(RouteValidation.Validate(new AgentRouteBatch(agentId, [new AgentRouteResult("s1", "github.com", now, null, false, "icmp", [new AgentRouteHop(1, "não-é-ip", 1)])])) is not null, "IP de salto inválido recusado");
+    Check(RouteValidation.Validate(new AgentRouteBatch(agentId, [new AgentRouteResult("s1", "github.com", now, null, false, "bash", [])])) is not null, "ferramenta desconhecida recusada");
+    Check(await routeStore.IngestRouteResultsAsync(routeBatch, now) is { Accepted: 1, Ignored: 2 }, "rota velha e serviço removido ignorados");
+    Check(await routeStore.IngestRouteResultsAsync(routeBatch, now) is { Accepted: 0, Ignored: 3 }, "reenvio da mesma rota não duplica");
+    using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = routeStore.DatabasePath }.ToString()))
+    {
+        db.Open(); using var read = db.CreateCommand();
+        read.CommandText = "SELECT t.\"vantage\", t.\"verdict\", t.\"reached\", typeof(t.\"at\"), COUNT(h.\"id\") FROM \"RouteTrace\" t JOIN \"RouteHop\" h ON h.\"traceId\" = t.\"id\" GROUP BY t.\"id\"";
+        using var row = read.ExecuteReader();
+        Check(row.Read(), "rota do agente gravada");
+        Check(row.GetString(0) == "agent:" + agentId.ToString("D") && row.GetString(1) == InventoryStore.PendingVerdict && row.GetInt64(2) == 1 && row.GetString(3) == "integer" && row.GetInt64(4) == 3, "rota pendente com os saltos, no formato do Prisma");
     }
 }
 

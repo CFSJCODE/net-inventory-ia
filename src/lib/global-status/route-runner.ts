@@ -2,10 +2,13 @@ import { prisma } from "@/lib/prisma";
 import { storedIsp } from "./internet-signals";
 import { probesEnabled } from "./probe-logic";
 import { getLocalConnectivity } from "./probe-runner";
+import { ixMatcher, refreshIxPrefixes } from "./ix-prefixes";
 import { asNameOf, enrichHops, isPrivateIp, originOf, type EnrichedHop } from "./route-enrich";
 import { asPathOf, inferRoute, type RouteInference } from "./route-infer";
+import { rollupRouteDays } from "./route-daily";
 import { brazilCables } from "./subsea-cables";
-import { traceHost, traceRoute, type TraceResult } from "./traceroute";
+import { traceAllModes, traceBest, traceHost, type TraceResult } from "./traceroute";
+import { refreshUpstreams } from "./upstreams";
 import { serialized } from "./write-queue";
 
 /**
@@ -32,6 +35,49 @@ const FIRST_TICK_DELAY_MS = 3 * 60_000;
 /** Sem ferramenta de traceroute no servidor: tenta de novo depois de 6 h. */
 const NO_TOOL_RETRY_MS = 6 * 60 * 60_000;
 
+/** Estado da ferramenta de rota, para a tela Configurar (fase 7): AppSetting `globalStatus.routeTool`. */
+export const ROUTE_TOOL_KEY = "globalStatus.routeTool";
+export interface RouteToolState {
+  /** Ferramenta da última rota ("traceroute (TCP 443)"), ou null sem nenhuma. */
+  tool: string | null;
+  /** Modo TCP: ok | denied (falta CAP_NET_RAW) | unavailable; null = ainda não foi preciso. */
+  tcp: "ok" | "denied" | "unavailable" | null;
+  /** Última rota gravada e último erro de ferramenta. */
+  lastRouteAt: string | null;
+  error: string | null;
+  checkedAt: string;
+}
+
+export async function readRouteToolState(): Promise<RouteToolState | null> {
+  const row = await prisma.appSetting.findUnique({ where: { key: ROUTE_TOOL_KEY } }).catch(() => null);
+  if (!row) return null;
+  try {
+    return JSON.parse(row.value) as RouteToolState;
+  } catch {
+    return null;
+  }
+}
+
+async function writeRouteToolState(trace: TraceResult, stored: boolean, nowMs: number): Promise<void> {
+  const previous = await readRouteToolState();
+  const next: RouteToolState = {
+    tool: trace.tool ?? previous?.tool ?? null,
+    // Um rastreio que não precisou do TCP não diz nada sobre ele: fica o que já se sabia.
+    tcp: trace.tcp ?? previous?.tcp ?? null,
+    lastRouteAt: stored ? new Date(nowMs).toISOString() : (previous?.lastRouteAt ?? null),
+    error: trace.ok ? null : trace.error,
+    checkedAt: new Date(nowMs).toISOString(),
+  };
+  const value = JSON.stringify(next);
+  await serialized(() => prisma.appSetting.upsert({ where: { key: ROUTE_TOOL_KEY }, create: { key: ROUTE_TOOL_KEY, value }, update: { value } })).catch(() => undefined);
+}
+
+/** Rota que não chegou: o TTL do último roteador que respondeu (depois dele, só silêncio). */
+export function lastVisibleTtl(trace: Pick<TraceResult, "ok" | "reached" | "hops">): number | null {
+  if (!trace.ok || trace.reached) return null;
+  return [...trace.hops].reverse().find((h) => h.ip !== null)?.ttl ?? null;
+}
+
 export function routesEnabled(env: Partial<Record<string, string>> = process.env): boolean {
   return probesEnabled(env.GLOBAL_STATUS_PROBES) && env.GLOBAL_STATUS_ROUTES?.trim().toLowerCase() !== "off";
 }
@@ -50,11 +96,13 @@ function state(): RouteRunnerState {
   return g.__globalStatusRoutes;
 }
 
-const VERDICT_WORD: Record<string, string> = { DOMESTIC: "no Brasil", OPERATOR_CACHE: "dentro da operadora", INTERNATIONAL: "fora do Brasil", UNDETERMINED: "indefinido" };
+const VERDICT_WORD: Record<string, string> = { DOMESTIC: "no Brasil", CDN_EDGE: "na borda do CDN no Brasil", OPERATOR_CACHE: "dentro da operadora", INTERNATIONAL: "fora do Brasil", UNDETERMINED: "indefinido" };
 
 /** O que descreve onde o serviço está, para comparar duas rotas. */
 function placeOf(t: { verdict: string; destCountry: string | null; cableId: string | null }): string {
-  return `${t.verdict}|${t.destCountry ?? ""}|${t.cableId ?? ""}`;
+  // No Brasil pela borda do CDN ou por um servidor: o mesmo lugar (a fase 8 só deu nome a quem atende).
+  const verdict = t.verdict === "CDN_EDGE" ? "DOMESTIC" : t.verdict;
+  return `${verdict}|${t.destCountry ?? ""}|${t.cableId ?? ""}`;
 }
 
 function placeText(t: { verdict: string; cableName: string | null }): string {
@@ -77,17 +125,25 @@ interface ServiceForRoute {
 }
 
 /** Rastreia, interpreta e grava a rota de um serviço. Devolve o id da rota gravada, ou null sem traceroute. */
-export async function traceAndStore(service: ServiceForRoute, nowMs = Date.now()): Promise<string | null> {
-  const trace = await traceRoute(service.host);
-  if (!trace.ok && trace.tool === null && /indisponível/.test(trace.error ?? "")) return null;
+export async function traceAndStore(service: ServiceForRoute, nowMs = Date.now(), opts: { allModes?: boolean } = {}): Promise<string | null> {
+  const trace = opts.allModes ? await traceAllModes(service.host) : await traceBest(service.host);
+  if (!trace.ok && trace.tool === null && /indisponível/.test(trace.error ?? "")) {
+    await writeRouteToolState(trace, false, nowMs);
+    return null;
+  }
 
-  const hops: EnrichedHop[] = trace.ok ? await enrichHops(trace.hops, nowMs) : [];
+  const enriched: EnrichedHop[] = trace.ok ? await enrichHops(trace.hops, nowMs) : [];
+  // Salto dentro do bloco de um ponto de troca (IX.br): papel IX, mesmo sem nome reverso.
+  const ix = ixMatcher((await refreshIxPrefixes(nowMs).catch(() => null))?.prefixes ?? []);
+  const hops = enriched.map((h) => (ix.match(h.ip) ? { ...h, role: "IX" as const } : h));
   const destIp = trace.address;
   const destOrigin = destIp && !isPrivateIp(destIp) ? await originOf(destIp, nowMs) : { asn: null, country: null };
   const destAsn = destOrigin.asn;
   const destAsName = destAsn ? await asNameOf(destAsn, nowMs) : null;
   const destRegistry = destOrigin.country;
   const [isp, cables] = await Promise.all([storedIsp(), brazilCables(nowMs)]);
+  // Uma vez por dia: os upstreams da operadora pelo BGP (tela "Trânsito internacional").
+  void refreshUpstreams(isp?.asn ?? null, nowMs).catch(() => undefined);
   const destRttMs = destinationRtt(trace, service.latencyMs);
   const inference: RouteInference = trace.ok
     ? inferRoute({ hops, destRttMs, destAsn, destAsName, destRegistryCountry: destRegistry, isp: isp ? { asn: isp.asn, name: isp.name } : null, cables })
@@ -96,7 +152,7 @@ export async function traceAndStore(service: ServiceForRoute, nowMs = Date.now()
   const now = new Date(nowMs);
   return serialized(() =>
     prisma.$transaction(async (tx) => {
-      const previous = await tx.routeTrace.findFirst({ where: { serviceId: service.id, error: null }, orderBy: { at: "desc" }, select: { verdict: true, destCountry: true, cableId: true, cableName: true } });
+      const previous = await tx.routeTrace.findFirst({ where: { serviceId: service.id, vantage: "server", error: null }, orderBy: { at: "desc" }, select: { verdict: true, destCountry: true, cableId: true, cableName: true } });
       const created = await tx.routeTrace.create({
         data: {
           serviceId: service.id,
@@ -115,11 +171,25 @@ export async function traceAndStore(service: ServiceForRoute, nowMs = Date.now()
           confidence: inference.confidence,
           asPath: asPathOf(hops, destAsn),
           error: trace.ok ? null : (trace.error ?? "falha no traceroute"),
+          mode: trace.mode,
+          lastVisibleTtl: lastVisibleTtl(trace),
         },
       });
       if (hops.length) {
         await tx.routeHop.createMany({
-          data: hops.map((h) => ({ traceId: created.id, ttl: h.ttl, ip: h.ip, rttMs: h.rttMs, asn: h.asn, asName: h.asName, rdns: h.rdns, city: h.city?.name ?? null, country: h.city?.country ?? null })),
+          data: hops.map((h) => ({
+            traceId: created.id,
+            ttl: h.ttl,
+            ip: h.ip,
+            rttMs: h.rttMs,
+            asn: h.asn,
+            asName: h.asName,
+            rdns: h.rdns,
+            city: h.city?.name ?? null,
+            country: h.city?.country ?? null,
+            altIps: h.altIps.length ? JSON.stringify(h.altIps) : null,
+            role: h.role,
+          })),
         });
       }
       // Mudança de onde o serviço está: aviso no ticker (um por serviço; um aviso aberto é atualizado).
@@ -135,7 +205,10 @@ export async function traceAndStore(service: ServiceForRoute, nowMs = Date.now()
       }
       return created.id;
     }),
-  );
+  ).then(async (id) => {
+    await writeRouteToolState(trace, true, nowMs);
+    return id;
+  });
 }
 
 /** Serviços medidos com destino rastreável (os mesmos da rota BGP), com a data da rota mais nova. */
@@ -145,7 +218,7 @@ async function candidates(): Promise<(ServiceForRoute & { lastAt: number })[]> {
     orderBy: { position: "asc" },
     select: { id: true, slug: true, name: true, latencyMs: true, targets: { where: { enabled: true }, select: { kind: true, host: true, url: true } } },
   });
-  const latest = await prisma.routeTrace.groupBy({ by: ["serviceId"], _max: { at: true } });
+  const latest = await prisma.routeTrace.groupBy({ by: ["serviceId"], where: { vantage: "server" }, _max: { at: true } });
   const lastAt = new Map(latest.map((r) => [r.serviceId, r._max.at?.getTime() ?? 0]));
   return services.flatMap((s) => {
     const host = traceHost(s.targets);
@@ -168,12 +241,104 @@ export async function cleanupRoutes(nowMs = Date.now()): Promise<void> {
   });
 }
 
+/** Rotas dos agentes Windows que ainda não foram analisadas por rodada (cada uma consulta ASN e rDNS dos saltos). */
+const AGENT_BATCH = 3;
+/** Tempo máximo por rodada para analisar rotas dos agentes, antes do rastreio do próprio servidor. */
+const AGENT_BUDGET_MS = 30_000;
+export const PENDING_VERDICT = "PENDING";
+
+/**
+ * Completa as rotas que os agentes Windows mandaram (fase 10): o agente grava só IP e tempo de cada salto
+ * (verdict PENDING); aqui entram ASN, nome reverso, cidade, papel, o veredito e o cabo provável, como nas
+ * rotas do servidor. A operadora é a do servidor (o PC costuma estar na mesma rede).
+ */
+export async function analyzeAgentRoutes(nowMs = Date.now(), budgetMs = AGENT_BUDGET_MS): Promise<number> {
+  // Vários agentes mandam mais de uma rota por minuto: drena lotes até esvaziar ou acabar o tempo da rodada.
+  const deadline = Date.now() + budgetMs;
+  let total = 0;
+  for (;;) {
+    const n = await analyzeAgentBatch(nowMs);
+    total += n;
+    if (n < AGENT_BATCH || Date.now() >= deadline) return total;
+  }
+}
+
+async function analyzeAgentBatch(nowMs: number): Promise<number> {
+  const pending = await pendingAgentTraces();
+  if (!pending.length) return 0;
+  const [isp, cables, ixStored] = await Promise.all([storedIsp(), brazilCables(nowMs), refreshIxPrefixes(nowMs).catch(() => null)]);
+  const ix = ixMatcher(ixStored?.prefixes ?? []);
+  for (const t of pending) {
+    try {
+      await analyzeAgentTrace(t, isp, cables, ix, nowMs);
+    } catch (err) {
+      // Uma rota que não se deixa analisar não pode travar a fila: fica indefinida, com o motivo.
+      const reason = err instanceof Error ? err.message : String(err);
+      await serialized(() => prisma.routeTrace.update({ where: { id: t.id }, data: { verdict: "UNDETERMINED", summary: `Não foi possível analisar a rota do agente: ${reason}.`, mode: "icmp" } }));
+    }
+  }
+  return pending.length;
+}
+
+type PendingTrace = Awaited<ReturnType<typeof pendingAgentTraces>>[number];
+const pendingAgentTraces = () =>
+  prisma.routeTrace.findMany({ where: { verdict: PENDING_VERDICT }, orderBy: { at: "desc" }, take: AGENT_BATCH, include: { hops: { orderBy: { ttl: "asc" } } } });
+
+async function analyzeAgentTrace(
+  t: PendingTrace,
+  isp: Awaited<ReturnType<typeof storedIsp>>,
+  cables: Awaited<ReturnType<typeof brazilCables>>,
+  ix: ReturnType<typeof ixMatcher>,
+  nowMs: number,
+): Promise<void> {
+  {
+    const raw = t.hops.map((h) => ({ ttl: h.ttl, ip: h.ip, rttMs: h.rttMs, altIps: [] as string[] }));
+    const hops = (await enrichHops(raw, nowMs)).map((h) => (ix.match(h.ip) ? { ...h, role: "IX" as const } : h));
+    const destOrigin = t.destIp && !isPrivateIp(t.destIp) ? await originOf(t.destIp, nowMs) : { asn: null, country: null };
+    const destAsName = destOrigin.asn ? await asNameOf(destOrigin.asn, nowMs) : null;
+    const last = raw[raw.length - 1];
+    const destRttMs = t.reached && last?.rttMs != null ? last.rttMs : null;
+    const inference: RouteInference = hops.length
+      ? inferRoute({ hops, destRttMs, destAsn: destOrigin.asn, destAsName, destRegistryCountry: destOrigin.country, isp: isp ? { asn: isp.asn, name: isp.name } : null, cables })
+      : { verdict: "UNDETERMINED", summary: t.error ? `Não foi possível rastrear: ${t.error}.` : "Não foi possível rastrear.", destCountry: null, cable: null, candidates: [], confidence: null, exitTtl: null, entryTtl: null, stepMs: null };
+    await serialized(() =>
+      prisma.$transaction([
+        prisma.routeTrace.update({
+          where: { id: t.id },
+          data: {
+            verdict: inference.verdict,
+            summary: inference.summary,
+            destRttMs,
+            destCountry: inference.destCountry,
+            cableId: inference.cable?.id ?? null,
+            cableName: inference.cable?.name ?? null,
+            candidates: inference.candidates.length ? inference.candidates.map((c) => c.name).join(" · ") : null,
+            confidence: inference.confidence,
+            asPath: asPathOf(hops, destOrigin.asn),
+            mode: "icmp",
+            lastVisibleTtl: t.reached ? null : (last?.ttl ?? null),
+          },
+        }),
+        ...hops.map((h) =>
+          prisma.routeHop.updateMany({
+            where: { traceId: t.id, ttl: h.ttl },
+            data: { asn: h.asn, asName: h.asName, rdns: h.rdns, city: h.city?.name ?? null, country: h.city?.country ?? null, role: h.role },
+          }),
+        ),
+      ]),
+    );
+  }
+}
+
 /** Uma rodada do agendador: limpa o que venceu e rastreia o próximo serviço, se houver. */
 export async function runRouteTick(nowMs = Date.now()): Promise<void> {
   const s = state();
   if (s.running) return;
   s.running = (async () => {
     await cleanupRoutes(nowMs);
+    // As rotas dos agentes não dependem do traceroute do servidor: só de DNS e HTTP para ASN e nomes.
+    await analyzeAgentRoutes(nowMs).catch((err) => console.warn(`[global-status] rota do agente: ${err instanceof Error ? err.message : String(err)}`));
+    await rollupRouteDays(nowMs).catch(() => undefined);
     if (nowMs < s.noToolUntil) return;
     if ((await getLocalConnectivity()).state !== "ok") return;
     const due = nextDue(await candidates(), nowMs);
@@ -192,11 +357,12 @@ export async function runRouteTick(nowMs = Date.now()): Promise<void> {
   return s.running;
 }
 
-/** Rastreia agora um serviço pelo slug ("Rastrear rota" no detalhe). Devolve o id da rota gravada. */
+/** Rastreia agora um serviço pelo slug ("Rastrear rota" no detalhe), em todos os modos. Devolve o id da rota gravada. */
 export async function traceServiceNow(slug: string): Promise<string | null> {
   const list = await candidates();
   const service = list.find((s) => s.slug === slug);
-  return service ? traceAndStore(service) : null;
+  // Sob demanda: os três modos seguidos (Paris, UDP clássico e TCP 443) e a união deles.
+  return service ? traceAndStore(service, Date.now(), { allModes: true }) : null;
 }
 
 /** Inicia o agendador (uma vez por processo, via instrumentation). */

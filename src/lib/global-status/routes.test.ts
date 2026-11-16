@@ -10,7 +10,7 @@ const fixture = await vi.hoisted(async () => {
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: fixture.prisma }));
-vi.mock("./traceroute", async (importOriginal) => ({ ...(await importOriginal<typeof import("./traceroute")>()), traceRoute: vi.fn(async () => fixture.trace) }));
+vi.mock("./traceroute", async (importOriginal) => ({ ...(await importOriginal<typeof import("./traceroute")>()), traceRoute: vi.fn(async () => fixture.trace), traceBest: vi.fn(async () => fixture.trace), traceAllModes: vi.fn(async () => fixture.trace) }));
 vi.mock("./route-enrich", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./route-enrich")>()),
   enrichHops: vi.fn(async () => fixture.hops),
@@ -18,14 +18,17 @@ vi.mock("./route-enrich", async (importOriginal) => ({
   asNameOf: vi.fn(async () => "GOOGLE"),
 }));
 vi.mock("./subsea-cables", async (importOriginal) => ({ ...(await importOriginal<typeof import("./subsea-cables")>()), brazilCables: vi.fn(async () => fixture.cables) }));
+vi.mock("./ix-prefixes", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ix-prefixes")>()), refreshIxPrefixes: vi.fn(async () => null) }));
+vi.mock("./upstreams", async (importOriginal) => ({ ...(await importOriginal<typeof import("./upstreams")>()), refreshUpstreams: vi.fn(async () => null) }));
 vi.mock("./probe-runner", () => ({ getLocalConnectivity: vi.fn(async () => ({ state: "ok", since: null, reason: null })) }));
 
 import { dropTempDb, migrateTempDb } from "./__fixtures__/temp-db";
 import { cityFromHostname, distanceKm } from "./route-cities";
 import { cymruOriginName, isPrivateIp, parseCymruAsName, parseCymruOrigin } from "./route-enrich";
 import { asPathOf, biggestStep, inferRoute, ownerMatches, rankCables, type RouteInput } from "./route-infer";
-import { ROUTE_INTERVAL_MS, cleanupRoutes, destinationRtt, nextDue, routesEnabled, runRouteTick, traceAndStore } from "./route-runner";
+import { analyzeAgentRoutes, ROUTE_INTERVAL_MS, cleanupRoutes, destinationRtt, nextDue, routesEnabled, runRouteTick, traceAndStore } from "./route-runner";
 import { buildCables, parseLengthKm } from "./subsea-cables";
+import { monthlyRoutes, rollupRouteDays } from "./route-daily";
 
 const db = fixture.prisma;
 
@@ -42,7 +45,7 @@ const CABLES: Cable[] = [
 ];
 
 function hop(ttl: number, ip: string | null, rttMs: number | null, extra: Partial<EnrichedHop> = {}): EnrichedHop {
-  return { ttl, ip, rttMs, asn: null, asName: null, registryCountry: null, rdns: null, city: null, ...extra };
+  return { ttl, ip, rttMs, altIps: [], asn: null, asName: null, registryCountry: null, rdns: null, city: null, role: null, ...extra };
 }
 const withName = (ttl: number, ip: string, rttMs: number, rdns: string, asn: number, asName: string, registryCountry = "BR") =>
   hop(ttl, ip, rttMs, { rdns, asn, asName, registryCountry, city: cityFromHostname(rdns) });
@@ -119,7 +122,7 @@ describe("rota: degrau da travessia", () => {
 
 describe("rota: inferência", () => {
   it("abaixo de 30 ms é servido no Brasil, pelo limite físico", () => {
-    const r = inferRoute(input({ hops: MIAMI_ROUTE.slice(0, 3), destRttMs: 12, destAsn: 15169 }));
+    const r = inferRoute(input({ hops: MIAMI_ROUTE.slice(0, 3), destRttMs: 12, destAsn: 64500 }));
     expect(r.verdict).toBe("DOMESTIC");
     expect(r.destCountry).toBe("BR");
     expect(r.summary).toContain("São Paulo");
@@ -220,7 +223,7 @@ describe("agendador da rota", () => {
     await db.statusService.deleteMany();
     fixture.cables = CABLES;
     fixture.hops = MIAMI_ROUTE;
-    fixture.trace = { ok: true, host: "google.com", address: "142.250.1.1", tool: "traceroute", hops: MIAMI_ROUTE.map(({ ttl, ip, rttMs }) => ({ ttl, ip, rttMs })), reached: true, error: null };
+    fixture.trace = { ok: true, host: "google.com", address: "142.250.1.1", tool: "traceroute", hops: MIAMI_ROUTE.map(({ ttl, ip, rttMs }) => ({ ttl, ip, rttMs, altIps: [] })), reached: true, error: null, mode: "paris" };
     (globalThis as { __globalStatusRoutes?: unknown }).__globalStatusRoutes = undefined;
   });
   afterAll(async () => {
@@ -256,11 +259,11 @@ describe("agendador da rota", () => {
     await traceAndStore(svc, t0);
     // Agora servido no Brasil.
     fixture.hops = MIAMI_ROUTE.slice(0, 3);
-    fixture.trace = { ...fixture.trace!, hops: fixture.hops.map(({ ttl, ip, rttMs }) => ({ ttl, ip, rttMs })) };
+    fixture.trace = { ...fixture.trace!, hops: fixture.hops.map(({ ttl, ip, rttMs }) => ({ ttl, ip, rttMs, altIps: [] })) };
     await traceAndStore(svc, t0 + 30 * 60_000);
     const open = await db.statusIncident.findMany({ where: { serviceId: s.id, origin: "ROUTE" } });
     expect(open).toHaveLength(1);
-    expect(open[0]).toMatchObject({ title: "Rota mudou: fora do Brasil, cabo AMX-1 → no Brasil", resolvedAt: null, impact: "MINOR" });
+    expect(open[0]).toMatchObject({ title: "Rota mudou: fora do Brasil, cabo AMX-1 → na borda do CDN no Brasil", resolvedAt: null, impact: "MINOR" });
 
     // A mesma rota de novo não abre outro aviso.
     await traceAndStore(svc, t0 + 60 * 60_000);
@@ -281,7 +284,7 @@ describe("agendador da rota", () => {
 
   it("sem traceroute no servidor nada é gravado", async () => {
     const s = await service();
-    fixture.trace = { ok: false, host: "google.com", address: "142.250.1.1", tool: null, hops: [], reached: false, error: "traceroute indisponível no servidor (sudo apt install traceroute)" };
+    fixture.trace = { ok: false, host: "google.com", address: "142.250.1.1", tool: null, hops: [], reached: false, error: "traceroute indisponível no servidor (sudo apt install traceroute)", mode: "paris" };
     expect(await traceAndStore({ id: s.id, slug: s.slug, name: s.name, host: "google.com", latencyMs: 110 })).toBeNull();
     expect(await db.routeTrace.count()).toBe(0);
   });
@@ -308,5 +311,63 @@ describe("agendador da rota", () => {
     expect(routesEnabled({})).toBe(true);
     expect(routesEnabled({ GLOBAL_STATUS_ROUTES: "off" })).toBe(false);
     expect(routesEnabled({ GLOBAL_STATUS_PROBES: "off" })).toBe(false);
+  });
+  it("completa a rota que o agente mandou (só IP e tempo) com ASN, cidade, veredito e cabo", async () => {
+    const s = await service();
+    const at = new Date("2026-11-15T22:10:00Z");
+    const raw = await db.routeTrace.create({
+      data: {
+        serviceId: s.id,
+        vantage: "agent:pc-1",
+        at,
+        host: "google.com",
+        destIp: "142.250.1.1",
+        tool: "icmp",
+        reached: true,
+        verdict: "PENDING",
+        summary: "",
+        hops: { create: MIAMI_ROUTE.map(({ ttl, ip, rttMs }) => ({ ttl, ip, rttMs })) },
+      },
+    });
+    expect(await analyzeAgentRoutes(at.getTime())).toBe(1);
+    const done = await db.routeTrace.findUniqueOrThrow({ where: { id: raw.id }, include: { hops: { orderBy: { ttl: "asc" } } } });
+    expect(done).toMatchObject({ verdict: "INTERNATIONAL", destRttMs: 107, cableName: "AMX-1", asPath: "28573 4230 15169", mode: "icmp" });
+    expect(done.hops.find((h) => h.ttl === 6)).toMatchObject({ city: "Miami", asn: 4230 });
+    // Nada mais pendente: a rodada seguinte não faz nada.
+    expect(await analyzeAgentRoutes(at.getTime())).toBe(0);
+  });
+
+  it("drena mais de um lote de rotas dos agentes na mesma rodada, a mais nova primeiro", async () => {
+    const s = await service();
+    for (let i = 0; i < 7; i++)
+      await db.routeTrace.create({ data: { serviceId: s.id, vantage: `agent:pc-${i}`, at: new Date(Date.parse("2026-11-15T22:00:00Z") + i * 60_000), host: "google.com", destIp: "142.250.1.1", reached: true, verdict: "PENDING", summary: "", hops: { create: MIAMI_ROUTE.map(({ ttl, ip, rttMs }) => ({ ttl, ip, rttMs })) } } });
+    expect(await analyzeAgentRoutes()).toBe(7);
+    expect(await db.routeTrace.count({ where: { verdict: "PENDING" } })).toBe(0);
+  });
+
+  it("uma rota do agente que falha na análise não trava a fila", async () => {
+    const s = await service();
+    const { enrichHops } = await import("./route-enrich");
+    vi.mocked(enrichHops).mockRejectedValueOnce(new Error("rDNS fora do ar"));
+    const raw = await db.routeTrace.create({ data: { serviceId: s.id, vantage: "agent:pc-1", host: "google.com", reached: false, verdict: "PENDING", summary: "", hops: { create: [{ ttl: 1, ip: "192.168.0.1", rttMs: 1 }] } } });
+    await analyzeAgentRoutes();
+    expect(await db.routeTrace.findUniqueOrThrow({ where: { id: raw.id } })).toMatchObject({ verdict: "UNDETERMINED", summary: "Não foi possível analisar a rota do agente: rDNS fora do ar." });
+  });
+
+  it("resume o dia: rotas internacionais, saída do país e trocas de caminho", async () => {
+    const s = await service();
+    const svc = { id: s.id, slug: s.slug, name: s.name, host: "google.com", latencyMs: 110 };
+    const t0 = Date.parse("2026-11-15T15:00:00Z");
+    await traceAndStore(svc, t0);
+    await traceAndStore(svc, t0 + ROUTE_INTERVAL_MS);
+    fixture.hops = MIAMI_ROUTE.slice(0, 3);
+    fixture.trace = { ...fixture.trace!, hops: fixture.trace!.hops.slice(0, 3) };
+    await traceAndStore(svc, t0 + 2 * ROUTE_INTERVAL_MS);
+    await rollupRouteDays(t0 + 3 * ROUTE_INTERVAL_MS, true);
+    const day = await db.routeDaily.findFirstOrThrow({ where: { serviceId: s.id } });
+    expect(day).toMatchObject({ day: "2026-11-15", vantage: "server", traces: 3, international: 2, domestic: 1, pathChanges: 1 });
+    expect(day.topExit).toContain("Miami");
+    const month = await monthlyRoutes(s.id, t0 + 3 * ROUTE_INTERVAL_MS);
+    expect(month).toMatchObject({ days: 1, abroadDays: 1, pathChanges: 1 });
   });
 });

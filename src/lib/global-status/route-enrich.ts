@@ -3,6 +3,7 @@ import net from "node:net";
 import { mapWithConcurrency } from "@/lib/network/concurrency";
 import { parseAsOverview, parseNetworkInfo, ripestatUrl } from "./adapters/ripestat";
 import { cityFromHostname, type City } from "./route-cities";
+import { routerRole, type RouterRole } from "./route-roles";
 import type { TraceHop } from "./traceroute";
 
 /**
@@ -23,6 +24,8 @@ export interface EnrichedHop extends TraceHop {
   registryCountry: string | null;
   rdns: string | null;
   city: City | null;
+  /** Papel do roteador pelo nome reverso (fase 7) ou pelo bloco do IX (fase 8). */
+  role: RouterRole | null;
 }
 
 const TTL_MS = 24 * 60 * 60_000;
@@ -101,7 +104,7 @@ async function txt(name: string): Promise<string | null> {
   return records.length ? records[0].join("") : null;
 }
 
-async function getJson<T>(url: string): Promise<T> {
+export async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { headers: { "user-agent": USER_AGENT, accept: "application/json" }, signal: AbortSignal.timeout(HTTP_TIMEOUT_MS), cache: "no-store" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as T;
@@ -166,10 +169,10 @@ export function rdnsOf(ip: string, nowMs = Date.now()): Promise<string | null> {
 /** ASN, nome, rDNS e cidade de cada salto. Saltos sem resposta e endereços privados ficam só com o IP. */
 export async function enrichHops(hops: readonly TraceHop[], nowMs = Date.now()): Promise<EnrichedHop[]> {
   return mapWithConcurrency([...hops], CONCURRENCY, async (hop): Promise<EnrichedHop> => {
-    const base: EnrichedHop = { ...hop, asn: null, asName: null, registryCountry: null, rdns: null, city: null };
+    const base: EnrichedHop = { ...hop, asn: null, asName: null, registryCountry: null, rdns: null, city: null, role: null };
     if (!hop.ip || isPrivateIp(hop.ip)) return base;
     const [origin, rdns] = await Promise.all([originOf(hop.ip, nowMs), rdnsOf(hop.ip, nowMs)]);
     const asName = origin.asn ? await asNameOf(origin.asn, nowMs) : null;
-    return { ...base, asn: origin.asn, asName, registryCountry: origin.country, rdns, city: cityFromHostname(rdns) };
+    return { ...base, asn: origin.asn, asName, registryCountry: origin.country, rdns, city: cityFromHostname(rdns), role: routerRole(rdns) };
   });
 }

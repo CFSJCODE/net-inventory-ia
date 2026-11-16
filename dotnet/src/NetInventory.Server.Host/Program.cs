@@ -235,6 +235,18 @@ app.MapPost("/api/v1/agents/{id:guid}/probe-results",async(Guid id,AgentProbeBat
     if(ProbeValidation.Validate(batch)is{}error)return Results.BadRequest(new{error});
     return Results.Ok(await store.IngestProbeResultsAsync(batch,DateTimeOffset.UtcNow));
 }).WithMetadata(new AgentSelfMarker());
+// Painel "Status global", fase 10: o agente rastreia a rota até os mesmos serviços (segundo ponto de rota).
+app.MapGet("/api/v1/agents/{id:guid}/route-targets",async(Guid id,HttpContext context,InventoryStore store)=>
+{
+    var token=Bearer(context);if(token is null||!await store.AuthenticateAsync(id,token))return Results.Unauthorized();
+    return Results.Ok(await store.ListRouteTargetsAsync());
+}).WithMetadata(new AgentSelfMarker());
+app.MapPost("/api/v1/agents/{id:guid}/route-results",async(Guid id,AgentRouteBatch batch,HttpContext context,InventoryStore store)=>
+{
+    var token=Bearer(context);if(token is null||batch.AgentId!=id||!await store.AuthenticateAsync(id,token))return Results.Unauthorized();
+    if(RouteValidation.Validate(batch)is{}error)return Results.BadRequest(new{error});
+    return Results.Ok(await store.IngestRouteResultsAsync(batch,DateTimeOffset.UtcNow));
+}).WithMetadata(new AgentSelfMarker());
 app.MapHub<InventoryHub>("/hubs/inventory");app.MapNetInventoryWebConsole();
 if(!string.IsNullOrWhiteSpace(legacy))app.MapReverseProxy().WithMetadata(new LegacyMarker());
 app.Run();
