@@ -5,48 +5,78 @@ using NetInventory.Contracts;
 namespace NetInventory.Agent.Windows;
 
 /// <summary>
-/// Teste de banda da rede local para o painel "Status global": a cada hora (Agent:Throughput:IntervalMinutes)
-/// roda o iperf3 contra o servidor iperf3 da máquina do painel (o mesmo host do Agent:ServerUrl, porta 5201) e
-/// manda o resultado. Precisa do iperf3.exe no PATH do sistema ou em Agent:Throughput:Iperf3Path; sem ele o
-/// worker avisa uma vez no log e não faz nada. Desliga com Agent:Throughput:Enabled = false.
+/// Testes de banda para o painel "Status global", a cada hora (Agent:Throughput:IntervalMinutes):
+/// <list type="bullet">
+/// <item>rede local: o iperf3 contra o servidor iperf3 da máquina do painel (o mesmo host do Agent:ServerUrl,
+/// porta 5201). Precisa do iperf3.exe no PATH do sistema ou em Agent:Throughput:Iperf3Path; sem ele só esta
+/// parte fica desligada (avisa uma vez no log);</item>
+/// <item>Internet: download e upload no speed.cloudflare.com (<see cref="AgentInternetSpeed"/>), logo depois.
+/// Desliga com Agent:Throughput:Internet:Enabled = false; tamanhos em Agent:Throughput:Internet:DownloadMB
+/// (25) e UploadMB (10), ≈ 840 MB por dia na hora a hora.</item>
+/// </list>
+/// Desliga tudo com Agent:Throughput:Enabled = false.
 /// </summary>
 internal sealed class ThroughputWorker(AgentRunner runner, IConfiguration config, ILogger<ThroughputWorker> logger) : BackgroundService
 {
     private string? lastProblem;
+
+    /// <summary>O que cada rodada faz, lido da configuração uma vez.</summary>
+    private sealed record Plan(string? Iperf3, int Port, int Seconds, bool Internet, long DownloadBytes, long UploadBytes, TimeSpan Interval);
+
+    private Plan ReadPlan(string? iperf3)
+    {
+        const long MB = 1_000_000;
+        return new(
+            iperf3,
+            Math.Clamp(config.GetValue("Agent:Throughput:Port", 5201), 1, 65535),
+            Math.Clamp(config.GetValue("Agent:Throughput:Seconds", 5), 2, 30),
+            config.GetValue("Agent:Throughput:Internet:Enabled", true),
+            Math.Clamp(config.GetValue("Agent:Throughput:Internet:DownloadMB", 25), 1, 100) * MB,
+            Math.Clamp(config.GetValue("Agent:Throughput:Internet:UploadMB", 10), 1, 50) * MB,
+            TimeSpan.FromMinutes(Math.Clamp(config.GetValue("Agent:Throughput:IntervalMinutes", 60), 15, 1440)));
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!config.GetValue("Agent:Throughput:Enabled", true) || !config.GetValue("Agent:StatusProbes", true)) return;
         var iperf3 = AgentThroughput.Locate(config["Agent:Throughput:Iperf3Path"]);
         if (iperf3 is null)
-        {
-            logger.LogInformation("Teste de banda desligado: iperf3.exe não encontrado no PATH do sistema nem em Agent:Throughput:Iperf3Path.");
-            return;
-        }
-        var interval = TimeSpan.FromMinutes(Math.Clamp(config.GetValue("Agent:Throughput:IntervalMinutes", 60), 15, 1440));
-        var seconds = Math.Clamp(config.GetValue("Agent:Throughput:Seconds", 5), 2, 30);
-        var port = Math.Clamp(config.GetValue("Agent:Throughput:Port", 5201), 1, 65535);
+            logger.LogInformation("Teste de banda da rede local desligado: iperf3.exe não encontrado no PATH do sistema nem em Agent:Throughput:Iperf3Path.");
+        var plan = ReadPlan(iperf3);
+        if (plan.Iperf3 is null && !plan.Internet) return;
         // Começa depois das medições e das rotas, para não disputar a rede com elas.
         await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
         while (!stoppingToken.IsCancellationRequested)
         {
-            if (runner.Connection is { } connection) await RunOnce(connection, iperf3, port, seconds, stoppingToken);
-            await Task.Delay(interval, stoppingToken);
+            if (runner.Connection is { } connection) await Send(connection, await RunRound(plan, connection.Server, stoppingToken), stoppingToken);
+            await Task.Delay(plan.Interval, stoppingToken);
         }
     }
 
-    private async Task RunOnce((Uri Server, string Token, Guid AgentId) connection, string iperf3, int port, int seconds, CancellationToken stoppingToken)
+    /// <summary>Um teste por vez: a Internet só depois que o iperf3 terminou, para um não roubar banda do outro.</summary>
+    private async Task<AgentThroughputResult[]> RunRound(Plan plan, Uri panel, CancellationToken stoppingToken)
     {
-        var server = config["Agent:Throughput:Server"] is { Length: > 0 } configured ? configured : connection.Server.IdnHost;
-        var result = await AgentThroughput.Run(iperf3, server, port, seconds, stoppingToken);
+        var results = new List<AgentThroughputResult>(2);
+        if (plan.Iperf3 is not null)
+        {
+            var server = config["Agent:Throughput:Server"] is { Length: > 0 } configured ? configured : panel.IdnHost;
+            results.Add(await AgentThroughput.Run(plan.Iperf3, server, plan.Port, plan.Seconds, stoppingToken));
+        }
+        if (plan.Internet) results.Add(await AgentInternetSpeed.Run(plan.DownloadBytes, plan.UploadBytes, TimeSpan.FromSeconds(30), stoppingToken));
+        return [.. results];
+    }
+
+    private async Task Send((Uri Server, string Token, Guid AgentId) connection, AgentThroughputResult[] results, CancellationToken stoppingToken)
+    {
         using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = connection.Server, Timeout = TimeSpan.FromSeconds(15) };
         http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", connection.Token);
         try
         {
-            var batch = new AgentThroughputBatch(connection.AgentId, [result]);
+            var batch = new AgentThroughputBatch(connection.AgentId, results);
             using var response = await http.PostAsJsonAsync($"api/v1/agents/{connection.AgentId}/throughput-results", batch, AgentState.Json, stoppingToken);
+            var failed = results.Where(r => r.Error is not null).Select(r => $"{r.Server}: {r.Error}").ToArray();
             if (!response.IsSuccessStatusCode) Problem($"HTTP {(int)response.StatusCode}");
-            else Problem(result.Error is { } error ? $"o teste falhou ({error})" : null);
+            else Problem(failed.Length > 0 ? $"o teste falhou ({string.Join("; ", failed)})" : null);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !stoppingToken.IsCancellationRequested)
         {

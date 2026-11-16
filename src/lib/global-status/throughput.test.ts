@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatMbps, summarizeThroughput, throughputWarning, type ThroughputRow } from "./throughput";
+import { INTERNET_SPEED_HOST, formatMbps, summarizeThroughput, throughputWarning, type ThroughputRow } from "./throughput";
 
 const NOW = Date.UTC(2026, 10, 16, 12, 0);
 const HOUR = 60 * 60_000;
@@ -49,5 +49,19 @@ describe("summarizeThroughput", () => {
     expect(s.label).toBe("Agente");
     expect(s.usualDownloadMbps).toBeNull();
     expect(s.warning).toBeNull();
+  });
+
+  it("separa a rede local (iperf3) da Internet (Cloudflare), cada uma com o seu habitual", () => {
+    const net = (h: number, up: number, down: number) => row(h, up, down, { server: INTERNET_SPEED_HOST, port: 443 });
+    const rows = [row(0, 900, 650), net(0, 40, 120), row(1, 910, 660), net(1, 95, 480), row(2, 890, 640), net(2, 98, 500), row(3, 905, 650), net(3, 97, 490)];
+    const out = summarizeThroughput(rows, new Map([[A, "PC-4600G"]]), NOW);
+    expect(out.map((s) => s.scope)).toEqual(["lan", "internet"]);
+    const [lan, internet] = out;
+    expect(lan.server).toBe("192.168.0.50:5201");
+    expect(lan.warning).toBeNull();
+    expect(internet.server).toBe("speed.cloudflare.com (Cloudflare)");
+    expect(internet.usualDownloadMbps).toBe(490);
+    expect(internet.warning).toMatch(/^Banda de Internet abaixo do habitual: download 120 Mbit\/s \(costuma ser 490 Mbit\/s\), upload 40,0 Mbit\/s/);
+    expect(new Set(out.map((s) => s.id)).size).toBe(2);
   });
 });
