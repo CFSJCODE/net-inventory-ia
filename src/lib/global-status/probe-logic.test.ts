@@ -1616,13 +1616,16 @@ describe("linha do serviço", () => {
     expect(serviceData(summary, { officialState: "OK", status: "OK" }, { sourceType: "STATUSPAGE", at, now })).toEqual({ ...summary, status: "DOWN", lastChangeAt: now });
     // Sem mudança de status não mexe em lastChangeAt.
     expect(serviceData(summary, { officialState: "OK", status: "DOWN" }, { sourceType: "STATUSPAGE", at, now })).toEqual({ ...summary, status: "DOWN" });
-    // O oficial pior que o medido continua valendo.
+    // Incidente oficial com a medição daqui normal: externo, sem impacto na navegação; o card fica "Operando".
     const fine = { measuredStatus: "OK" as const, measuredReason: null, latencyMs: 20 };
-    expect(serviceData(fine, { officialState: "DEGRADED", status: "DEGRADED" }, { sourceType: "STATUSPAGE", at, now }).status).toBe("DEGRADED");
+    expect(serviceData(fine, { officialState: "DEGRADED", status: "DEGRADED" }, { sourceType: "STATUSPAGE", at, now })).toMatchObject({ status: "OK", lastChangeAt: now });
+    expect(serviceData(fine, { officialState: "DOWN", status: "OK" }, { sourceType: "AWS", at, now }).status).toBe("OK");
+    expect(serviceData(fine, { officialState: "MAINTENANCE", status: "MAINTENANCE" }, { sourceType: "STATUSPAGE", at, now }).status).toBe("OK");
     // Fonte oficial sem dados não esconde o que foi medido.
     expect(serviceData(fine, { officialState: "UNKNOWN", status: "UNKNOWN" }, { sourceType: "GCP", at, now })).toMatchObject({ status: "OK", lastChangeAt: now });
-    // Manutenção declarada pelo provedor aparece enquanto o medido está normal.
-    expect(serviceData(fine, { officialState: "MAINTENANCE", status: "MAINTENANCE" }, { sourceType: "STATUSPAGE", at, now }).status).toBe("MAINTENANCE");
+    // Medido degradado com oficial degradado: impacto aqui, continua degradado.
+    const slow = { measuredStatus: "DEGRADED" as const, measuredReason: "HTTP: latência 3× acima do normal", latencyMs: 900 };
+    expect(serviceData(slow, { officialState: "DEGRADED", status: "OK" }, { sourceType: "AWS", at, now }).status).toBe("DEGRADED");
   });
 
   it("lastCheckAt só é escrito para serviços sem fonte oficial; nos outros a coluna é do coletor", () => {

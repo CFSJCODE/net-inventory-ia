@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_WINDOW_SIZE, normalizeWindowSize, rollingWindowStats, windowStats, type WindowSample } from "./window-stats";
+import { DEFAULT_WINDOW_SIZE, minExceed, normalizeWindowSize, rollingWindowStats, windowStats, type WindowSample } from "./window-stats";
 
 const ok = (ms: number, lossPct: number | null = null): WindowSample => ({ ok: true, latencyMs: ms, lossPct });
 const fail: WindowSample = { ok: false, latencyMs: null };
@@ -67,6 +67,29 @@ describe("windowStats", () => {
 
   it("série vazia", () => {
     expect(windowStats([])).toMatchObject({ samples: 0, p50Ms: null, lossPct: null, degraded: false });
+  });
+});
+
+describe("pico isolado na janela", () => {
+  const base = (n: number) => Array.from({ length: n }, (_, i): WindowSample => ({ ok: true, latencyMs: 18 + (i % 3) }));
+  it("um único pico (ex.: DNS de 158 ms) não degrada a janela de 5, em que o p95 é quase o máximo", () => {
+    const window = [...base(4), { ok: true, latencyMs: 158 }];
+    const s = windowStats([...base(100), ...window], { size: 5 });
+    expect(s.p95Ms).toBeGreaterThan(100);
+    expect(s.degraded).toBe(false);
+  });
+  it("dois picos na janela de 5 degradam", () => {
+    const window = [...base(3), { ok: true, latencyMs: 158 }, { ok: true, latencyMs: 140 }];
+    expect(windowStats([...base(100), ...window], { size: 5 }).degraded).toBe(true);
+  });
+  it("dois picos na janela de 20 já são cauda real", () => {
+    const window = [...base(18), { ok: true, latencyMs: 158 }, { ok: true, latencyMs: 140 }];
+    expect(windowStats([...base(100), ...window], { size: 20 }).degraded).toBe(true);
+  });
+  it("o mínimo acima do limite é 2 ou 10% da janela", () => {
+    expect(minExceed(5)).toBe(2);
+    expect(minExceed(20)).toBe(2);
+    expect(minExceed(50)).toBe(5);
   });
 });
 

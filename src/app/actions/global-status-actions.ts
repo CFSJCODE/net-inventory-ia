@@ -24,7 +24,7 @@ import { THROUGHPUT_KEEP_MS, summarizeThroughput, type ThroughputSummary } from 
 import { getGlobalStatusSettings, normalizeGlobalStatusSettings, saveGlobalStatusSettings, type GlobalStatusSettings } from "@/lib/global-status/settings";
 import { serialized } from "@/lib/global-status/write-queue";
 import { getEmailAlertConfig } from "@/lib/alerts/email-settings";
-import { AUTO_GATEWAY, STATUS_SEVERITY, targetAddress, targetLabel, type LocalConnectivity, type ProbeKind, type ServiceStatus, type TargetStatus } from "@/lib/global-status/types";
+import { AUTO_GATEWAY, STATUS_SEVERITY, isExternalOnly, targetAddress, targetLabel, type LocalConnectivity, type ProbeKind, type ServiceStatus, type TargetStatus } from "@/lib/global-status/types";
 
 export interface StatusComponentRow {
   name: string;
@@ -51,8 +51,13 @@ export interface StatusServiceRow {
   slug: string;
   name: string;
   category: string;
-  /** Status consolidado: o pior entre o oficial e o medido. */
+  /** Status do card: o medido daqui decide quando existe (ver `combineStatus`); sem medição, o oficial. */
   status: ServiceStatus;
+  /**
+   * true = o provedor declara um problema, mas as medições daqui estão normais: incidente externo (outra
+   * região, outro produto) sem impacto na navegação deste servidor. O card fica "Operando".
+   */
+  externalIncident: boolean;
   /** true = o provedor publica uma fonte oficial que o servidor consulta. */
   hasSource: boolean;
   /** Frase do provedor (ex.: "Serviço parcialmente degradado"). */
@@ -301,30 +306,35 @@ export async function getGlobalStatus(): Promise<GlobalStatusData> {
 
   return {
     probes,
-    services: services.map((s) => ({
-      slug: s.slug,
-      name: s.name,
-      category: s.category,
-      hasSource: s.sourceType !== "NONE",
-      officialStatus: s.officialStatus,
-      officialState: (s.officialState as ServiceStatus | null) ?? null,
+    services: services.map((s) => {
       // Status do card, estado medido, motivo, pausa e latência: nada disso vai com as medições desligadas.
-      ...servedMeasure(s, probes),
-      uptime24h: history.services.get(s.id)?.uptime24h ?? null,
-      spark: history.services.get(s.id)?.spark ?? null,
-      pageUrl: s.pageUrl,
-      lastCheckAt: s.lastCheckAt?.toISOString() ?? null,
-      lastChangeAt: s.lastChangeAt?.toISOString() ?? null,
-      lastError: s.lastError,
-      componentCounts: countsBy.get(s.id) ?? emptyCounts(),
-      problemComponents: problems
-        .filter((c) => c.serviceId === s.id)
-        .sort((a, b) => STATUS_SEVERITY[b.status as ServiceStatus] - STATUS_SEVERITY[a.status as ServiceStatus])
-        .slice(0, 6)
-        .map((c) => ({ name: c.name, groupName: c.groupName, status: c.status as ServiceStatus })),
-      // Mudança de rota é aviso, não incidente do serviço: fica no ticker, fora da contagem do card.
-      openIncidents: open.filter((i) => i.service.slug === s.slug && i.origin !== ROUTE_ORIGIN).length,
-    })),
+      const measure = servedMeasure(s, probes);
+      const officialState = (s.officialState as ServiceStatus | null) ?? null;
+      return {
+        slug: s.slug,
+        name: s.name,
+        category: s.category,
+        hasSource: s.sourceType !== "NONE",
+        officialStatus: s.officialStatus,
+        officialState,
+        ...measure,
+        externalIncident: isExternalOnly(officialState, measure.measuredStatus),
+        uptime24h: history.services.get(s.id)?.uptime24h ?? null,
+        spark: history.services.get(s.id)?.spark ?? null,
+        pageUrl: s.pageUrl,
+        lastCheckAt: s.lastCheckAt?.toISOString() ?? null,
+        lastChangeAt: s.lastChangeAt?.toISOString() ?? null,
+        lastError: s.lastError,
+        componentCounts: countsBy.get(s.id) ?? emptyCounts(),
+        problemComponents: problems
+          .filter((c) => c.serviceId === s.id)
+          .sort((a, b) => STATUS_SEVERITY[b.status as ServiceStatus] - STATUS_SEVERITY[a.status as ServiceStatus])
+          .slice(0, 6)
+          .map((c) => ({ name: c.name, groupName: c.groupName, status: c.status as ServiceStatus })),
+        // Mudança de rota é aviso, não incidente do serviço: fica no ticker, fora da contagem do card.
+        openIncidents: open.filter((i) => i.service.slug === s.slug && i.origin !== ROUTE_ORIGIN).length,
+      };
+    }),
     incidents: open.map(incidentRow),
     connectivity,
   };

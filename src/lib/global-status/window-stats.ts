@@ -11,7 +11,12 @@ import { jitter, median, percentile } from "./stats";
  *   jitter   = média de |xᵢ − xᵢ₋₁| nas latências consecutivas de W (RFC 3550, sem o filtro 1/16);
  *   perda    = média em W de 100 para cada medição sem resposta e da perda medida (ping) nas demais;
  *   base     = as B latências (B = 100 por padrão) das medições ANTERIORES à janela;
- *   degradado ⇔ |base| ≥ B_min ∧ p95(W) > max(1,5 · mediana(base), mediana(base) + Δ_min, p95(base)).
+ *   limite   = max(1,5 · mediana(base), mediana(base) + Δ_min, p95(base));
+ *   degradado ⇔ |base| ≥ B_min ∧ p95(W) > limite ∧ #{x ∈ W : x > limite} ≥ max(2, ⌈N/10⌉).
+ *
+ * A contagem mínima acima do limite existe porque, com N = 20, o p95 interpolado é praticamente o
+ * máximo da janela: um único pico (um DNS de 158 ms, um HTTP de 1,8 s) deixaria o alvo "degradado"
+ * pelas 20 medições seguintes. Pedir ao menos 2 (ou 10% da janela) separa pico isolado de cauda real.
  *
  * A mediana como base resiste a picos (um pico isolado não a desloca), e o p95 da janela pega a cauda
  * que piora antes da mediana. O Δ_min (10 ms) evita alarme de ruído em alvos de 1 ms, como o gateway da
@@ -35,6 +40,12 @@ export const TRAIL_MAX = MAX_WINDOW_SIZE + BASELINE_POINTS;
 export const MIN_BASELINE_POINTS = 30;
 /** Diferença mínima entre o p95 e a base para degradar, em ms. */
 export const MIN_DEGRADE_DELTA_MS = 10;
+/** Fração mínima da janela acima do limite para degradar (com piso de 2 medições). */
+export const MIN_EXCEED_FRACTION = 0.1;
+/** Medições acima do limite exigidas numa janela de N medições. */
+export function minExceed(size: number): number {
+  return Math.max(2, Math.ceil(size * MIN_EXCEED_FRACTION));
+}
 
 export interface WindowSample {
   ok: boolean;
@@ -104,7 +115,8 @@ export function windowStats(samples: readonly WindowSample[], options: WindowOpt
   // Com poucas respostas na janela, o p95 é praticamente o máximo: exige ao menos 5 (ou a janela toda, se menor).
   const enough = baseline.length >= (options.minBaselinePoints ?? MIN_BASELINE_POINTS) && lats.length >= Math.min(5, size);
   const limit = baselineMs === null ? null : Math.max(factor * baselineMs, baselineMs + minDelta, baselineP95Ms ?? 0);
-  const degraded = enough && p95Ms !== null && limit !== null && p95Ms > limit;
+  const exceeding = limit === null ? 0 : lats.filter((v) => v > limit).length;
+  const degraded = enough && p95Ms !== null && limit !== null && p95Ms > limit && exceeding >= Math.min(minExceed(size), lats.length);
   return {
     samples: window.length,
     answered: lats.length,
