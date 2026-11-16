@@ -51,3 +51,8 @@ public sealed record AgentRouteHop(int Ttl, string? Ip, double? RttMs);
 public sealed record AgentRouteResult(string ServiceId, string Host, DateTimeOffset At, string? DestIp, bool Reached, string Tool, AgentRouteHop[] Hops, string? Error = null);
 public sealed record AgentRouteBatch(Guid AgentId, AgentRouteResult[] Routes);
 public sealed record AgentRouteIngestResponse(int Accepted, int Ignored);
+
+/// <summary>Teste de banda da rede local feito pelo agente com o iperf3 contra o servidor iperf3 do painel (Mbit/s).</summary>
+public sealed record AgentThroughputResult(DateTimeOffset At, string Server, int Port, double? UploadMbps, double? DownloadMbps, int? Retransmits, double? DurationSec, string? Error = null);
+public sealed record AgentThroughputBatch(Guid AgentId, AgentThroughputResult[] Results);
+public sealed record AgentThroughputIngestResponse(int Accepted, int Ignored);

@@ -247,6 +247,13 @@ app.MapPost("/api/v1/agents/{id:guid}/route-results",async(Guid id,AgentRouteBat
     if(RouteValidation.Validate(batch)is{}error)return Results.BadRequest(new{error});
     return Results.Ok(await store.IngestRouteResultsAsync(batch,DateTimeOffset.UtcNow));
 }).WithMetadata(new AgentSelfMarker());
+// Painel "Status global": teste de banda da rede local (iperf3) feito pelo agente contra o servidor iperf3.
+app.MapPost("/api/v1/agents/{id:guid}/throughput-results",async(Guid id,AgentThroughputBatch batch,HttpContext context,InventoryStore store)=>
+{
+    var token=Bearer(context);if(token is null||batch.AgentId!=id||!await store.AuthenticateAsync(id,token))return Results.Unauthorized();
+    if(ThroughputValidation.Validate(batch)is{}error)return Results.BadRequest(new{error});
+    return Results.Ok(await store.IngestThroughputResultsAsync(batch,DateTimeOffset.UtcNow));
+}).WithMetadata(new AgentSelfMarker());
 app.MapHub<InventoryHub>("/hubs/inventory");app.MapNetInventoryWebConsole();
 if(!string.IsNullOrWhiteSpace(legacy))app.MapReverseProxy().WithMetadata(new LegacyMarker());
 app.Run();

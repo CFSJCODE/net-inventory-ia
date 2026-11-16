@@ -543,12 +543,14 @@ async function rollUpAgents(r: RunnerState, now: number): Promise<void> {
   if (plan) r.agentLastRolled = plan.lastRolled;
 }
 
-/** Apaga as medições cruas com mais de 48 h e as janelas com mais de 30 dias. */
+/** Apaga as medições cruas com mais de 48 h, e as janelas e os testes de banda com mais de 30 dias. */
 async function cleanUp(now: number): Promise<void> {
   const { checksBefore, rollupsBefore } = cleanupCutoffs(now);
   await serialized(() =>
     prisma.$transaction([prisma.probeCheck.deleteMany({ where: { at: { lt: checksBefore } } }), prisma.probeRollup.deleteMany({ where: { bucket: { lt: rollupsBefore } } })]),
   );
+  // Testes de banda (iperf3) dos agentes: os mesmos 30 dias das janelas. Separado: uma falha aqui não desfaz a limpeza acima.
+  await serialized(() => prisma.throughputTest.deleteMany({ where: { at: { lt: rollupsBefore } } })).catch(() => undefined);
 }
 
 /**

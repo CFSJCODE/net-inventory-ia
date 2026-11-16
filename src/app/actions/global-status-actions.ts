@@ -1,6 +1,7 @@
 "use server";
 
 import { requirePermission, requireSession } from "@/lib/auth/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { STATUS_CATALOG } from "@/lib/global-status/catalog";
 import { checkGlobalStatus, ensureCatalogSeeded } from "@/lib/global-status/collector";
@@ -19,6 +20,7 @@ import { ROUTE_ORIGIN, readRouteToolState, routesEnabled, traceServiceNow, type 
 import { CABLE_MAP_PAGE } from "@/lib/global-status/subsea-cables";
 import { BUCKET_MS, bucketStart } from "@/lib/global-status/stats";
 import { storedIsp } from "@/lib/global-status/internet-signals";
+import { THROUGHPUT_KEEP_MS, summarizeThroughput, type ThroughputSummary } from "@/lib/global-status/throughput";
 import { getGlobalStatusSettings, normalizeGlobalStatusSettings, saveGlobalStatusSettings, type GlobalStatusSettings } from "@/lib/global-status/settings";
 import { serialized } from "@/lib/global-status/write-queue";
 import { getEmailAlertConfig } from "@/lib/alerts/email-settings";
@@ -574,6 +576,44 @@ async function loadVantages(main: { id: string }, serverPoints: RollupPoint[], e
   return rows;
 }
 
+type DetailTarget = Prisma.ProbeTargetGetPayload<object>;
+type LastCheck = Prisma.ProbeCheckGetPayload<object> | null;
+
+/** Uma linha de alvo do detalhe, com o histórico de 24 h, a última medição e a disponibilidade de 30 dias. */
+function targetRow(t: DetailTarget, ctx: { points: RollupPoint[]; historyEnd: Date | null; last: LastCheck; gateway: string | null; uptime30d: number | null }): StatusTargetRow {
+  const spec = { kind: t.kind as ProbeKind, host: t.host, url: t.url, port: t.port };
+  const { points, last } = ctx;
+  return {
+    key: t.key,
+    kind: spec.kind,
+    label: targetLabel(spec),
+    address: targetAddress(spec, ctx.gateway),
+    status: t.status as TargetStatus,
+    statusReason: t.statusReason,
+    lastCheckAt: t.lastCheckAt?.toISOString() ?? null,
+    lastLatencyMs: t.lastLatencyMs,
+    lastError: t.lastError,
+    intervalSec: t.intervalSec,
+    uptime24h: uptimeOf(points),
+    uptime30d: ctx.uptime30d,
+    ...latencySummary(points),
+    last: last && {
+      at: last.at.toISOString(),
+      ok: last.ok,
+      httpStatus: last.httpStatus,
+      dnsMs: last.dnsMs,
+      connectMs: last.connectMs,
+      tlsMs: last.tlsMs,
+      ttfbMs: last.ttfbMs,
+      totalMs: last.totalMs,
+      lossPct: last.lossPct,
+      jitterMs: last.jitterMs,
+      certDays: last.certDays,
+    },
+    spark: ctx.historyEnd ? sparkOf(points, ctx.historyEnd) : null,
+  };
+}
+
 export async function getGlobalStatusDetail(slug: string): Promise<StatusServiceDetail> {
   await requireSession();
   if (typeof slug !== "string" || !slug) return EMPTY_DETAIL;
@@ -630,40 +670,7 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
   return {
     components: service.components.map((c) => ({ name: c.name, groupName: c.groupName, status: c.status as ServiceStatus })),
     incidents: service.incidents.map((i) => incidentRow({ ...i, service: { slug: service.slug, name: service.name } })),
-    targets: targets.map((t, index): StatusTargetRow => {
-      const spec = { kind: t.kind as ProbeKind, host: t.host, url: t.url, port: t.port };
-      const points = history?.points.get(t.id) ?? [];
-      const last = lasts[index];
-      return {
-        key: t.key,
-        kind: spec.kind,
-        label: targetLabel(spec),
-        address: targetAddress(spec, gateway),
-        status: t.status as TargetStatus,
-        statusReason: t.statusReason,
-        lastCheckAt: t.lastCheckAt?.toISOString() ?? null,
-        lastLatencyMs: t.lastLatencyMs,
-        lastError: t.lastError,
-        intervalSec: t.intervalSec,
-        uptime24h: uptimeOf(points),
-        uptime30d: uptime30d.get(t.id) ?? null,
-        ...latencySummary(points),
-        last: last && {
-          at: last.at.toISOString(),
-          ok: last.ok,
-          httpStatus: last.httpStatus,
-          dnsMs: last.dnsMs,
-          connectMs: last.connectMs,
-          tlsMs: last.tlsMs,
-          ttfbMs: last.ttfbMs,
-          totalMs: last.totalMs,
-          lossPct: last.lossPct,
-          jitterMs: last.jitterMs,
-          certDays: last.certDays,
-        },
-        spark: history ? sparkOf(points, history.end) : null,
-      };
-    }),
+    targets: targets.map((t, index) => targetRow(t, { points: history?.points.get(t.id) ?? [], historyEnd: history?.end ?? null, last: lasts[index], gateway, uptime30d: uptime30d.get(t.id) ?? null })),
     vantages: main && vantages ? { targetLabel: targetLabel({ kind: main.kind as ProbeKind, port: main.port }), rows: vantages } : null,
     phases: phaseChecks ? buildPhaseSeries(phaseChecks, { end, hours: SPARK_HOURS, stepMin: PHASE_STEP_MIN }) : null,
     traceable: measuring && routesEnabled() && traceHost(targets) !== null,
@@ -681,6 +688,24 @@ export async function getRouteOverview(): Promise<RouteOverview | null> {
 }
 
 /** Segunda opinião do RIPE Atlas (fase 10): sondas públicas no Brasil até o mesmo destino. Sob demanda, em cache por 6 h. */
+/** Banda da rede local (iperf3) por agente, dos testes dos últimos 30 dias. Vazia sem testes ou sem a tabela. */
+export async function getThroughput(): Promise<ThroughputSummary[]> {
+  await requireSession();
+  const now = Date.now();
+  const rows = await prisma.throughputTest
+    .findMany({ where: { at: { gte: new Date(now - THROUGHPUT_KEEP_MS) } }, orderBy: { at: "desc" }, take: 2000 })
+    .catch(() => []);
+  if (!rows.length) return [];
+  const ids = [...new Set(rows.map((r) => agentIdOf(r.vantage)).filter((id): id is string => !!id))];
+  const names = await agentLabels(ids);
+  const labels = new Map<string, string>();
+  for (const r of rows) {
+    const id = agentIdOf(r.vantage);
+    if (id && names.has(id)) labels.set(r.vantage, names.get(id)!);
+  }
+  return summarizeThroughput(rows, labels, now);
+}
+
 export async function compareRouteWithAtlas(slug: string): Promise<AtlasComparison | null> {
   await requireSession();
   if (typeof slug !== "string" || !slug || !routesEnabled()) return null;
