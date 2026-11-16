@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import alertsSample from "./__fixtures__/ioda-alerts-sample.json";
 import { iodaAlertsUrl, iodaRuns, parseIodaAlerts } from "./adapters/ioda";
-import { bgpSnapshot, parseNetworkInfo, parseRoutingStatus, routeText, visibilityStatus, type ServiceRoute } from "./adapters/ripestat";
+import { bgpSnapshot, parseCoveringPrefix, parseNetworkInfo, parseRoutingStatus, routeStatus, routeText, visibilityStatus, type ServiceRoute } from "./adapters/ripestat";
 import { planDetected, RESOLVE_AFTER_MS } from "./detected";
 import { routeHost } from "./internet-signals";
 import { normalizeGlobalStatusSettings } from "./settings";
@@ -110,6 +110,29 @@ describe("RIPEstat", () => {
     expect(snap.components?.[2].name).toBe("x · x.com sem prefixo anunciado");
     expect(bgpSnapshot([]).status).toBe("UNKNOWN");
     expect(routeText({ prefix: "1.1.1.0/24", asn: 13335, visibility: null, error: "RIPEstat não respondeu a tempo" })).toBe("1.1.1.0/24 · AS13335 · RIPEstat não respondeu a tempo");
+  });
+
+  it("prefixo regional (PoP da Meta no Rio) coberto por bloco maior visível no mundo todo fica normal", () => {
+    // RIPEstat em 16/11/2026: 57.144.136.0/23 visto por 52 de 317 coletores, coberto por 57.144.0.0/14 do AS32934.
+    const body = { status: "ok", data: { visibility: { v4: { ris_peers_seeing: 52, total_ris_peers: 317 } }, less_specifics: [{ prefix: "57.144.0.0/14", origin: "32934" }] } };
+    expect(parseCoveringPrefix(body, 32934)).toBe("57.144.0.0/14");
+    expect(parseCoveringPrefix(body, 13335)).toBeNull();
+    expect(parseCoveringPrefix({ status: "ok", data: {} }, 32934)).toBeNull();
+
+    const base = { prefix: "57.144.136.0/23", asn: 32934, visibility: { seeing: 52, total: 317 }, error: null };
+    const covered = { ...base, covering: { prefix: "57.144.0.0/14", visibility: { seeing: 316, total: 317 } } };
+    expect(routeStatus(covered)).toBe("OK");
+    expect(routeText(covered)).toBe("57.144.136.0/23 · AS32934 · vista por 52 de 317 coletores · rota regional, coberta por 57.144.0.0/14 (vista por 316 de 317)");
+    // Sem bloco maior, ou com ele também sumido, segue fora.
+    expect(routeStatus(base)).toBe("DOWN");
+    const bothGone = { ...base, covering: { prefix: "57.144.0.0/14", visibility: { seeing: 40, total: 317 } } };
+    expect(routeStatus(bothGone)).toBe("DOWN");
+    expect(routeText(bothGone)).toContain("bloco maior 57.144.0.0/14 também pouco visto");
+    expect(routeStatus({ ...base, covering: { prefix: "57.144.0.0/14", visibility: null } })).toBe("DOWN");
+
+    const snap = bgpSnapshot([{ slug: "instagram", name: "Instagram", group: "Redes sociais", ...covered }]);
+    expect(snap.status).toBe("OK");
+    expect(snap.description).toBe("1 de 1 prefixos vistos no mundo todo");
   });
 
   it("a rota que importa é a do TCP, senão a do HTTP; o gateway local não tem rota pública", () => {

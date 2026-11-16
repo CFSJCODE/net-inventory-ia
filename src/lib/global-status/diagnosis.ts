@@ -136,10 +136,20 @@ function offlineRule(a: Attribution, connectivity: LocalConnectivity): void {
   a.assign({ scope: "LOCAL", label: dns ? "DNS deste servidor" : "Conexão deste servidor", detail: why, action: "Confira o roteador, o cabo ou Wi-Fi e o DNS configurado; os serviços abaixo podem estar normais." }, () => true);
 }
 
+/**
+ * "Rede local" só degradada pelo alvo DNS, com o gateway normal. O motivo é o do primeiro alvo (na ordem
+ * do catálogo: gateway, depois DNS) no pior estado; com o card DEGRADED, um motivo "DNS:" garante que o
+ * gateway não está degradado nem fora (senão o motivo seria o dele, ou o card estaria DOWN). Com o card
+ * DOWN não dá para saber, e vale a regra da rede local. O alvo DNS mede o resolvedor configurado
+ * (1.1.1.1, o da operadora...), que fica na Internet: um cache frio lá fora não é o roteador, o switch
+ * nem o cabo, e não explica o TCP lento de outros serviços.
+ */
+const dnsOnly = (local: DiagnosisService) => local.measuredStatus === "DEGRADED" && !!local.measuredReason?.startsWith("DNS:");
+
 /** 2. Rede local degradada: o que só foi visto daqui (o provedor não confirma) é efeito dela. */
 function localRule(a: Attribution, services: readonly DiagnosisService[]): void {
   const local = services.find((s) => s.slug === LOCAL_SLUG);
-  if (!local || !bad(local.measuredStatus)) return;
+  if (!local || !bad(local.measuredStatus) || dnsOnly(local)) return;
   const state = local.measuredStatus === "DOWN" ? "fora" : "degradada";
   const why = local.measuredReason ? ` (${local.measuredReason})` : "";
   a.assign(
