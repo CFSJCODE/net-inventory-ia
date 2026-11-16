@@ -78,7 +78,10 @@ function HealthChart({ points, from, to, threshold }: { points: SeriesPoint[]; f
     let open = false;
     for (const p of points) {
       const v = p[key];
-      if (v === null) { open = false; continue; }
+      if (v === null) {
+        open = false;
+        continue;
+      }
       segs.push(`${open ? "L" : "M"}${x(p.at).toFixed(1)},${yLat(v).toFixed(1)}`);
       open = true;
     }

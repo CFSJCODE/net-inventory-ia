@@ -158,13 +158,23 @@ export function totalsOf(rates: PortRates[]): EquipmentTotals {
 export function pearson(xs: number[], ys: number[], minPoints = 10): number | null {
   const n = Math.min(xs.length, ys.length);
   if (n < minPoints) return null;
-  let sx = 0, sy = 0;
-  for (let i = 0; i < n; i++) { sx += xs[i]; sy += ys[i]; }
-  const mx = sx / n, my = sy / n;
-  let cov = 0, vx = 0, vy = 0;
+  let sx = 0;
+  let sy = 0;
   for (let i = 0; i < n; i++) {
-    const dx = xs[i] - mx, dy = ys[i] - my;
-    cov += dx * dy; vx += dx * dx; vy += dy * dy;
+    sx += xs[i];
+    sy += ys[i];
+  }
+  const mx = sx / n;
+  const my = sy / n;
+  let cov = 0;
+  let vx = 0;
+  let vy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - mx;
+    const dy = ys[i] - my;
+    cov += dx * dy;
+    vx += dx * dx;
+    vy += dy * dy;
   }
   if (vx === 0 || vy === 0) return null;
   return Math.round((cov / Math.sqrt(vx * vy)) * 1000) / 1000;

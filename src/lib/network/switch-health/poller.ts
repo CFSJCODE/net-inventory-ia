@@ -221,7 +221,12 @@ async function runPoll(): Promise<void> {
   if (!settings.enabled) return;
   const equipment = await prisma.equipment.findMany();
   // Equipamento removido: some da memória.
-  for (const id of snapshots().keys()) if (!equipment.some((e) => e.id === id)) { snapshots().delete(id); latest().delete(id); portLists().delete(id); }
+  for (const id of snapshots().keys()) {
+    if (equipment.some((e) => e.id === id)) continue;
+    snapshots().delete(id);
+    latest().delete(id);
+    portLists().delete(id);
+  }
   if (!equipment.length) return;
   const gatewayMs = await gatewayLatency();
   await mapWithConcurrency(equipment, 3, (eq) => pollEquipment(eq, gatewayMs).catch((err) => console.error(`[switch-health] ${eq.ip}: ${err instanceof Error ? err.message : err}`)));
