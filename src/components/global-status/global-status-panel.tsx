@@ -95,7 +95,7 @@ function Counters({ services }: { services: StatusServiceRow[] }) {
 }
 
 /** Faixa "ao vivo" com os incidentes abertos; rola sozinha e para ao passar o mouse. */
-function IncidentTicker({ incidents, onOpen }: { incidents: StatusIncidentRow[]; onOpen: (slug: string) => void }) {
+function IncidentTicker({ incidents, external, onOpen }: { incidents: StatusIncidentRow[]; external: ReadonlySet<string>; onOpen: (slug: string) => void }) {
   if (!incidents.length) {
     return (
       <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-2.5 text-sm text-muted-foreground">
@@ -106,7 +106,9 @@ function IncidentTicker({ incidents, onOpen }: { incidents: StatusIncidentRow[];
   }
   const item = (i: StatusIncidentRow, copy: number) => {
     // Mudança de rota é aviso, não falha: cor neutra.
-    const style = SERVICE_STATUS_STYLE[i.origin === "ROUTE" ? "UNKNOWN" : (IMPACT_STATUS[i.impact] ?? "DEGRADED")];
+    // Incidente oficial de um serviço que as medições daqui veem normal: azul, sem cara de falha.
+    const externalOnly = i.origin !== "DETECTED" && external.has(i.serviceSlug);
+    const style = SERVICE_STATUS_STYLE[i.origin === "ROUTE" ? "UNKNOWN" : externalOnly ? "MAINTENANCE" : (IMPACT_STATUS[i.impact] ?? "DEGRADED")];
     return (
       <button
         key={`${copy}-${i.id}`}
@@ -126,6 +128,7 @@ function IncidentTicker({ incidents, onOpen }: { incidents: StatusIncidentRow[];
         )}
         <span className="font-medium text-foreground">{i.serviceName}</span>
         <span className="max-w-[28rem] truncate">{i.title}</span>
+        {externalOnly && <span className={cn("text-xs", style.text)}>· sem impacto aqui</span>}
         <span className="text-xs">· {formatRelativeTime(i.startedAt)}</span>
       </button>
     );
@@ -169,6 +172,19 @@ function cardDescription(service: StatusServiceRow): string {
   return service.measuredReason ?? SERVICE_STATUS_STYLE[service.measuredStatus].label;
 }
 
+/** Incidente que o provedor declara, mas que as medições daqui não sentem (outra região, outro produto). */
+function ExternalIncidentBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className={cn("font-normal", SERVICE_STATUS_STYLE.MAINTENANCE.badge)}
+      title="O provedor declara um problema, mas as medições deste servidor estão normais: não afeta a sua navegação."
+    >
+      Incidente externo · sem impacto aqui
+    </Badge>
+  );
+}
+
 /** O estado oficial ao lado do medido e, quando a medição não está normal, o motivo. Só com fonte oficial. */
 function OfficialAndMeasured({ service }: { service: StatusServiceRow }) {
   const measured = service.measuredStatus;
@@ -186,6 +202,7 @@ function OfficialAndMeasured({ service }: { service: StatusServiceRow }) {
             Sem aviso oficial
           </Badge>
         )}
+        {service.externalIncident && <ExternalIncidentBadge />}
       </div>
       {/* Sem fonte oficial o motivo já está na frase sob o nome; aqui ele não se repete. */}
       {measured !== "OK" && service.measuredReason && (
@@ -261,7 +278,10 @@ function ServiceCard({ service, measuring, onOpen }: { service: StatusServiceRow
         )}
         <div className="mt-auto flex items-center justify-between gap-2 pt-1">
           {service.hasSource ? (
-            <span className={cn(service.openIncidents ? style.text : undefined)}>{openIncidentsText(service.openIncidents)}</span>
+            <span className={cn(service.openIncidents ? (service.externalIncident ? SERVICE_STATUS_STYLE.MAINTENANCE.text : style.text) : undefined)}>
+              {openIncidentsText(service.openIncidents)}
+              {service.externalIncident && service.openIncidents > 0 && " · sem impacto aqui"}
+            </span>
           ) : (
             <span>Só medições deste servidor</span>
           )}
@@ -454,6 +474,7 @@ function ServiceDetailHeader({ service }: { service: StatusServiceRow }) {
           <>
             {service.officialStatus ?? "Sem resposta da fonte oficial ainda."}
             {service.lastCheckAt && <> · consultado {formatRelativeTime(service.lastCheckAt)}</>}
+            {service.externalIncident && <> · as medições deste servidor estão normais: o incidente não afeta a sua navegação.</>}
           </>
         ) : (
           "Sem fonte oficial de status: o estado vem das medições deste servidor."
@@ -547,6 +568,7 @@ export function GlobalStatusPanel() {
   const regional = services.filter((s) => s.category === REGIONAL_CATEGORY);
   // Contadores e cards só dos provedores: a conexão do servidor e a visão de fora ficam nas duas faixas.
   const providers = services.filter((s) => s.category !== INTERNET_CATEGORY && s.category !== REGIONAL_CATEGORY);
+  const externalSlugs = new Set(services.filter((s) => s.externalIncident).map((s) => s.slug));
   const byCategory = CATEGORY_ORDER.map((cat) => [cat, providers.filter((s) => s.category === cat)] as [ServiceCategory, StatusServiceRow[]]).filter(([, list]) => list.length);
 
   return (
@@ -578,7 +600,7 @@ export function GlobalStatusPanel() {
       <RegionalBar services={regional} onOpen={setOpenSlug} />
       <Counters services={providers} />
       <DiagnosisBar data={data} onOpen={setOpenSlug} />
-      <IncidentTicker incidents={data.incidents} onOpen={setOpenSlug} />
+      <IncidentTicker incidents={data.incidents} external={externalSlugs} onOpen={setOpenSlug} />
 
       {byCategory.map(([category, list]) => (
         <section key={category} className="flex flex-col gap-3">

@@ -1284,6 +1284,17 @@ describe("gatilho da janela deslizante no estado do alvo (fase 6)", () => {
     expect(windowVerdict("ICMP", [...stable(100, 20), ...stable(20, 900)])?.status).toBe("DEGRADED");
   });
 
+  it("DNS e HTTP exigem uma piora mínima maior: cache do DNS e variação do servidor não são degradação", () => {
+    // DNS: 3 ms no cache, 40 ms indo ao autoritativo = 13× a mediana, mas só 37 ms a mais.
+    expect(windowVerdict("DNS_MULTI", [...stable(100, 3), ...stable(20, 40)])).toBeNull();
+    expect(windowVerdict("DNS", [...stable(100, 18), ...stable(20, 160)])?.status).toBe("DEGRADED");
+    // HTTP: 400 ms -> 550 ms é 1,4× e 150 ms a mais; 400 -> 900 ms degrada.
+    expect(windowVerdict("HTTP", [...stable(100, 300), ...stable(20, 480)])).toBeNull();
+    expect(windowVerdict("HTTP", [...stable(100, 300), ...stable(20, 900)])?.status).toBe("DEGRADED");
+    // TCP continua com o mínimo de 10 ms.
+    expect(windowVerdict("TCP", [...stable(100, 20), ...stable(20, 40)])?.status).toBe("DEGRADED");
+  });
+
   it("não dispara quando o p95 está dentro do habitual deste horário nos outros dias", () => {
     const trail = [...stable(100, 20), ...stable(20, 900)];
     expect(windowVerdict("ICMP", trail, undefined, Array.from({ length: 12 }, () => 900))).toBeNull();
@@ -1616,13 +1627,16 @@ describe("linha do serviço", () => {
     expect(serviceData(summary, { officialState: "OK", status: "OK" }, { sourceType: "STATUSPAGE", at, now })).toEqual({ ...summary, status: "DOWN", lastChangeAt: now });
     // Sem mudança de status não mexe em lastChangeAt.
     expect(serviceData(summary, { officialState: "OK", status: "DOWN" }, { sourceType: "STATUSPAGE", at, now })).toEqual({ ...summary, status: "DOWN" });
-    // O oficial pior que o medido continua valendo.
+    // Incidente oficial com a medição daqui normal: externo, sem impacto na navegação; o card fica "Operando".
     const fine = { measuredStatus: "OK" as const, measuredReason: null, latencyMs: 20 };
-    expect(serviceData(fine, { officialState: "DEGRADED", status: "DEGRADED" }, { sourceType: "STATUSPAGE", at, now }).status).toBe("DEGRADED");
+    expect(serviceData(fine, { officialState: "DEGRADED", status: "DEGRADED" }, { sourceType: "STATUSPAGE", at, now })).toMatchObject({ status: "OK", lastChangeAt: now });
+    expect(serviceData(fine, { officialState: "DOWN", status: "OK" }, { sourceType: "AWS", at, now }).status).toBe("OK");
+    expect(serviceData(fine, { officialState: "MAINTENANCE", status: "MAINTENANCE" }, { sourceType: "STATUSPAGE", at, now }).status).toBe("OK");
     // Fonte oficial sem dados não esconde o que foi medido.
     expect(serviceData(fine, { officialState: "UNKNOWN", status: "UNKNOWN" }, { sourceType: "GCP", at, now })).toMatchObject({ status: "OK", lastChangeAt: now });
-    // Manutenção declarada pelo provedor aparece enquanto o medido está normal.
-    expect(serviceData(fine, { officialState: "MAINTENANCE", status: "MAINTENANCE" }, { sourceType: "STATUSPAGE", at, now }).status).toBe("MAINTENANCE");
+    // Medido degradado com oficial degradado: impacto aqui, continua degradado.
+    const slow = { measuredStatus: "DEGRADED" as const, measuredReason: "HTTP: latência 3× acima do normal", latencyMs: 900 };
+    expect(serviceData(slow, { officialState: "DEGRADED", status: "OK" }, { sourceType: "AWS", at, now }).status).toBe("DEGRADED");
   });
 
   it("lastCheckAt só é escrito para serviços sem fonte oficial; nos outros a coluna é do coletor", () => {

@@ -51,10 +51,22 @@ export function worstStatus(statuses: ServiceStatus[]): ServiceStatus {
 }
 
 /**
- * Status do card: o pior entre o declarado pelo provedor e o medido daqui. "Sem dados" de um lado não
- * esconde o que o outro lado sabe (fonte oficial fora do ar + medição ok = OK).
+ * Incidente externo sem impacto aqui: o provedor declara um problema (degradação, queda ou manutenção,
+ * em geral numa região ou num produto que este servidor não usa), mas as medições daqui estão normais.
+ * O card fica "Operando" e mostra o incidente à parte, sem contar como degradação da navegação.
+ */
+export function isExternalOnly(official: ServiceStatus | null | undefined, measured: ServiceStatus | null | undefined): boolean {
+  return measured === "OK" && !!official && official !== "OK" && official !== "UNKNOWN";
+}
+
+/**
+ * Status do card. Com medição daqui, ela decide: o card só piora quando a navegação deste servidor
+ * piora, e um incidente oficial com a medição normal vira "incidente externo sem impacto"
+ * (`isExternalOnly`). Sem medição (desligada, pausada pela conexão local ou "Sem dados"), vale o
+ * oficial. Medição pior que o oficial sempre aparece (problema que o provedor ainda não declarou).
  */
 export function combineStatus(official: ServiceStatus | null | undefined, measured: ServiceStatus | null | undefined): ServiceStatus {
+  if (isExternalOnly(official, measured)) return "OK";
   const known = [official, measured].filter((s): s is ServiceStatus => !!s && s !== "UNKNOWN");
   return known.length ? worstStatus(known) : "UNKNOWN";
 }

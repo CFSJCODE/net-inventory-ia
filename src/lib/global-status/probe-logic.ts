@@ -832,13 +832,21 @@ function unmeasured(state: TargetState, at: Date, reason: string, error: string 
 }
 
 /**
+ * Piora mínima, em ms, acima da mediana para o gatilho da janela valer, por tipo de sonda. Uma consulta
+ * DNS que sai do cache (3 ms) e vai ao autoritativo (40 ms) é "12× a mediana" sem que ninguém perceba; um
+ * HTTP que varia algumas centenas de ms por causa do servidor do outro lado também. Ping e handshake TCP
+ * medem só a rede: ficam com o mínimo padrão de 10 ms.
+ */
+export const WINDOW_MIN_DELTA_MS: Partial<Record<ProbeKind, number>> = { DNS: 50, DNS_MULTI: 50, HTTP: 200 };
+
+/**
  * Gatilho da janela deslizante (fase 6) no estado do alvo: com o veredito normal "ok", o alvo fica
  * degradado quando o p95 das últimas N medições passa de 1,5× a mediana das 100 anteriores (e da cauda
  * normal delas; ver `windowStats`). Não vale para o certificado TLS, que mede uma vez a cada 6 h.
  */
 export function windowVerdict(kind: ProbeKind, trail: readonly WindowSample[], windowSize?: number, seasonalP95: readonly number[] = []): TargetVerdict | null {
   if (kind === "TLS") return null;
-  const stats = windowStats(trail, { size: windowSize });
+  const stats = windowStats(trail, { size: windowSize, minDeltaMs: WINDOW_MIN_DELTA_MS[kind] });
   if (!stats.degraded || stats.p95Ms === null || stats.ratio === null) return null;
   // Com histórico deste horário: um p95 dentro do que é comum nesta hora nos outros dias não é degradação.
   const hourly = latencyLimit([...seasonalP95]);
