@@ -269,6 +269,16 @@ try { await store.CreateInvitationAsync("Revoked agent", 5, agentId); Check(fals
     Check(RouteValidation.Validate(new AgentRouteBatch(agentId, [new AgentRouteResult("s1", "github.com; rm", now, null, false, "icmp", [])])) is not null, "destino com caractere estranho recusado");
     Check(RouteValidation.Validate(new AgentRouteBatch(agentId, [new AgentRouteResult("s1", "github.com", now, null, false, "icmp", [new AgentRouteHop(1, "não-é-ip", 1)])])) is not null, "IP de salto inválido recusado");
     Check(RouteValidation.Validate(new AgentRouteBatch(agentId, [new AgentRouteResult("s1", "github.com", now, null, false, "bash", [])])) is not null, "ferramenta desconhecida recusada");
+    // Teste de banda (iperf3): lote, limites e leitura da saída JSON.
+    Check(ThroughputValidation.Validate(new AgentThroughputBatch(agentId, [new AgentThroughputResult(now, "192.168.0.50", 5201, 906, 658.7, 0, 4)])) is null, "lote de banda válido");
+    Check(ThroughputValidation.Validate(new AgentThroughputBatch(agentId, [new AgentThroughputResult(now, "host; rm", 5201, 1, 1, null, 1)])) is not null, "servidor de banda com caractere estranho recusado");
+    Check(ThroughputValidation.Validate(new AgentThroughputBatch(agentId, [new AgentThroughputResult(now, "h", 5201, double.NaN, 1, null, 1)])) is not null, "taxa NaN recusada");
+    Check(ThroughputValidation.Validate(new AgentThroughputBatch(agentId, [new AgentThroughputResult(now, "h", 0, 1, 1, null, 1)])) is not null, "porta zero recusada");
+    var iperfOk = ThroughputValidation.ParseIperf3("""{"end":{"sum_sent":{"bits_per_second":910000000,"retransmits":3},"sum_received":{"seconds":2.0,"bits_per_second":906008331.5}}}""");
+    Check(iperfOk.Mbps == 906.0 && iperfOk.Retransmits == 3 && iperfOk.Seconds == 2.0 && iperfOk.Error is null, "iperf3: taxa do lado que recebeu, em Mbit/s");
+    Check(ThroughputValidation.ParseIperf3("""{"start":{},"error":"the server is busy running a test. try again later"}""").Error == "the server is busy running a test. try again later", "iperf3: erro devolvido");
+    Check(ThroughputValidation.ParseIperf3("não é json").Error is not null, "iperf3: saída ilegível vira erro");
+    Check(!ThroughputValidation.Fresh(new AgentThroughputResult(now.AddHours(-7), "h", 5201, 1, 1, null, 1), now), "teste de banda velho descartado");
     Check(await routeStore.IngestRouteResultsAsync(routeBatch, now) is { Accepted: 1, Ignored: 2 }, "rota velha e serviço removido ignorados");
     Check(await routeStore.IngestRouteResultsAsync(routeBatch, now) is { Accepted: 0, Ignored: 3 }, "reenvio da mesma rota não duplica");
     using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = routeStore.DatabasePath }.ToString()))
@@ -278,6 +288,27 @@ try { await store.CreateInvitationAsync("Revoked agent", 5, agentId); Check(fals
         using var row = read.ExecuteReader();
         Check(row.Read(), "rota do agente gravada");
         Check(row.GetString(0) == "agent:" + agentId.ToString("D") && row.GetString(1) == InventoryStore.PendingVerdict && row.GetInt64(2) == 1 && row.GetString(3) == "integer" && row.GetInt64(4) == 3, "rota pendente com os saltos, no formato do Prisma");
+    }
+}
+
+// Painel "Status global": testes de banda (iperf3) do agente, gravados na tabela do motor.
+{
+    var tpStore = new InventoryStore(Path.Combine(runDirectory, "throughput-store"));
+    var tpBatch = new AgentThroughputBatch(agentId, [new AgentThroughputResult(now.AddMinutes(-1), "192.168.0.50", 5201, 906, 658.7, null, 4), new AgentThroughputResult(now.AddHours(-8), "192.168.0.50", 5201, 1, 1, null, 4)]);
+    Check(await tpStore.IngestThroughputResultsAsync(tpBatch, now) is { Accepted: 0, Ignored: 2 }, "sem a tabela do motor o teste de banda é ignorado");
+    using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = tpStore.DatabasePath }.ToString()))
+    {
+        db.Open(); using var apply = db.CreateCommand();
+        apply.CommandText = File.ReadAllText(Path.Combine(root, "..", "prisma", "migrations", "20261116050000_throughput_test", "migration.sql")); apply.ExecuteNonQuery();
+    }
+    Check(await tpStore.IngestThroughputResultsAsync(tpBatch, now) is { Accepted: 1, Ignored: 1 }, "teste de banda gravado; o velho ignorado");
+    Check(await tpStore.IngestThroughputResultsAsync(tpBatch, now) is { Accepted: 0, Ignored: 2 }, "reenvio do mesmo teste de banda não duplica");
+    using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = tpStore.DatabasePath }.ToString()))
+    {
+        db.Open(); using var read = db.CreateCommand();
+        read.CommandText = "SELECT \"vantage\", typeof(\"at\"), \"uploadMbps\", \"downloadMbps\", \"retransmits\" FROM \"ThroughputTest\"";
+        using var row = read.ExecuteReader();
+        Check(row.Read() && row.GetString(0) == "agent:" + agentId.ToString("D") && row.GetString(1) == "integer" && row.GetDouble(2) == 906 && Math.Abs(row.GetDouble(3) - 658.7) < 1e-9 && row.IsDBNull(4), "teste de banda no formato do Prisma");
     }
 }
 

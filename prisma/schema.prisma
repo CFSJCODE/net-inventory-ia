@@ -533,3 +533,24 @@ model RouteDaily {
   @@id([serviceId, vantage, day])
   @@index([day])
 }
+
+/// Teste de banda da rede local (iperf3) feito por um agente contra o servidor iperf3 do painel. Um
+/// teste = upload (agente → servidor) e download (servidor → agente, iperf3 -R), em Mbit/s.
+model ThroughputTest {
+  id           String   @id @default(cuid())
+  /// "agent:<id>" do agente que mediu.
+  vantage      String
+  at           DateTime
+  /// Host e porta do servidor iperf3.
+  server       String
+  port         Int
+  durationSec  Float?
+  uploadMbps   Float?
+  downloadMbps Float?
+  /// Retransmissões TCP somadas das duas direções; muitas indicam perda no caminho.
+  retransmits  Int?
+  error        String?
+
+  @@unique([vantage, at])
+  @@index([at])
+}

@@ -19,6 +19,7 @@ import { ROUTE_ORIGIN, readRouteToolState, routesEnabled, traceServiceNow, type 
 import { CABLE_MAP_PAGE } from "@/lib/global-status/subsea-cables";
 import { BUCKET_MS, bucketStart } from "@/lib/global-status/stats";
 import { storedIsp } from "@/lib/global-status/internet-signals";
+import { THROUGHPUT_KEEP_MS, summarizeThroughput, type ThroughputSummary } from "@/lib/global-status/throughput";
 import { getGlobalStatusSettings, normalizeGlobalStatusSettings, saveGlobalStatusSettings, type GlobalStatusSettings } from "@/lib/global-status/settings";
 import { serialized } from "@/lib/global-status/write-queue";
 import { getEmailAlertConfig } from "@/lib/alerts/email-settings";
@@ -681,6 +682,24 @@ export async function getRouteOverview(): Promise<RouteOverview | null> {
 }
 
 /** Segunda opinião do RIPE Atlas (fase 10): sondas públicas no Brasil até o mesmo destino. Sob demanda, em cache por 6 h. */
+/** Banda da rede local (iperf3) por agente, dos testes dos últimos 30 dias. Vazia sem testes ou sem a tabela. */
+export async function getThroughput(): Promise<ThroughputSummary[]> {
+  await requireSession();
+  const now = Date.now();
+  const rows = await prisma.throughputTest
+    .findMany({ where: { at: { gte: new Date(now - THROUGHPUT_KEEP_MS) } }, orderBy: { at: "desc" }, take: 2000 })
+    .catch(() => []);
+  if (!rows.length) return [];
+  const ids = [...new Set(rows.map((r) => agentIdOf(r.vantage)).filter((id): id is string => !!id))];
+  const names = await agentLabels(ids);
+  const labels = new Map<string, string>();
+  for (const r of rows) {
+    const id = agentIdOf(r.vantage);
+    if (id && names.has(id)) labels.set(r.vantage, names.get(id)!);
+  }
+  return summarizeThroughput(rows, labels, now);
+}
+
 export async function compareRouteWithAtlas(slug: string): Promise<AtlasComparison | null> {
   await requireSession();
   if (typeof slug !== "string" || !slug || !routesEnabled()) return null;

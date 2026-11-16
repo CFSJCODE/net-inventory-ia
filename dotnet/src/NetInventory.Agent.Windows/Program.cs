@@ -54,7 +54,7 @@ using(var context=Context(endpoint))
 }
 var diagnostics=new DiagnosticState();var runner=new AgentRunner(installation.AgentId,Context,Endpoint,new WindowsCollector(),diagnostics);
 if(args.Contains("--once"))return await runner.RunOnce(CancellationToken.None)?0:2;
-builder.Services.AddSingleton(runner);builder.Services.AddSingleton(diagnostics);builder.Services.AddHostedService<DiagnosticPipeServer>();builder.Services.AddHostedService<AgentWorker>();builder.Services.AddHostedService<ProbeWorker>();builder.Services.AddHostedService<RouteWorker>();
+builder.Services.AddSingleton(runner);builder.Services.AddSingleton(diagnostics);builder.Services.AddHostedService<DiagnosticPipeServer>();builder.Services.AddHostedService<AgentWorker>();builder.Services.AddHostedService<ProbeWorker>();builder.Services.AddHostedService<RouteWorker>();builder.Services.AddHostedService<ThroughputWorker>();
 using var host=builder.Build();await host.RunAsync();return 0;
 static string HostKey(Uri uri)=>Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(uri.AbsoluteUri))).ToLowerInvariant()[..24];
 
