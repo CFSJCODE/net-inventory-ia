@@ -1284,6 +1284,17 @@ describe("gatilho da janela deslizante no estado do alvo (fase 6)", () => {
     expect(windowVerdict("ICMP", [...stable(100, 20), ...stable(20, 900)])?.status).toBe("DEGRADED");
   });
 
+  it("DNS e HTTP exigem uma piora mínima maior: cache do DNS e variação do servidor não são degradação", () => {
+    // DNS: 3 ms no cache, 40 ms indo ao autoritativo = 13× a mediana, mas só 37 ms a mais.
+    expect(windowVerdict("DNS_MULTI", [...stable(100, 3), ...stable(20, 40)])).toBeNull();
+    expect(windowVerdict("DNS", [...stable(100, 18), ...stable(20, 160)])?.status).toBe("DEGRADED");
+    // HTTP: 400 ms -> 550 ms é 1,4× e 150 ms a mais; 400 -> 900 ms degrada.
+    expect(windowVerdict("HTTP", [...stable(100, 300), ...stable(20, 480)])).toBeNull();
+    expect(windowVerdict("HTTP", [...stable(100, 300), ...stable(20, 900)])?.status).toBe("DEGRADED");
+    // TCP continua com o mínimo de 10 ms.
+    expect(windowVerdict("TCP", [...stable(100, 20), ...stable(20, 40)])?.status).toBe("DEGRADED");
+  });
+
   it("não dispara quando o p95 está dentro do habitual deste horário nos outros dias", () => {
     const trail = [...stable(100, 20), ...stable(20, 900)];
     expect(windowVerdict("ICMP", trail, undefined, Array.from({ length: 12 }, () => 900))).toBeNull();
