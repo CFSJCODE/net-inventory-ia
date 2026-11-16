@@ -9,6 +9,7 @@ import { Field, SimpleSelect } from "@/components/tools/tool-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { formatRelativeTime } from "@/lib/format-time";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { CATEGORY_LABEL, CATEGORY_ORDER } from "@/lib/global-status/catalog";
 import type { GlobalStatusSettings } from "@/lib/global-status/settings";
@@ -159,6 +160,11 @@ export function StatusConfigSheet({ open, onClose }: { open: boolean; onClose: (
               </Field>
             </section>
 
+            <section className="flex flex-col gap-2">
+              <h3 className="text-sm font-medium">Rota até os serviços</h3>
+              <RouteToolStatus config={config} />
+            </section>
+
             <section className="flex flex-col gap-3">
               <h3 className="text-sm font-medium">Serviços acompanhados</h3>
               <p className="text-xs text-muted-foreground">Os desmarcados saem da página e deixam de ser consultados e medidos. O histórico fica guardado.</p>
@@ -195,5 +201,35 @@ export function StatusConfigSheet({ open, onClose }: { open: boolean; onClose: (
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+const TCP_TEXT: Record<string, string> = {
+  ok: "Traceroute TCP 443 liberado: passa onde os roteadores filtram UDP e ICMP.",
+  denied: "Traceroute TCP 443 sem permissão: no servidor, rode sudo netinventoryctl rota-tcp.",
+  unavailable: "Traceroute TCP 443 indisponível: falta o pacote traceroute (sudo apt install traceroute).",
+};
+
+/** Estado da ferramenta de rota (fase 7): o que falta no servidor aparece aqui, não só no log. */
+function RouteToolStatus({ config }: { config: GlobalStatusConfig }) {
+  const tool = config.routeTool;
+  if (!config.routesEnabled) return <p className="text-xs text-muted-foreground">Desligada no servidor (GLOBAL_STATUS_ROUTES=off ou medições desligadas).</p>;
+  if (!tool) return <p className="text-xs text-muted-foreground">Nenhuma rota rastreada ainda: a primeira sai alguns minutos depois de o servidor subir.</p>;
+  return (
+    <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
+      <li>
+        {tool.lastRouteAt ? (
+          <>
+            Última rota {formatRelativeTime(tool.lastRouteAt)}
+            {tool.tool ? <> com {tool.tool}</> : null}.
+          </>
+        ) : (
+          (tool.error ?? "Nenhuma rota gravada.")
+        )}
+      </li>
+      <li className={tool.tcp === "ok" || tool.tcp === null ? undefined : "text-amber-500"}>
+        {tool.tcp ? TCP_TEXT[tool.tcp] : "O traceroute TCP 443 ainda não foi preciso: todas as rotas chegaram pelo UDP."}
+      </li>
+    </ul>
   );
 }

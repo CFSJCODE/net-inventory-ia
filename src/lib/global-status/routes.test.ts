@@ -10,7 +10,7 @@ const fixture = await vi.hoisted(async () => {
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: fixture.prisma }));
-vi.mock("./traceroute", async (importOriginal) => ({ ...(await importOriginal<typeof import("./traceroute")>()), traceRoute: vi.fn(async () => fixture.trace) }));
+vi.mock("./traceroute", async (importOriginal) => ({ ...(await importOriginal<typeof import("./traceroute")>()), traceRoute: vi.fn(async () => fixture.trace), traceBest: vi.fn(async () => fixture.trace), traceAllModes: vi.fn(async () => fixture.trace) }));
 vi.mock("./route-enrich", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./route-enrich")>()),
   enrichHops: vi.fn(async () => fixture.hops),
@@ -42,7 +42,7 @@ const CABLES: Cable[] = [
 ];
 
 function hop(ttl: number, ip: string | null, rttMs: number | null, extra: Partial<EnrichedHop> = {}): EnrichedHop {
-  return { ttl, ip, rttMs, asn: null, asName: null, registryCountry: null, rdns: null, city: null, ...extra };
+  return { ttl, ip, rttMs, altIps: [], asn: null, asName: null, registryCountry: null, rdns: null, city: null, role: null, ...extra };
 }
 const withName = (ttl: number, ip: string, rttMs: number, rdns: string, asn: number, asName: string, registryCountry = "BR") =>
   hop(ttl, ip, rttMs, { rdns, asn, asName, registryCountry, city: cityFromHostname(rdns) });
@@ -220,7 +220,7 @@ describe("agendador da rota", () => {
     await db.statusService.deleteMany();
     fixture.cables = CABLES;
     fixture.hops = MIAMI_ROUTE;
-    fixture.trace = { ok: true, host: "google.com", address: "142.250.1.1", tool: "traceroute", hops: MIAMI_ROUTE.map(({ ttl, ip, rttMs }) => ({ ttl, ip, rttMs })), reached: true, error: null };
+    fixture.trace = { ok: true, host: "google.com", address: "142.250.1.1", tool: "traceroute", hops: MIAMI_ROUTE.map(({ ttl, ip, rttMs }) => ({ ttl, ip, rttMs, altIps: [] })), reached: true, error: null, mode: "paris" };
     (globalThis as { __globalStatusRoutes?: unknown }).__globalStatusRoutes = undefined;
   });
   afterAll(async () => {
@@ -256,7 +256,7 @@ describe("agendador da rota", () => {
     await traceAndStore(svc, t0);
     // Agora servido no Brasil.
     fixture.hops = MIAMI_ROUTE.slice(0, 3);
-    fixture.trace = { ...fixture.trace!, hops: fixture.hops.map(({ ttl, ip, rttMs }) => ({ ttl, ip, rttMs })) };
+    fixture.trace = { ...fixture.trace!, hops: fixture.hops.map(({ ttl, ip, rttMs }) => ({ ttl, ip, rttMs, altIps: [] })) };
     await traceAndStore(svc, t0 + 30 * 60_000);
     const open = await db.statusIncident.findMany({ where: { serviceId: s.id, origin: "ROUTE" } });
     expect(open).toHaveLength(1);
@@ -281,7 +281,7 @@ describe("agendador da rota", () => {
 
   it("sem traceroute no servidor nada é gravado", async () => {
     const s = await service();
-    fixture.trace = { ok: false, host: "google.com", address: "142.250.1.1", tool: null, hops: [], reached: false, error: "traceroute indisponível no servidor (sudo apt install traceroute)" };
+    fixture.trace = { ok: false, host: "google.com", address: "142.250.1.1", tool: null, hops: [], reached: false, error: "traceroute indisponível no servidor (sudo apt install traceroute)", mode: "paris" };
     expect(await traceAndStore({ id: s.id, slug: s.slug, name: s.name, host: "google.com", latencyMs: 110 })).toBeNull();
     expect(await db.routeTrace.count()).toBe(0);
   });

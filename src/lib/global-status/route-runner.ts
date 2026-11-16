@@ -5,7 +5,7 @@ import { getLocalConnectivity } from "./probe-runner";
 import { asNameOf, enrichHops, isPrivateIp, originOf, type EnrichedHop } from "./route-enrich";
 import { asPathOf, inferRoute, type RouteInference } from "./route-infer";
 import { brazilCables } from "./subsea-cables";
-import { traceHost, traceRoute, type TraceResult } from "./traceroute";
+import { traceAllModes, traceBest, traceHost, type TraceResult } from "./traceroute";
 import { serialized } from "./write-queue";
 
 /**
@@ -31,6 +31,49 @@ const TICK_MS = 60_000;
 const FIRST_TICK_DELAY_MS = 3 * 60_000;
 /** Sem ferramenta de traceroute no servidor: tenta de novo depois de 6 h. */
 const NO_TOOL_RETRY_MS = 6 * 60 * 60_000;
+
+/** Estado da ferramenta de rota, para a tela Configurar (fase 7): AppSetting `globalStatus.routeTool`. */
+export const ROUTE_TOOL_KEY = "globalStatus.routeTool";
+export interface RouteToolState {
+  /** Ferramenta da última rota ("traceroute (TCP 443)"), ou null sem nenhuma. */
+  tool: string | null;
+  /** Modo TCP: ok | denied (falta CAP_NET_RAW) | unavailable; null = ainda não foi preciso. */
+  tcp: "ok" | "denied" | "unavailable" | null;
+  /** Última rota gravada e último erro de ferramenta. */
+  lastRouteAt: string | null;
+  error: string | null;
+  checkedAt: string;
+}
+
+export async function readRouteToolState(): Promise<RouteToolState | null> {
+  const row = await prisma.appSetting.findUnique({ where: { key: ROUTE_TOOL_KEY } }).catch(() => null);
+  if (!row) return null;
+  try {
+    return JSON.parse(row.value) as RouteToolState;
+  } catch {
+    return null;
+  }
+}
+
+async function writeRouteToolState(trace: TraceResult, stored: boolean, nowMs: number): Promise<void> {
+  const previous = await readRouteToolState();
+  const next: RouteToolState = {
+    tool: trace.tool ?? previous?.tool ?? null,
+    // Um rastreio que não precisou do TCP não diz nada sobre ele: fica o que já se sabia.
+    tcp: trace.tcp ?? previous?.tcp ?? null,
+    lastRouteAt: stored ? new Date(nowMs).toISOString() : (previous?.lastRouteAt ?? null),
+    error: trace.ok ? null : trace.error,
+    checkedAt: new Date(nowMs).toISOString(),
+  };
+  const value = JSON.stringify(next);
+  await serialized(() => prisma.appSetting.upsert({ where: { key: ROUTE_TOOL_KEY }, create: { key: ROUTE_TOOL_KEY, value }, update: { value } })).catch(() => undefined);
+}
+
+/** Rota que não chegou: o TTL do último roteador que respondeu (depois dele, só silêncio). */
+export function lastVisibleTtl(trace: Pick<TraceResult, "ok" | "reached" | "hops">): number | null {
+  if (!trace.ok || trace.reached) return null;
+  return [...trace.hops].reverse().find((h) => h.ip !== null)?.ttl ?? null;
+}
 
 export function routesEnabled(env: Partial<Record<string, string>> = process.env): boolean {
   return probesEnabled(env.GLOBAL_STATUS_PROBES) && env.GLOBAL_STATUS_ROUTES?.trim().toLowerCase() !== "off";
@@ -77,9 +120,12 @@ interface ServiceForRoute {
 }
 
 /** Rastreia, interpreta e grava a rota de um serviço. Devolve o id da rota gravada, ou null sem traceroute. */
-export async function traceAndStore(service: ServiceForRoute, nowMs = Date.now()): Promise<string | null> {
-  const trace = await traceRoute(service.host);
-  if (!trace.ok && trace.tool === null && /indisponível/.test(trace.error ?? "")) return null;
+export async function traceAndStore(service: ServiceForRoute, nowMs = Date.now(), opts: { allModes?: boolean } = {}): Promise<string | null> {
+  const trace = opts.allModes ? await traceAllModes(service.host) : await traceBest(service.host);
+  if (!trace.ok && trace.tool === null && /indisponível/.test(trace.error ?? "")) {
+    await writeRouteToolState(trace, false, nowMs);
+    return null;
+  }
 
   const hops: EnrichedHop[] = trace.ok ? await enrichHops(trace.hops, nowMs) : [];
   const destIp = trace.address;
@@ -115,11 +161,25 @@ export async function traceAndStore(service: ServiceForRoute, nowMs = Date.now()
           confidence: inference.confidence,
           asPath: asPathOf(hops, destAsn),
           error: trace.ok ? null : (trace.error ?? "falha no traceroute"),
+          mode: trace.mode,
+          lastVisibleTtl: lastVisibleTtl(trace),
         },
       });
       if (hops.length) {
         await tx.routeHop.createMany({
-          data: hops.map((h) => ({ traceId: created.id, ttl: h.ttl, ip: h.ip, rttMs: h.rttMs, asn: h.asn, asName: h.asName, rdns: h.rdns, city: h.city?.name ?? null, country: h.city?.country ?? null })),
+          data: hops.map((h) => ({
+            traceId: created.id,
+            ttl: h.ttl,
+            ip: h.ip,
+            rttMs: h.rttMs,
+            asn: h.asn,
+            asName: h.asName,
+            rdns: h.rdns,
+            city: h.city?.name ?? null,
+            country: h.city?.country ?? null,
+            altIps: h.altIps.length ? JSON.stringify(h.altIps) : null,
+            role: h.role,
+          })),
         });
       }
       // Mudança de onde o serviço está: aviso no ticker (um por serviço; um aviso aberto é atualizado).
@@ -135,7 +195,10 @@ export async function traceAndStore(service: ServiceForRoute, nowMs = Date.now()
       }
       return created.id;
     }),
-  );
+  ).then(async (id) => {
+    await writeRouteToolState(trace, true, nowMs);
+    return id;
+  });
 }
 
 /** Serviços medidos com destino rastreável (os mesmos da rota BGP), com a data da rota mais nova. */
@@ -192,11 +255,12 @@ export async function runRouteTick(nowMs = Date.now()): Promise<void> {
   return s.running;
 }
 
-/** Rastreia agora um serviço pelo slug ("Rastrear rota" no detalhe). Devolve o id da rota gravada. */
+/** Rastreia agora um serviço pelo slug ("Rastrear rota" no detalhe), em todos os modos. Devolve o id da rota gravada. */
 export async function traceServiceNow(slug: string): Promise<string | null> {
   const list = await candidates();
   const service = list.find((s) => s.slug === slug);
-  return service ? traceAndStore(service) : null;
+  // Sob demanda: os três modos seguidos (Paris, UDP clássico e TCP 443) e a união deles.
+  return service ? traceAndStore(service, Date.now(), { allModes: true }) : null;
 }
 
 /** Inicia o agendador (uma vez por processo, via instrumentation). */

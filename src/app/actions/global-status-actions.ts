@@ -9,7 +9,7 @@ import { getLocalConnectivity, runProbesNow } from "@/lib/global-status/probe-ru
 import { defaultGateway } from "@/lib/global-status/probes";
 import { buildPhaseSeries, buildSeries, latencySummary, mainLatencyTarget, tailPoints, uptimeFromTotals, uptimeOf, type PhaseSeries, type RollupPoint, type SparkSeries } from "@/lib/global-status/series";
 import { traceHost } from "@/lib/global-status/traceroute";
-import { ROUTE_ORIGIN, routesEnabled, traceServiceNow } from "@/lib/global-status/route-runner";
+import { ROUTE_ORIGIN, readRouteToolState, routesEnabled, traceServiceNow, type RouteToolState } from "@/lib/global-status/route-runner";
 import { CABLE_MAP_PAGE } from "@/lib/global-status/subsea-cables";
 import { BUCKET_MS, bucketStart } from "@/lib/global-status/stats";
 import { storedIsp } from "@/lib/global-status/internet-signals";
@@ -368,6 +368,10 @@ export interface StatusRouteHopRow {
   rdns: string | null;
   city: string | null;
   country: string | null;
+  /** Outros IPs no mesmo salto (ECMP). */
+  altIps: string[];
+  /** PEERING | IX | INTL_EDGE | CORE | AGGREGATION | ACCESS */
+  role: string | null;
 }
 
 export interface StatusRouteDetail {
@@ -386,9 +390,23 @@ export interface StatusRouteDetail {
   /** HIGH | MEDIUM | LOW */
   confidence: string | null;
   error: string | null;
+  /** Modo das sondas: udp | paris | tcp | union. */
+  mode: string | null;
+  /** Rota que não chegou: o TTL do último roteador que respondeu. */
+  lastVisibleTtl: number | null;
   hops: StatusRouteHopRow[];
   /** Página do mapa de cabos (atribuição dos dados dos cabos). */
   cableSource: string;
+}
+
+function parseIpList(json: string | null): string[] {
+  if (!json) return [];
+  try {
+    const list: unknown = JSON.parse(json);
+    return Array.isArray(list) ? list.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 async function loadRoute(serviceId: string): Promise<StatusRouteDetail | null> {
@@ -408,7 +426,9 @@ async function loadRoute(serviceId: string): Promise<StatusRouteDetail | null> {
     candidates: t.candidates ? t.candidates.split(" · ").filter((c) => c && c !== t.cableName) : [],
     confidence: t.confidence,
     error: t.error,
-    hops: t.hops.map((h) => ({ ttl: h.ttl, ip: h.ip, rttMs: h.rttMs, asn: h.asn, asName: h.asName, rdns: h.rdns, city: h.city, country: h.country })),
+    mode: t.mode,
+    lastVisibleTtl: t.lastVisibleTtl,
+    hops: t.hops.map((h) => ({ ttl: h.ttl, ip: h.ip, rttMs: h.rttMs, asn: h.asn, asName: h.asName, rdns: h.rdns, city: h.city, country: h.country, altIps: parseIpList(h.altIps), role: h.role })),
     cableSource: CABLE_MAP_PAGE,
   };
 }
@@ -623,21 +643,27 @@ export interface GlobalStatusConfig {
   /** O e-mail sai pela configuração de Alertas → Configurar e-mails: chave do Resend e destinatário. */
   email: { ready: boolean; to: string | null };
   services: { slug: string; name: string; category: string; enabled: boolean }[];
+  /** Ferramenta da rota até os serviços (fase 7): traceroute, modo TCP e a última rota gravada. */
+  routeTool: RouteToolState | null;
+  routesEnabled: boolean;
 }
 
 async function loadConfig(): Promise<GlobalStatusConfig> {
   await ensureCatalogSeeded();
-  const [settings, isp, email, services] = await Promise.all([
+  const [settings, isp, email, services, routeTool] = await Promise.all([
     getGlobalStatusSettings(),
     storedIsp(),
     getEmailAlertConfig(),
     prisma.statusService.findMany({ orderBy: { position: "asc" }, select: { slug: true, name: true, category: true, enabled: true } }),
+    readRouteToolState(),
   ]);
   return {
     settings,
     isp: isp && { asn: isp.asn, name: isp.name },
     email: { ready: !!email.apiKey && !!email.to.trim(), to: email.to.trim() || null },
     services,
+    routeTool,
+    routesEnabled: routesEnabled(),
   };
 }
 

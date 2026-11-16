@@ -116,10 +116,35 @@ export function cityFromHostname(hostname: string | null | undefined): City | nu
   for (const token of tokens) {
     const letters = /^([a-z]+)\d*[a-z]?\d*$/.exec(token)?.[1];
     if (!letters) continue;
-    const city = NAMES[letters] ?? CLLI[letters] ?? (letters.length === 3 ? CODES3[letters] : undefined);
+    const city = NAMES[letters] ?? CLLI[letters] ?? (letters.length === 3 ? CODES3[letters] : undefined) ?? operatorCode(letters);
     if (city) return city;
   }
   return null;
+}
+
+/**
+ * Sufixos de papel que as operadoras grudam no código da cidade (fase 7): "mia" + "nap" (NAP das Américas),
+ * "rjo" + "ac" (acesso), "spo" + "bb" (backbone). Só valem atrás de um código de 3 letras conhecido.
+ */
+const ROLE_SUFFIXES = new Set(["nap", "ac", "acc", "ag", "agg", "bb", "cr", "core", "pe", "br", "bd", "ix", "intl", "gw", "dc"]);
+
+/**
+ * Nomes do tipo Embratel/Claro: "nrjoac01" (n + rjo + ac), "mianap" (mia + nap), "spobb". O código fica
+ * no começo, ou depois de uma letra de prefixo ("n" de nó).
+ */
+function operatorCode(letters: string): City | undefined {
+  if (letters.length < 5 || letters.length > 8) return undefined;
+  for (const start of [0, 1]) {
+    const code = CODES3[letters.slice(start, start + 3)];
+    if (code && ROLE_SUFFIXES.has(letters.slice(start + 3))) return code;
+  }
+  return undefined;
+}
+
+/** A cidade de um código de aeroporto (IATA), como os CDNs nomeiam os PoPs ("GRU", "GIG", "MIA"). */
+export function cityFromIata(code: string | null | undefined): City | null {
+  if (!code) return null;
+  return CODES3[code.toLowerCase()] ?? null;
 }
 
 /** Distância em km sobre a superfície da Terra (haversine). */

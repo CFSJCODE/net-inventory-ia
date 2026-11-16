@@ -129,6 +129,7 @@ sudo netinventoryctl invite pc-financeiro 30 <id-do-agente>   # recadastro: so a
 sudo netinventoryctl logs -f
 sudo netinventoryctl backup                 # bancos, config.json e chaves em /var/backups/netinventory-dotnet
 sudo netinventoryctl firewall 192.168.0.0/24   # libera a porta no ufw para a LAN
+sudo netinventoryctl rota-tcp on               # traceroute TCP 443 no Status global (CAP_NET_RAW por drop-in do systemd)
 ```
 
 **Agentes ja cadastrados no banco migrado:** ao levar o banco consolidado para o Ubuntu, cada agente existente precisa de uma credencial nova neste host. Um convite comum e recusado para um agente que ja existe (protecao contra tomar a identidade de outro computador). Use **Recadastrar** na linha do agente em Agentes, ou `netinventoryctl invite <rotulo> <minutos> <id-do-agente>`: o convite so serve para aquele agente, troca somente a credencial dele e mantem historico e vinculo com o dispositivo. Agentes revogados continuam revogados.

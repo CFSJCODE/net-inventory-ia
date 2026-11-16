@@ -141,6 +141,19 @@ const VERDICT: Record<string, { label: string; className: string }> = {
   UNDETERMINED: { label: "Origem indefinida", className: "text-muted-foreground" },
 };
 const CONFIDENCE: Record<string, string> = { HIGH: "alta", MEDIUM: "média", LOW: "baixa" };
+const ROLE: Record<string, string> = { PEERING: "peering", IX: "IX", INTL_EDGE: "borda internacional", CORE: "núcleo", AGGREGATION: "agregação", ACCESS: "acesso" };
+const MODE: Record<string, string> = { udp: "UDP", paris: "UDP com fluxo fixo (Paris)", tcp: "TCP 443", union: "UDP, Paris e TCP 443 juntos" };
+
+/** Rota que parou antes do destino: o último roteador que respondeu, e o que a sonda TCP diz do destino. */
+function silenceText(route: StatusRouteDetail): string | null {
+  if (route.reached || route.lastVisibleTtl === null) return null;
+  const hop = route.hops.find((h) => h.ttl === route.lastVisibleTtl);
+  if (!hop) return null;
+  const name = hop.rdns ?? hop.ip ?? `salto ${hop.ttl}`;
+  const where = hop.city ? ` (${hop.city})` : "";
+  const dest = route.destRttMs !== null ? `; o destino responde no TCP em ${formatLatency(route.destRttMs)}` : "";
+  return `Depois de ${name}${where} os roteadores não respondem ao rastreio, o que é comum depois da borda dos CDNs${dest}.`;
+}
 
 type RouteHopRow = StatusRouteDetail["hops"][number];
 
@@ -186,7 +199,7 @@ export function RouteSection({ slug, route }: { slug: string; route: StatusRoute
       </div>
       {!current && !trace.isPending && (
         <p className="text-xs text-muted-foreground">
-          O servidor rastreia a rota de cada serviço a cada 30 minutos. {canTrace ? "Para ver agora, rastreie: leva até um minuto." : ""}
+          O servidor rastreia a rota de cada serviço a cada 30 minutos. {canTrace ? "Para ver agora, rastreie: com os três tipos de sonda leva até três minutos." : ""}
         </p>
       )}
       {trace.isError && <p className="text-xs text-destructive">{trace.error.message}</p>}
@@ -219,6 +232,12 @@ export function RouteSection({ slug, route }: { slug: string; route: StatusRoute
                         <span className={cn("min-w-0 flex-1 truncate", hop.ip ? "text-foreground" : "text-muted-foreground")} title={hop.rdns && hop.ip ? hop.ip : undefined}>
                           {hop.rdns ?? hop.ip ?? "sem resposta"}
                         </span>
+                        {hop.altIps.length > 0 && (
+                          <span className="shrink-0 text-muted-foreground" title={[hop.ip, ...hop.altIps].join("\n")}>
+                            {hop.altIps.length + 1} caminhos
+                          </span>
+                        )}
+                        {hop.role && <span className="shrink-0 text-muted-foreground">{ROLE[hop.role] ?? hop.role}</span>}
                         {hop.city && <span className="shrink-0 text-muted-foreground">{hop.city}</span>}
                         <span className="w-14 shrink-0 text-right text-muted-foreground">{formatLatency(hop.rttMs)}</span>
                       </li>
@@ -228,11 +247,13 @@ export function RouteSection({ slug, route }: { slug: string; route: StatusRoute
               ))}
             </ol>
           )}
+          {silenceText(current) && <p className="text-muted-foreground">{silenceText(current)}</p>}
           <div className="border-t pt-2 text-muted-foreground">
             {current.host}
             {current.destIp && current.destIp !== current.host ? ` (${current.destIp})` : ""} · {current.hops.length} salto{current.hops.length === 1 ? "" : "s"} ·{" "}
             {current.reached ? "destino alcançado" : "o destino não respondeu ao rastreio"}
             {current.destRttMs !== null && <> · {formatLatency(current.destRttMs)} até o destino</>}
+            {current.mode && MODE[current.mode] && <> · sondas {MODE[current.mode]}</>}
           </div>
         </div>
       )}

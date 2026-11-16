@@ -419,6 +419,10 @@ model RouteTrace {
   /// Sequência de ASNs da rota ("28573 4230 15169"), para detectar mudança.
   asPath      String?
   error       String?
+  /// Modo das sondas (fase 7): udp | paris | tcp | union.
+  mode        String?
+  /// Rota que não chegou ao destino: o TTL do último roteador que respondeu antes do silêncio.
+  lastVisibleTtl Int?
   service     StatusService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   hops        RouteHop[]
 
@@ -439,6 +443,10 @@ model RouteHop {
   /// Cidade deduzida do rDNS (ex.: "São Paulo") e o país (ISO alfa-2).
   city     String?
   country  String?
+  /// Outros IPs no mesmo salto (ECMP), JSON ["200.230.1.2", …]; null quando só um respondeu (fase 7).
+  altIps   String?
+  /// PEERING | IX | INTL_EDGE | CORE | AGGREGATION | ACCESS, pelo nome reverso.
+  role     String?
   trace    RouteTrace @relation(fields: [traceId], references: [id], onDelete: Cascade)
 
   @@index([traceId])
