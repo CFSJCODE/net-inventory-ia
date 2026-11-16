@@ -543,6 +543,23 @@ describe("visão de fora: IODA e RIPEstat (fase 4)", () => {
     expect(rotas.components.map((c) => [c.externalId, c.groupName, c.name, c.status])).toEqual([["github", "Desenvolvimento", "GitHub · 140.82.112.0/20 · AS36459 · vista por 243 de 244 coletores", "OK"]]);
     expect(fetchMock.mock.calls.filter(([url]) => url.includes("routing-status"))[0][0]).toContain("resource=140.82.112.0%2F20");
   });
+
+  it("rotas BGP: prefixo regional coberto por bloco maior do mesmo ASN fica normal", async () => {
+    await seed(GITHUB_IP, ROTAS);
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(async (url) => {
+      if (url.includes("/network-info/") && url.includes("140.82.112.3")) return ripe({ asns: ["36459"], prefix: "140.82.112.0/24" });
+      if (url.includes("/routing-status/") && url.includes("140.82.112.0%2F24")) return ripe({ visibility: { v4: { ris_peers_seeing: 80, total_ris_peers: 317 } }, less_specifics: [{ prefix: "140.82.112.0/20", origin: 36459 }] });
+      if (url.includes("/routing-status/") && url.includes("140.82.112.0%2F20")) return ripe({ visibility: { v4: { ris_peers_seeing: 315, total_ris_peers: 317 } } });
+      return new Response("", { status: 503 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await checkGlobalStatus(true);
+
+    const rotas = await db.statusService.findUniqueOrThrow({ where: { slug: "rotas-bgp" }, include: { components: true } });
+    expect(rotas).toMatchObject({ officialState: "OK", officialStatus: "1 de 1 prefixos vistos no mundo todo" });
+    expect(rotas.components.map((c) => [c.name, c.status])).toEqual([["GitHub · 140.82.112.0/24 · AS36459 · vista por 80 de 317 coletores · rota regional, coberta por 140.82.112.0/20 (vista por 315 de 317)", "OK"]]);
+  });
 });
 
 describe("ensureCatalogSeeded", () => {

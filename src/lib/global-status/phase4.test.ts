@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import alertsSample from "./__fixtures__/ioda-alerts-sample.json";
 import { iodaAlertsUrl, iodaRuns, parseIodaAlerts } from "./adapters/ioda";
-import { bgpSnapshot, parseNetworkInfo, parseRoutingStatus, routeText, visibilityStatus, type ServiceRoute } from "./adapters/ripestat";
+import { bgpSnapshot, parseCoveringPrefixes, parseNetworkInfo, parseRoutingStatus, routeStatus, routeText, visibilityStatus, type ServiceRoute } from "./adapters/ripestat";
 import { planDetected, RESOLVE_AFTER_MS } from "./detected";
 import { routeHost } from "./internet-signals";
 import { normalizeGlobalStatusSettings } from "./settings";
@@ -110,6 +110,18 @@ describe("RIPEstat", () => {
     expect(snap.components?.[2].name).toBe("x · x.com sem prefixo anunciado");
     expect(bgpSnapshot([]).status).toBe("UNKNOWN");
     expect(routeText({ prefix: "1.1.1.0/24", asn: 13335, visibility: null, error: "RIPEstat não respondeu a tempo" })).toBe("1.1.1.0/24 · AS13335 · RIPEstat não respondeu a tempo");
+  });
+
+  it("prefixo regional de CDN coberto por bloco maior do mesmo ASN visto no mundo todo conta como normal", () => {
+    const body = { status: "ok", data: { less_specifics: [{ prefix: "31.13.64.0/18", origin: 32934 }, { prefix: "31.0.0.0/8", origin: 3333 }, { prefix: "31.13.0.0/16", origin: "32934" }] } };
+    expect(parseCoveringPrefixes(body, 32934)).toEqual(["31.13.64.0/18", "31.13.0.0/16"]);
+    expect(parseCoveringPrefixes({ status: "ok", data: {} }, 32934)).toEqual([]);
+    const meta: ServiceRoute = { slug: "whatsapp", name: "WhatsApp", group: "Redes sociais", prefix: "31.13.91.0/24", asn: 32934, visibility: { seeing: 80, total: 317 }, error: null, cover: { prefix: "31.13.64.0/18", visibility: { seeing: 315, total: 317 } } };
+    expect(routeStatus(meta)).toBe("OK");
+    expect(routeText(meta)).toBe("31.13.91.0/24 · AS32934 · vista por 80 de 317 coletores · rota regional, coberta por 31.13.64.0/18 (vista por 315 de 317)");
+    expect(routeStatus({ ...meta, cover: { prefix: "31.13.64.0/18", visibility: { seeing: 40, total: 317 } } })).toBe("DOWN");
+    expect(routeStatus({ ...meta, cover: null })).toBe("DOWN");
+    expect(bgpSnapshot([meta]).description).toBe("1 de 1 prefixos vistos no mundo todo");
   });
 
   it("a rota que importa é a do TCP, senão a do HTTP; o gateway local não tem rota pública", () => {

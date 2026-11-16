@@ -3,7 +3,7 @@ import net from "node:net";
 import { prisma } from "@/lib/prisma";
 import { mapWithConcurrency } from "@/lib/network/concurrency";
 import { CATEGORY_LABEL } from "./catalog";
-import { parseAsOverview, parseNetworkInfo, parseRoutingStatus, parseWhatsMyIp, ripestatUrl, type ServiceRoute } from "./adapters/ripestat";
+import { parseAsOverview, parseCoveringPrefixes, parseNetworkInfo, parseRoutingStatus, parseWhatsMyIp, ripestatUrl, visibilityStatus, type ServiceRoute } from "./adapters/ripestat";
 import { AUTO_GATEWAY, type ServiceCategory } from "./types";
 
 /**
@@ -108,6 +108,27 @@ async function prefixOf(host: string, nowMs: number): Promise<PrefixCache> {
 
 const errorText = (err: unknown) => (err instanceof Error ? (err.name === "TimeoutError" ? "RIPEstat não respondeu a tempo" : err.message) : String(err));
 
+type RoutingStatusBody = Parameters<typeof parseRoutingStatus>[0] & Parameters<typeof parseCoveringPrefixes>[0];
+
+/**
+ * Bloco maior do mesmo ASN que cobre um prefixo pouco visto: o mais próximo que esteja visível no
+ * mundo todo (até dois consultados), senão o mais próximo. Falha do RIPEstat aqui não derruba a rota.
+ */
+async function coverOf(body: RoutingStatusBody, prefix: string, asn: number | null): Promise<ServiceRoute["cover"]> {
+  try {
+    const candidates = parseCoveringPrefixes(body, asn).slice(0, 2);
+    let first: ServiceRoute["cover"] = null;
+    for (const cover of candidates) {
+      const visibility = parseRoutingStatus(await getJson(ripestatUrl("routing-status", cover)), prefix);
+      if (visibilityStatus(visibility) === "OK") return { prefix: cover, visibility };
+      first ??= { prefix: cover, visibility };
+    }
+    return first;
+  } catch {
+    return null;
+  }
+}
+
 /** A rota BGP de cada serviço medido (sem os da conexão local e os da faixa "Internet no Brasil"). */
 export async function collectRoutes(nowMs = Date.now()): Promise<ServiceRoute[]> {
   const services = await prisma.statusService.findMany({
@@ -125,7 +146,9 @@ export async function collectRoutes(nowMs = Date.now()): Promise<ServiceRoute[]>
       const { prefix, asn } = await prefixOf(s.host, nowMs);
       if (!prefix) return { ...base, prefix: null, asn, visibility: null, error: `${s.host} sem prefixo anunciado` };
       try {
-        return { ...base, prefix, asn, visibility: parseRoutingStatus(await getJson(ripestatUrl("routing-status", prefix)), prefix), error: null };
+        const body = await getJson<RoutingStatusBody>(ripestatUrl("routing-status", prefix));
+        const visibility = parseRoutingStatus(body, prefix);
+        return { ...base, prefix, asn, visibility, cover: visibilityStatus(visibility) === "OK" ? null : await coverOf(body, prefix, asn), error: null };
       } catch (err) {
         return { ...base, prefix, asn, visibility: null, error: errorText(err) };
       }

@@ -48,6 +48,21 @@ export function parseRoutingStatus(body: Envelope<{ visibility?: { v4?: { ris_pe
   return { seeing: Number(family?.ris_peers_seeing ?? 0), total: Number(family?.total_ris_peers ?? 0) };
 }
 
+/**
+ * Blocos maiores do mesmo ASN que cobrem o prefixo (`less_specifics` do routing-status), do mais
+ * próximo ao mais amplo. CDNs como a Meta anunciam o /24 do PoP só na região e o bloco maior
+ * (ex.: 31.13.64.0/18) para o mundo: o serviço segue alcançável pelo bloco maior.
+ */
+export function parseCoveringPrefixes(body: Envelope<{ less_specifics?: { prefix?: string; origin?: string | number }[] }>, asn: number | null): string[] {
+  const data = dataOf(body, "routing-status");
+  const mask = (prefix: string) => Number(prefix.split("/")[1] ?? 0);
+  return (data.less_specifics ?? [])
+    .filter((l): l is { prefix: string; origin?: string | number } => typeof l.prefix === "string" && l.prefix.includes("/"))
+    .filter((l) => asn === null || Number(l.origin) === asn)
+    .map((l) => l.prefix)
+    .sort((a, b) => mask(b) - mask(a));
+}
+
 export function parseWhatsMyIp(body: Envelope<{ ip?: string }>): string {
   const ip = dataOf(body, "whats-my-ip").ip;
   if (!ip) throw new Error("RIPEstat whats-my-ip: sem IP");
@@ -77,17 +92,33 @@ export interface ServiceRoute {
   prefix: string | null;
   asn: number | null;
   visibility: Visibility | null;
+  /** Bloco maior do mesmo ASN que cobre o prefixo, consultado quando o prefixo não é visto no mundo todo. */
+  cover?: { prefix: string; visibility: Visibility } | null;
   /** O que deu errado na descoberta (nome que não resolve, IP sem prefixo, RIPEstat fora). */
   error: string | null;
 }
 
+/** A rota está coberta por um bloco maior do mesmo ASN visto no mundo todo (anúncio regional de CDN). */
+function coveredRegionally(route: Pick<ServiceRoute, "visibility" | "cover">): boolean {
+  return visibilityStatus(route.visibility) !== "OK" && !!route.cover && visibilityStatus(route.cover.visibility) === "OK";
+}
+
+/** Estado da rota: a visibilidade do prefixo, ou normal quando o bloco maior do mesmo ASN cobre. */
+export function routeStatus(route: Pick<ServiceRoute, "prefix" | "visibility" | "cover">): ServiceStatus {
+  if (!route.prefix) return "UNKNOWN";
+  return coveredRegionally(route) ? "OK" : visibilityStatus(route.visibility);
+}
+
 /** Texto de uma rota: "140.82.112.0/20 · AS36459 · vista por 243 de 244 coletores". */
-export function routeText(route: Pick<ServiceRoute, "prefix" | "asn" | "visibility" | "error">): string {
+export function routeText(route: Pick<ServiceRoute, "prefix" | "asn" | "visibility" | "error" | "cover">): string {
   if (!route.prefix) return route.error ?? "sem prefixo anunciado";
   const parts = [route.prefix];
   if (route.asn) parts.push(`AS${route.asn}`);
   if (route.visibility && route.visibility.total > 0) parts.push(`vista por ${route.visibility.seeing} de ${route.visibility.total} coletores`);
   else parts.push(route.error ?? "sem dados de visibilidade");
+  if (route.cover && coveredRegionally(route)) {
+    parts.push(`rota regional, coberta por ${route.cover.prefix} (vista por ${route.cover.visibility.seeing} de ${route.cover.visibility.total})`);
+  }
   return parts.join(" · ");
 }
 
@@ -101,7 +132,7 @@ export function bgpSnapshot(routes: readonly ServiceRoute[]): OfficialSnapshot {
     externalId: r.slug,
     name: `${r.name} · ${routeText(r)}`,
     groupName: r.group,
-    status: r.prefix ? visibilityStatus(r.visibility) : "UNKNOWN",
+    status: routeStatus(r),
     position,
   }));
   const known = components.filter((c) => c.status !== "UNKNOWN");
