@@ -8,7 +8,7 @@ import type { AlertThresholds, EmailAlertSettings } from "./email-defaults";
 import { renderEmail, type EmailContent, type EmailReading, type EmailSection, type EmailTone } from "./email-template";
 import { formatDuration } from "./rules";
 
-export type CheckKind = "offline" | "degraded" | "criticalLatency" | "cpu" | "mem" | "temp";
+export type CheckKind = "offline" | "degraded" | "criticalLatency" | "cpu" | "mem" | "temp" | "ifErrors";
 
 /** Última leitura de um equipamento, guardada a cada rodada para os e-mails mostrarem a situação atual. */
 export interface HostReading {
@@ -34,6 +34,9 @@ export interface HostReading {
   /** Último ping respondido e a latência dele (o SNMP pode responder sem o ping, por isso são separados). */
   lastPingAt: number | null;
   lastLatencyMs: number | null;
+  /** Switch Health: erros de interface por minuto na pior porta e qual é (null sem coletor ou sem portas). */
+  ifErrorsPerMin?: number | null;
+  ifErrorsPort?: string | null;
 }
 
 export interface WatchedTarget {
@@ -77,6 +80,15 @@ export function observe(reading: HostReading, t: AlertThresholds, watched: boole
   if (reading.cpuPct !== null) obs.push({ kind: "cpu", bad: reading.cpuPct >= t.cpuPct, value: reading.cpuPct, detail: `CPU em ${reading.cpuPct}% (limite ${t.cpuPct}%)` });
   if (reading.memPct !== null) obs.push({ kind: "mem", bad: reading.memPct >= t.memPct, value: reading.memPct, detail: `Memória em ${reading.memPct}% (limite ${t.memPct}%)` });
   if (reading.tempC !== null) obs.push({ kind: "temp", bad: reading.tempC >= t.tempC, value: reading.tempC, detail: `Temperatura em ${reading.tempC} °C (limite ${t.tempC} °C)` });
+  if (reading.ifErrorsPerMin !== null && reading.ifErrorsPerMin !== undefined) {
+    const limit = t.ifErrorsPerMin ?? 10;
+    obs.push({
+      kind: "ifErrors",
+      bad: reading.ifErrorsPerMin >= limit,
+      value: reading.ifErrorsPerMin,
+      detail: `${reading.ifErrorsPerMin} erros de interface/min${reading.ifErrorsPort ? ` na porta ${reading.ifErrorsPort}` : ""} (limite ${limit}/min)`,
+    });
+  }
   return obs;
 }
 
@@ -94,6 +106,7 @@ const KINDS: Record<CheckKind, { alert: string; recovery: string; tone: EmailTon
   cpu: { alert: "CPU alta", recovery: "CPU normalizada", tone: "warning", emoji: "🟠" },
   mem: { alert: "Memória alta", recovery: "Memória normalizada", tone: "warning", emoji: "🟠" },
   temp: { alert: "Temperatura alta", recovery: "Temperatura normalizada", tone: "critical", emoji: "🔴" },
+  ifErrors: { alert: "Erros de interface", recovery: "Erros de interface normalizados", tone: "warning", emoji: "🟠" },
 };
 
 export const alertTitle = (kind: CheckKind) => KINDS[kind].alert;
@@ -129,6 +142,11 @@ function readingGauges(r: HostReading, t: AlertThresholds): EmailReading[] {
   if (r.tempC !== null) {
     const max = Math.max(t.tempC * 1.25, r.tempC);
     g.push({ label: "Temperatura", value: celsius(r.tempC), limit: `≥ ${celsius(t.tempC)}`, bar: { value: r.tempC / max, limit: t.tempC / max }, bad: r.tempC >= t.tempC });
+  }
+  if (r.ifErrorsPerMin != null) {
+    const limit = t.ifErrorsPerMin ?? 10;
+    const max = Math.max(limit * 2, r.ifErrorsPerMin);
+    g.push({ label: `Erros de interface${r.ifErrorsPort ? ` (${r.ifErrorsPort})` : ""}`, value: `${r.ifErrorsPerMin}/min`, limit: `≥ ${limit}/min`, bar: { value: r.ifErrorsPerMin / max, limit: limit / max }, bad: r.ifErrorsPerMin >= limit });
   }
   return g;
 }
@@ -186,6 +204,7 @@ export function limitsSection(s: Pick<EmailAlertSettings, "thresholds" | "cooldo
       ["CPU", `alerta a partir de ${pct(t.cpuPct)}`],
       ["Memória", `alerta a partir de ${pct(t.memPct)}`],
       ["Temperatura", `alerta a partir de ${celsius(t.tempC)}`],
+      ["Erros de interface", `alerta a partir de ${t.ifErrorsPerMin ?? 10} por minuto numa porta`],
     );
   }
   rows.push(
@@ -249,6 +268,8 @@ function subjectDetail(o: Observation, r: HostReading, t: AlertThresholds): stri
       return r.memPct !== null ? pct(r.memPct) : "";
     case "temp":
       return r.tempC !== null ? celsius(r.tempC) : "";
+    case "ifErrors":
+      return r.ifErrorsPerMin != null ? `${r.ifErrorsPerMin}/min${r.ifErrorsPort ? ` em ${r.ifErrorsPort}` : ""}` : "";
   }
 }
 
@@ -276,6 +297,8 @@ function alertSummary(i: AlertEmailInput): string {
       return `O uso de memória de ${name} está em ${vsLimit(r.memPct ?? 0, t.memPct, pct)}, ${run}.`;
     case "temp":
       return `A temperatura de ${name} chegou a ${vsLimit(r.tempC ?? 0, t.tempC, celsius)}, ${run}. Confira a ventilação e a temperatura do ambiente.`;
+    case "ifErrors":
+      return `A porta ${r.ifErrorsPort ?? "—"} de ${name} está com ${r.ifErrorsPerMin ?? 0} erros de interface por minuto (limite ${t.ifErrorsPerMin ?? 10}/min), ${run}. Erros e CRC costumam vir de cabo ou conector ruim, interferência ou duplex divergente; veja a seção Switch Health do equipamento.`;
   }
 }
 
@@ -355,6 +378,8 @@ function recoverySummary(i: RecoveryEmailInput): string {
       return `O uso de memória de ${name} voltou ao normal${after ? `${after} com o problema` : ""}: ${pct(r.memPct ?? 0)} (limite ${pct(t.memPct)}).`;
     case "temp":
       return `A temperatura de ${name} voltou ao normal${after ? `${after} com o problema` : ""}: ${celsius(r.tempC ?? 0)} (limite ${celsius(t.tempC)}).`;
+    case "ifErrors":
+      return `Os erros de interface de ${name} voltaram ao normal${after ? `${after} com o problema` : ""}: ${r.ifErrorsPerMin ?? 0} por minuto na pior porta (limite ${t.ifErrorsPerMin ?? 10}/min).`;
   }
 }
 

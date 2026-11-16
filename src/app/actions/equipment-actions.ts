@@ -8,6 +8,7 @@ import { displayName } from "@/lib/device-name";
 import { ALLOWED_INTERVAL_MINUTES } from "@/lib/auto-interval";
 import { readEquipmentStatus, type EquipmentStatus } from "@/lib/network/equipment-status";
 import { snmpQuery, type SnmpTarget, type SnmpVersion } from "@/lib/network/tools/snmp";
+import { openCommunity, snmpTargetOf } from "@/lib/network/equipment-target";
 import type { ToolResult } from "./tool-actions";
 
 /** O que vai para o navegador: a community fica no servidor, só se informa se há uma cadastrada. */
@@ -93,13 +94,6 @@ function toRow(e: { snmpVersion: string; snmpUsername: string | null; snmpAuthPa
     snmpPrivProtocol: snmpPrivProtocol === "des" || snmpPrivProtocol === "aes" ? snmpPrivProtocol : null,
     privacyConfigured: Boolean(snmpPrivPassword && (snmpPrivProtocol === "des" || snmpPrivProtocol === "aes")),
   };
-}
-
-/** Community guardada (criptografada); erro claro quando o AUTH_SECRET mudou e ela não abre mais. */
-function openCommunity(stored: string): string {
-  const plain = decrypt(stored);
-  if (plain === null) throw new Error("Não foi possível ler a community salva (a chave do servidor mudou). Edite o equipamento e informe a community de novo.");
-  return plain;
 }
 
 function validate(input: EquipmentInput, requireCredentials: boolean) {
@@ -303,17 +297,7 @@ export async function readEquipmentDetail(id: string): Promise<ToolResult<Equipm
     await requirePermission("network.operate");
     const eq = await prisma.equipment.findUnique({ where: { id } });
     if (!eq) throw new Error("Equipamento não encontrado. Ele pode ter sido removido.");
-    const target: SnmpTarget = eq.snmpVersion === "3"
-      ? {
-          host: eq.ip,
-          version: "3",
-          username: eq.snmpUsername ? decrypt(eq.snmpUsername) ?? "" : "",
-          authPassword: eq.snmpAuthPassword ? decrypt(eq.snmpAuthPassword) ?? "" : "",
-          authProtocol: eq.snmpAuthProtocol === "sha" ? "sha" : "md5",
-          ...(eq.snmpPrivProtocol && eq.snmpPrivPassword ? { privacyProtocol: eq.snmpPrivProtocol === "aes" ? "aes" as const : "des" as const, privacyPassword: decrypt(eq.snmpPrivPassword) ?? "" } : {}),
-        }
-      : { host: eq.ip, community: openCommunity(eq.community), version: eq.snmpVersion === "1" ? "1" : "2c" };
-    if (target.version === "3" && (!target.username || !target.authPassword)) throw new Error("As credenciais SNMPv3 estão incompletas ou não puderam ser abertas. Edite o equipamento e informe-as novamente.");
+    const target = snmpTargetOf(eq);
     const status = await readEquipmentStatus(target);
 
     const macs = Array.from(new Set(status.ports.flatMap((p) => p.learnedMacs)));

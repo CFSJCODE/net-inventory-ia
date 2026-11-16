@@ -18,6 +18,7 @@ import { AUTO_INTERVALS, intervalKey, intervalMinutes, type AutoIntervalKey } fr
 import type { ToolResult } from "@/app/actions/tool-actions";
 import { EquipmentFormDialog } from "./equipment-form-dialog";
 import { EquipmentStatusPanel } from "./equipment-status-panel";
+import { SwitchHealthCard } from "./switch-health-card";
 
 async function unwrap<T>(promise: Promise<ToolResult<T>>): Promise<T> {
   const result = await promise;
@@ -143,6 +144,7 @@ export function EquipmentDetailSection({ equipment }: { equipment: EquipmentRow 
         <>
           {detail.isError && <p className="text-sm text-destructive">Falha ao atualizar: {detail.error.message}. Mostrando a última leitura.</p>}
           <EquipmentStatusPanel data={detail.data} isFetching={detail.isFetching} onRefresh={() => detail.refetch()} controls={<AutoReadControl equipment={equipment} />} />
+          {detail.data.ports.length > 0 && <SwitchHealthCard equipmentId={equipment.id} />}
         </>
       ) : null}
     </section>

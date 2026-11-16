@@ -5,6 +5,8 @@ import { decrypt } from "@/lib/ai/settings";
 import { displayName } from "@/lib/device-name";
 import { mapWithConcurrency } from "@/lib/network/concurrency";
 import { readHealthMetrics } from "@/lib/network/equipment-status";
+import { latestHealthByIp } from "@/lib/network/switch-health/poller";
+import { getSwitchHealthSettings } from "@/lib/network/switch-health/settings";
 import { getEmailAlertConfig, recordDelivery, type EmailAlertConfig } from "./email-settings";
 import { sendResendEmail } from "./resend";
 import { EMPTY_STATE, evaluate, lossPct, parsePingOutput, type CheckState, type PingStats, type RuleOptions } from "./rules";
@@ -47,6 +49,8 @@ const RULES: Record<CheckKind, Omit<RuleOptions, "cooldownMs">> = {
   cpu: { badToFire: 1, goodToClear: 2 },
   mem: { badToFire: 1, goodToClear: 2 },
   temp: { badToFire: 1, goodToClear: 2 },
+  // Erros de interface vêm em rajadas: dois minutos seguidos acima do limite para alertar, três limpos para encerrar.
+  ifErrors: { badToFire: 2, goodToClear: 3 },
 };
 
 interface QueuedEmail {
@@ -138,6 +142,8 @@ async function measure(target: Target, prev: HostReading | undefined): Promise<H
   // Hora da medição deste equipamento (com muitos equipamentos, os últimos medem bem depois do início da rodada).
   const at = now();
   const online = ping.received > 0 || metrics !== null;
+  // Erros de interface vêm do coletor Switch Health (lê os contadores a cada minuto); aqui só se usa a última rodada.
+  const health = target.equipment ? latestHealthByIp(target.host) : null;
   const latencyMs = ping.received > 0 ? ping.avgMs : null;
   return {
     at,
@@ -156,6 +162,8 @@ async function measure(target: Target, prev: HostReading | undefined): Promise<H
     // Hora e latência do último ping respondido andam juntas (o SNMP pode responder sem o ping).
     lastPingAt: latencyMs !== null ? at : (prev?.lastPingAt ?? null),
     lastLatencyMs: latencyMs ?? prev?.lastLatencyMs ?? null,
+    ifErrorsPerMin: health ? (health.worstPortErrorsPerMin ?? (health.errorsPerMin !== null ? 0 : null)) : null,
+    ifErrorsPort: health?.worstPort ?? null,
   };
 }
 
@@ -225,11 +233,15 @@ async function runChecks(): Promise<void> {
   const watched = new Set(config.targets);
   const cooldownMs = config.cooldownMinutes * 60_000;
   const results = await collectReadings(config);
+  // O limite de erros de interface é o da seção Switch Health (o mesmo que colore as portas na tela).
+  const switchHealth = await getSwitchHealthSettings();
+  const thresholds = { ...config.thresholds, ifErrorsPerMin: switchHealth.errorsPerMin };
+  const settings = { ...config, thresholds };
 
   const at = now();
   const seen = new Set<string>();
   for (const { target, reading } of results) {
-    const observations = selectAlertObservations(observe(reading, config.thresholds, watched.has(target.host)), config.mode);
+    const observations = selectAlertObservations(observe(reading, thresholds, watched.has(target.host)), config.mode);
     const newAlerts: { observation: Observation; since: number | null }[] = [];
     for (const o of observations) {
       const key = `${target.host}|${o.kind}`;
@@ -238,7 +250,7 @@ async function runChecks(): Promise<void> {
       const { state: next, event } = evaluate(prev, o.bad, at, { ...RULES[o.kind], cooldownMs });
       next.value = o.value;
       state.checks[key] = next;
-      const common = { target, observation: o, reading, at, intervalMs: ALERT_CHECK_INTERVAL_MS, settings: config, snmpConfigured: target.equipment !== null };
+      const common = { target, observation: o, reading, at, intervalMs: ALERT_CHECK_INTERVAL_MS, settings, snmpConfigured: target.equipment !== null };
       if (event === "alert") {
         newAlerts.push({ observation: o, since: next.since });
         console.log(`[alertas] ${alertTitle(o.kind)}: ${targetName(target)} — ${o.detail}`);
@@ -259,7 +271,7 @@ async function runChecks(): Promise<void> {
         reading,
         at,
         intervalMs: ALERT_CHECK_INTERVAL_MS,
-        settings: config,
+        settings,
         snmpConfigured: target.equipment !== null,
         checks: 1,
         since: primary.since,

@@ -228,6 +228,62 @@ model Equipment {
   pollIntervalMinutes Int?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  healthSamples SwitchHealthSample[]
+  portSamples   SwitchPortSample[]
+}
+
+/// Saúde da switch (Switch Health): uma linha por rodada do coletor SNMP, com o total das portas e a
+/// latência medida no mesmo instante (ping à switch e ao gateway), para correlacionar erros e latência. 7 dias.
+model SwitchHealthSample {
+  id               Int      @id @default(autoincrement())
+  equipmentId      String
+  at               DateTime @default(now())
+  /// Segundos desde a rodada anterior (base das taxas).
+  intervalSec      Int
+  /// Erros de interface (ifInErrors + ifOutErrors) por minuto, somando as portas; null na primeira rodada.
+  errorsPerMin     Float?
+  /// Erros de CRC (dot3StatsFCSErrors) por minuto.
+  crcPerMin        Float?
+  /// Descartes (ifInDiscards + ifOutDiscards) por minuto.
+  discardsPerMin   Float?
+  inBps            Float?
+  outBps           Float?
+  /// Porta com mais erros na rodada.
+  worstPort        String?
+  /// Ping à própria switch (LAN) e ao gateway padrão, na mesma rodada.
+  latencyMs        Float?
+  lossPct          Float?
+  gatewayLatencyMs Float?
+  equipment        Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  @@index([equipmentId, at])
+  @@index([at])
+}
+
+/// Taxas de uma porta física numa rodada do coletor (IF-MIB + EtherLike-MIB). 48 h.
+model SwitchPortSample {
+  id             Int      @id @default(autoincrement())
+  equipmentId    String
+  ifIndex        Int
+  name           String
+  at             DateTime @default(now())
+  operUp         Boolean
+  speedMbps      Int?
+  inErrors       Int?
+  outErrors      Int?
+  inDiscards     Int?
+  outDiscards    Int?
+  crcErrors      Int?
+  errorsPerMin   Float?
+  discardsPerMin Float?
+  crcPerMin      Float?
+  inBps          Float?
+  outBps         Float?
+  utilPct        Float?
+  equipment      Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  @@index([equipmentId, ifIndex, at])
+  @@index([at])
 }
 
 /// Serviço externo exibido no painel "Status global" (GitHub, Cloudflare, Google Cloud...).
