@@ -271,8 +271,17 @@ export function mergeTraces(results: readonly TraceResult[]): TraceResult {
       if (hop.rttMs !== null && (cur.rttMs === null || hop.rttMs < cur.rttMs)) cur.rttMs = hop.rttMs;
     }
   const best = ordered[0];
-  const hops = [...byTtl.values()].sort((x, y) => x.ttl - y.ttl);
-  const { hops: trimmed, reached } = finishHops(hops, best.address);
+  let hops = [...byTtl.values()].sort((x, y) => x.ttl - y.ttl);
+  // Um modo chegou ao destino num TTL menor que o último roteador de outro modo: a rota acaba no destino,
+  // com o tempo medido até ele (os roteadores além são de outro caminho e inflariam o RTT do destino).
+  const dest = best.address;
+  const destAt = dest ? hops.findIndex((h) => h.ip === dest || h.altIps.includes(dest)) : -1;
+  if (dest && destAt >= 0) {
+    const ttl = hops[destAt].ttl;
+    const rtts = ordered.flatMap((r) => r.hops.filter((h) => h.ttl === ttl && h.ip === dest && h.rttMs !== null).map((h) => h.rttMs!));
+    hops = [...hops.slice(0, destAt), { ...hops[destAt], ip: dest, altIps: [], rttMs: rtts.length ? Math.min(...rtts) : hops[destAt].rttMs }];
+  }
+  const { hops: trimmed, reached } = finishHops(hops, dest);
   const tools = [...new Set(ordered.map((r) => r.tool).filter(Boolean))].join(" + ");
   return { ...best, hops: trimmed, reached: reached || ok.some((r) => r.reached), tool: tools || best.tool, mode: "union", tcp };
 }

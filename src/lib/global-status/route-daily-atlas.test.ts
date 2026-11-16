@@ -46,4 +46,11 @@ describe("RIPE Atlas", () => {
     expect(compareAtlas("x.com", [], [], { rttMs: null, verdict: null, ispAsn: null }, 0).summary).toContain("Nenhuma sonda");
     expect(compareAtlas("x.com", [1], [readAtlasResult(result(1, null), null)], { rttMs: null, verdict: null, ispAsn: null }, 0).summary).toContain("nenhuma chegou");
   });
+
+  it("acima de 30 ms não conclui que as sondas saem do país", () => {
+    const routes = [45, 48, 52].map((ms, i) => readAtlasResult(result(i + 1, ms), 18881));
+    const c = compareAtlas("x.com", [1], routes, { rttMs: 110, verdict: "INTERNATIONAL", ispAsn: 28573 }, 0);
+    expect(c.summary).toContain("não dá para dizer se elas saem do país");
+    expect(c.summary).not.toContain("não tem borda");
+  });
 });

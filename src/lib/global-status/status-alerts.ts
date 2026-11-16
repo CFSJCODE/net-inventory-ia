@@ -40,6 +40,8 @@ export interface AlertState {
 /** Um aviso de mudança de rota em aberto (incidente de origem ROUTE). */
 export interface RouteEvent {
   id: string;
+  /** Revisão do aviso: o incidente aberto é reaproveitado quando a rota muda de novo (id + início). */
+  key?: string;
   service: string;
   title: string;
 }
@@ -58,8 +60,9 @@ export interface SharedCause {
 /** Os avisos de rota ainda não enviados, e a lista lembrada (só os ainda abertos). Pura. */
 export function planRouteAlerts(open: readonly RouteEvent[], notified: readonly string[]): { changes: RouteChange[]; next: string[] } {
   const sent = new Set(notified);
-  const changes = open.filter((e) => !sent.has(e.id)).map((e) => ({ ...e, abroad: /→ fora do Brasil/.test(e.title) && !/^Rota mudou: fora do Brasil/.test(e.title) }));
-  return { changes, next: open.map((e) => e.id) };
+  const keyOf = (e: RouteEvent) => e.key ?? e.id;
+  const changes = open.filter((e) => !sent.has(keyOf(e))).map((e) => ({ ...e, abroad: /→ fora do Brasil/.test(e.title) && !/^Rota mudou: fora do Brasil/.test(e.title) }));
+  return { changes, next: open.map(keyOf) };
 }
 
 /**
@@ -239,11 +242,11 @@ export async function notifyStatusChanges(now = new Date()): Promise<void> {
   // Mudanças de rota em aberto (fase 9): avisadas uma vez cada.
   const openRoutes = await prisma.statusIncident.findMany({
     where: { origin: "ROUTE", resolvedAt: null, service: { enabled: true } },
-    select: { id: true, title: true, service: { select: { name: true } } },
+    select: { id: true, title: true, startedAt: true, service: { select: { name: true } } },
     orderBy: { startedAt: "asc" },
   });
   const route = planRouteAlerts(
-    openRoutes.map((r) => ({ id: r.id, service: r.service.name, title: r.title })),
+    openRoutes.map((r) => ({ id: r.id, key: `${r.id}@${r.startedAt.getTime()}`, service: r.service.name, title: r.title })),
     state.routeNotified ?? [],
   );
   if (!changes.length && !route.changes.length) {

@@ -30,6 +30,18 @@ describe("ECMP (fase 7)", () => {
     expect(merged.hops[3]).toMatchObject({ ip: "200.230.20.9", altIps: ["200.230.20.5"] });
     expect(merged.tool).toBe("traceroute (TCP 443) + traceroute");
   });
+
+  it("quando o TCP chega antes do último roteador do UDP, a rota termina no destino e com o tempo dele", () => {
+    const dest = "142.250.1.1";
+    const h = (ttl: number, ip: string, rttMs: number) => ({ ttl, ip, rttMs, altIps: [] as string[] });
+    const base = { ok: true, host: "google.com", address: dest, error: null } as const;
+    const tcp: TraceResult = { ...base, tool: "traceroute (TCP 443)", mode: "tcp", reached: true, hops: [h(1, "192.168.0.1", 1), h(2, dest, 10)] };
+    const udp: TraceResult = { ...base, tool: "traceroute", mode: "udp", reached: false, hops: [h(1, "192.168.0.1", 1), h(2, "200.230.1.1", 9), h(3, "200.230.9.9", 100)] };
+    const merged = mergeTraces([udp, tcp]);
+    expect(merged.reached).toBe(true);
+    expect(merged.hops).toHaveLength(2);
+    expect(merged.hops[1]).toMatchObject({ ttl: 2, ip: dest, rttMs: 10, altIps: [] });
+  });
 });
 
 describe("betterTrace", () => {

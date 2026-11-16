@@ -337,6 +337,14 @@ describe("agendador da rota", () => {
     expect(await analyzeAgentRoutes(at.getTime())).toBe(0);
   });
 
+  it("drena mais de um lote de rotas dos agentes na mesma rodada, a mais nova primeiro", async () => {
+    const s = await service();
+    for (let i = 0; i < 7; i++)
+      await db.routeTrace.create({ data: { serviceId: s.id, vantage: `agent:pc-${i}`, at: new Date(Date.parse("2026-11-15T22:00:00Z") + i * 60_000), host: "google.com", destIp: "142.250.1.1", reached: true, verdict: "PENDING", summary: "", hops: { create: MIAMI_ROUTE.map(({ ttl, ip, rttMs }) => ({ ttl, ip, rttMs })) } } });
+    expect(await analyzeAgentRoutes()).toBe(7);
+    expect(await db.routeTrace.count({ where: { verdict: "PENDING" } })).toBe(0);
+  });
+
   it("uma rota do agente que falha na análise não trava a fila", async () => {
     const s = await service();
     const { enrichHops } = await import("./route-enrich");

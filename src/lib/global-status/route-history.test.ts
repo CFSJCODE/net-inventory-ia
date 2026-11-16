@@ -45,6 +45,13 @@ describe("alertas de rota e causa comum (fase 9)", () => {
     expect(planRouteAlerts([open[1]], first.next).next).toEqual(["b"]);
   });
 
+  it("a mesma rota que muda de novo com o aviso ainda aberto é avisada outra vez", () => {
+    const first = planRouteAlerts([{ id: "a", key: "a@1", service: "GitHub", title: "Rota mudou: fora do Brasil → no Brasil" }], []);
+    expect(first.next).toEqual(["a@1"]);
+    const again = planRouteAlerts([{ id: "a", key: "a@2", service: "GitHub", title: "Rota mudou: no Brasil → fora do Brasil" }], first.next);
+    expect(again.changes.map((c) => [c.id, c.abroad])).toEqual([["a", true]]);
+  });
+
   it("agrupa serviços que caíram juntos pelo lugar que os atende", () => {
     const changes: StatusChange[] = [
       { slug: "github", name: "GitHub", from: "OK", to: "DEGRADED", reason: null, kind: "alert" },

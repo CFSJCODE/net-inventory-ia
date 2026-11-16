@@ -243,6 +243,8 @@ export async function cleanupRoutes(nowMs = Date.now()): Promise<void> {
 
 /** Rotas dos agentes Windows que ainda não foram analisadas por rodada (cada uma consulta ASN e rDNS dos saltos). */
 const AGENT_BATCH = 3;
+/** Tempo máximo por rodada para analisar rotas dos agentes, antes do rastreio do próprio servidor. */
+const AGENT_BUDGET_MS = 30_000;
 export const PENDING_VERDICT = "PENDING";
 
 /**
@@ -250,7 +252,18 @@ export const PENDING_VERDICT = "PENDING";
  * (verdict PENDING); aqui entram ASN, nome reverso, cidade, papel, o veredito e o cabo provável, como nas
  * rotas do servidor. A operadora é a do servidor (o PC costuma estar na mesma rede).
  */
-export async function analyzeAgentRoutes(nowMs = Date.now()): Promise<number> {
+export async function analyzeAgentRoutes(nowMs = Date.now(), budgetMs = AGENT_BUDGET_MS): Promise<number> {
+  // Vários agentes mandam mais de uma rota por minuto: drena lotes até esvaziar ou acabar o tempo da rodada.
+  const deadline = Date.now() + budgetMs;
+  let total = 0;
+  for (;;) {
+    const n = await analyzeAgentBatch(nowMs);
+    total += n;
+    if (n < AGENT_BATCH || Date.now() >= deadline) return total;
+  }
+}
+
+async function analyzeAgentBatch(nowMs: number): Promise<number> {
   const pending = await pendingAgentTraces();
   if (!pending.length) return 0;
   const [isp, cables, ixStored] = await Promise.all([storedIsp(), brazilCables(nowMs), refreshIxPrefixes(nowMs).catch(() => null)]);
@@ -269,7 +282,7 @@ export async function analyzeAgentRoutes(nowMs = Date.now()): Promise<number> {
 
 type PendingTrace = Awaited<ReturnType<typeof pendingAgentTraces>>[number];
 const pendingAgentTraces = () =>
-  prisma.routeTrace.findMany({ where: { verdict: PENDING_VERDICT }, orderBy: { at: "asc" }, take: AGENT_BATCH, include: { hops: { orderBy: { ttl: "asc" } } } });
+  prisma.routeTrace.findMany({ where: { verdict: PENDING_VERDICT }, orderBy: { at: "desc" }, take: AGENT_BATCH, include: { hops: { orderBy: { ttl: "asc" } } } });
 
 async function analyzeAgentTrace(
   t: PendingTrace,

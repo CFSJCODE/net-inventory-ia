@@ -78,7 +78,8 @@ export function compareAtlas(host: string, measurements: number[], routes: reado
     summary = `${reached.length} sondas do RIPE Atlas no Brasil chegaram a ${host}: mediana de ${med} ms, ${pct}% abaixo de ${ATLAS_DOMESTIC_MS} ms (servidas no Brasil).`;
     const abroad = ours.verdict === "INTERNATIONAL" || (ours.rttMs !== null && ours.rttMs >= 60);
     if (abroad && pct >= 50) summary += " A maioria das redes do Brasil é atendida aqui, mas a sua rota vai para fora: a escolha é da sua operadora.";
-    else if (abroad && pct < 50) summary += " A maioria das redes do Brasil também vai para fora: o destino não tem borda no país.";
+    // Acima de 30 ms ainda pode ser Brasil (São Paulo a Manaus passa de 50 ms): o tempo sozinho não prova que as sondas saem do país.
+    else if (abroad && pct < 50) summary += ` A maioria das sondas também passa de ${ATLAS_DOMESTIC_MS} ms: não é só a sua operadora que demora, mas pelo tempo não dá para dizer se elas saem do país.`;
     else if (!abroad && ours.rttMs !== null) summary += ` A sua rota (${Math.round(ours.rttMs)} ms) está no mesmo padrão.`;
     if (sameIsp && sameIsp.probes) summary += ` Na sua operadora: ${sameIsp.probes} sonda${sameIsp.probes === 1 ? "" : "s"}, mediana de ${sameIsp.medianRttMs} ms.`;
   }
