@@ -128,6 +128,13 @@ export const STATUS_CATALOG: CatalogEntry[] = [
   // DNS recursivo da operadora (Claro/NET Virtua), para comparar com os públicos. Só responde a clientes da
   // própria operadora: em outra rede ele nunca responde e fica "Sem dados" (ver `neverAnsweredReason`).
   { slug: "dns-claro", name: "Claro DNS (181.213.132.8)", category: "INTERNET", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: resolver("181.213.132.8") },
+  // Saltos da rota até a Internet dentro da Claro (traceroute de 16/11/2026: 192.168.0.1 → 10.27.0.1 →
+  // 201.17.139.9 / 201.17.136.40). Os dois roteadores de agregação de BH respondem ping sem perda; o ping
+  // deles separa "link/CMTS ruim" de "problema mais adiante". O CMTS 10.27.0.1 não entra aqui: ele descarta
+  // ICMP echo (100% de perda) e daria alerta falso; a latência dele já vem dos saltos do traceroute (RouteHop).
+  // Como o dns-claro, só fazem sentido nesta rede: em outra operadora ficam "Sem dados".
+  { slug: "claro-agregacao-1", name: "Agregação Claro BH 1 (201.17.139.9)", category: "INTERNET", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: [{ key: "ping", kind: "ICMP", host: "201.17.139.9" }] },
+  { slug: "claro-agregacao-2", name: "Agregação Claro BH 2 (201.17.136.40)", category: "INTERNET", sourceType: "NONE", sourceUrl: null, pageUrl: null, targets: [{ key: "ping", kind: "ICMP", host: "201.17.136.40" }] },
   {
     slug: "internet-brasil",
     name: "Internet no Brasil",
