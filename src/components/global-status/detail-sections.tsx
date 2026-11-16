@@ -170,6 +170,79 @@ function groupByAsn(hops: RouteHopRow[]): { key: string; label: string; hops: Ro
   return groups;
 }
 
+const SEGMENT_COLORS = ["bg-zinc-500", "bg-emerald-500/70", "bg-sky-500/70", "bg-violet-500/70", "bg-amber-500/70", "bg-rose-500/70"];
+
+/**
+ * Rota em trechos (fase 9): quanto do tempo de ida e volta cada rede soma, pelo "piso" do RTT (o menor
+ * RTT dali até o fim, que não sobe com os roteadores lentos para responder ao rastreio).
+ */
+export function routeSegments(hops: RouteHopRow[], destRttMs: number | null): { label: string; ms: number }[] {
+  const floors = new Map<number, number>();
+  let min = destRttMs ?? Infinity;
+  for (let i = hops.length - 1; i >= 0; i--) {
+    if (hops[i].rttMs !== null) min = Math.min(min, hops[i].rttMs!);
+    floors.set(hops[i].ttl, min);
+  }
+  let prev = 0;
+  const out: { label: string; ms: number }[] = [];
+  for (const group of groupByAsn(hops)) {
+    if (group.label === "Sem resposta") continue;
+    const end = floors.get(group.hops[group.hops.length - 1].ttl) ?? Infinity;
+    if (!Number.isFinite(end)) continue;
+    const label = group.label === "Sem ASN público" ? (out.length ? "Sem ASN público" : "Rede local e CGNAT") : group.label.replace(/^AS\d+ · /, "");
+    out.push({ label, ms: Math.max(0, Math.round((end - prev) * 10) / 10) });
+    prev = Math.max(prev, end);
+  }
+  if (destRttMs !== null && destRttMs > prev + 0.5) out.push({ label: "Até o destino", ms: Math.round((destRttMs - prev) * 10) / 10 });
+  return out;
+}
+
+function SegmentBar({ route }: { route: StatusRouteDetail }) {
+  const segments = routeSegments(route.hops, route.destRttMs);
+  const total = segments.reduce((sum, s) => sum + s.ms, 0);
+  if (segments.length < 2 || total <= 0) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex h-2 overflow-hidden rounded-full" role="img" aria-label={segments.map((s) => `${s.label} ${formatLatency(s.ms)}`).join(", ")}>
+        {segments.map((s, i) => (
+          <span key={`${s.label}-${i}`} className={SEGMENT_COLORS[i % SEGMENT_COLORS.length]} style={{ width: `${Math.max(2, (s.ms / total) * 100)}%` }} title={`${s.label}: ${formatLatency(s.ms)}`} />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground">
+        {segments.map((s, i) => (
+          <span key={`${s.label}-${i}`} className="inline-flex items-center gap-1">
+            <span className={cn("size-2 rounded-full", SEGMENT_COLORS[i % SEGMENT_COLORS.length])} />
+            {s.label} <span className="tabular-nums text-foreground">{formatLatency(s.ms)}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PathHistory({ route }: { route: StatusRouteDetail }) {
+  if (route.history.length < 2) return null;
+  return (
+    <div className="flex flex-col gap-1 border-t pt-2">
+      <span className="font-medium text-foreground">Caminho nos últimos 7 dias</span>
+      <ol className="flex flex-col gap-0.5 text-muted-foreground">
+        {route.history.map((h, i) => (
+          <li key={h.from} className="flex justify-between gap-3">
+            <span className="min-w-0 truncate" title={h.asPath ? `ASNs ${h.asPath}` : undefined}>
+              {h.place}
+              {h.asPath ? ` · AS ${h.asPath.replaceAll(" ", " → ")}` : ""}
+            </span>
+            <span className="shrink-0 tabular-nums">
+              {formatDateTime(h.from)}
+              {i === 0 ? " até agora" : ` a ${formatDateTime(h.to)}`}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 /**
  * Rota até o destino (fase 5): a rota gravada mais nova (o servidor rastreia cada serviço a cada 30 min),
  * com onde o serviço é servido, o cabo submarino provável e os saltos agrupados por ASN.
@@ -234,6 +307,7 @@ export function RouteSection({ slug, route }: { slug: string; route: StatusRoute
               {current.candidates.length > 0 && <InlineReading label="Outros possíveis" value={current.candidates.join(", ")} />}
             </div>
           )}
+          <SegmentBar route={current} />
           {current.hops.length > 0 && (
             <ol className="flex flex-col gap-2 border-t pt-2">
               {groupByAsn(current.hops).map((group) => (
@@ -262,6 +336,7 @@ export function RouteSection({ slug, route }: { slug: string; route: StatusRoute
             </ol>
           )}
           {silenceText(current) && <p className="text-muted-foreground">{silenceText(current)}</p>}
+          <PathHistory route={current} />
           <div className="border-t pt-2 text-muted-foreground">
             {current.host}
             {current.destIp && current.destIp !== current.host ? ` (${current.destIp})` : ""} · {current.hops.length} salto{current.hops.length === 1 ? "" : "s"} ·{" "}

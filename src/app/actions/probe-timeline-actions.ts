@@ -1,5 +1,6 @@
 "use server";
 
+import { routeChangeMarks } from "@/lib/global-status/route-history";
 import { requireSession } from "@/lib/auth/server";
 import { prisma } from "@/lib/prisma";
 import { AGENT_VANTAGE_PREFIX, SERVER_VANTAGE, probesEnabled } from "@/lib/global-status/probe-logic";
@@ -27,6 +28,8 @@ export interface TimelineRequest {
 
 export interface TimelineResponse {
   timeline: Timeline | null;
+  /** Trocas de rota do servidor até o serviço dentro da janela (trilha "Rota", fase 9). */
+  routeMarks?: { at: number; text: string }[];
   /** Motivo quando não há linha do tempo. */
   reason: string | null;
 }
@@ -116,5 +119,12 @@ export async function getProbeTimeline(request: TimelineRequest): Promise<Timeli
     https: { source: http.host, samples: httpChecks.map((c) => toSample(c)) },
   };
   const timeline = buildTimeline(lanes, { start, end: end.getTime(), stepMs: stepForHours(hours) }, { size: settings.probeWindow, serviceName: service.name });
-  return { timeline, reason: null };
+  // A rota anterior à janela entra para que a primeira troca dentro dela seja reconhecida.
+  const traces = await prisma.routeTrace.findMany({
+    where: { service: { slug }, vantage: SERVER_VANTAGE, error: null, at: { gte: new Date(start - 24 * 3_600_000), lte: end } },
+    orderBy: { at: "asc" },
+    select: { at: true, asPath: true, verdict: true, cableName: true, destCountry: true },
+  });
+  const routeMarks = routeChangeMarks(traces.map((t) => ({ ...t, at: t.at.getTime() })), start, end.getTime());
+  return { timeline, reason: null, routeMarks };
 }

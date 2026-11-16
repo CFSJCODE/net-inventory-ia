@@ -11,6 +11,7 @@ import { buildPhaseSeries, buildSeries, latencySummary, mainLatencyTarget, tailP
 import { traceHost } from "@/lib/global-status/traceroute";
 import { parseEdge } from "@/lib/global-status/edge-pop";
 import { loadRouteOverview, type RouteOverview } from "@/lib/global-status/route-overview";
+import { pathHistory } from "@/lib/global-status/route-history";
 import { interconnectionText, interconnections } from "@/lib/global-status/route-peering";
 import { ROUTE_ORIGIN, readRouteToolState, routesEnabled, traceServiceNow, type RouteToolState } from "@/lib/global-status/route-runner";
 import { CABLE_MAP_PAGE } from "@/lib/global-status/subsea-cables";
@@ -401,6 +402,8 @@ export interface StatusRouteDetail {
   interconnections: string[];
   /** Borda do CDN que atendeu a última sonda HTTP do servidor (fase 8). */
   edge: { provider: string; pop: string | null; city: string | null } | null;
+  /** Trechos de 7 dias com a mesma rota, do mais novo ao mais antigo (fase 9). */
+  history: { from: string; to: string; asPath: string | null; place: string; traces: number }[];
   hops: StatusRouteHopRow[];
   /** Página do mapa de cabos (atribuição dos dados dos cabos). */
   cableSource: string;
@@ -417,11 +420,18 @@ function parseIpList(json: string | null): string[] {
 }
 
 async function loadRoute(serviceId: string): Promise<StatusRouteDetail | null> {
-  const t = await prisma.routeTrace.findFirst({ where: { serviceId }, orderBy: { at: "desc" }, include: { hops: { orderBy: { ttl: "asc" } } } });
+  const t = await prisma.routeTrace.findFirst({ where: { serviceId, vantage: "server" }, orderBy: { at: "desc" }, include: { hops: { orderBy: { ttl: "asc" } } } });
   if (!t) return null;
   const lastEdge = await prisma.probeCheck.findFirst({ where: { vantage: "server", edge: { not: null }, target: { serviceId, kind: "HTTP" } }, orderBy: { at: "desc" }, select: { edge: true } });
   const edge = parseEdge(lastEdge?.edge);
   const destAsn = Number(t.asPath?.split(" ").pop()) || null;
+  const week = await prisma.routeTrace.findMany({
+    where: { serviceId, vantage: "server", error: null, at: { gte: new Date(Date.now() - 7 * 24 * 3_600_000) } },
+    select: { at: true, asPath: true, verdict: true, cableName: true, destCountry: true },
+  });
+  const history = pathHistory(week.map((w) => ({ ...w, at: w.at.getTime() })))
+    .slice(0, 8)
+    .map((h) => ({ ...h, from: new Date(h.from).toISOString(), to: new Date(h.to).toISOString() }));
   return {
     at: t.at.toISOString(),
     host: t.host,
@@ -440,6 +450,7 @@ async function loadRoute(serviceId: string): Promise<StatusRouteDetail | null> {
     lastVisibleTtl: t.lastVisibleTtl,
     interconnections: interconnections(t.hops, { asn: destAsn, asName: null }).map(interconnectionText),
     edge: edge && { provider: edge.provider, pop: edge.pop, city: edge.city },
+    history,
     hops: t.hops.map((h) => ({ ttl: h.ttl, ip: h.ip, rttMs: h.rttMs, asn: h.asn, asName: h.asName, rdns: h.rdns, city: h.city, country: h.country, altIps: parseIpList(h.altIps), role: h.role })),
     cableSource: CABLE_MAP_PAGE,
   };
