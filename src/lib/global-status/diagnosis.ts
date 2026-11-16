@@ -85,117 +85,127 @@ const bad = (s: ServiceStatus | null | undefined) => s === "DEGRADED" || s === "
 const isProvider = (s: { category: string }) => s.category !== "INTERNET" && s.category !== "REGIONAL";
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-export function diagnose(input: {
+interface DiagnosisInput {
   services: readonly DiagnosisService[];
   connectivity: LocalConnectivity;
   incidents?: readonly DiagnosisIncident[];
   places?: readonly DiagnosisPlace[] | null;
-}): Diagnosis {
-  const providers = input.services.filter(isProvider);
-  const affected = providers.filter((s) => bad(s.status));
+}
+
+/** Os afetados ainda sem causa e os grupos já montados; cada regra tira os seus de `left`. */
+class Attribution {
+  readonly groups: CauseGroup[] = [];
+  readonly left: Map<string, DiagnosisService>;
+
+  constructor(affected: readonly DiagnosisService[]) {
+    this.left = new Map(affected.map((s) => [s.slug, s]));
+  }
+
+  remaining(): DiagnosisService[] {
+    return Array.from(this.left.values());
+  }
+
+  /** Tira de `left` os que `pick` escolhe e, havendo algum, monta o grupo com eles. */
+  assign(group: Omit<CauseGroup, "services">, pick: (s: DiagnosisService) => boolean): void {
+    const chosen = this.remaining().filter(pick);
+    for (const s of chosen) this.left.delete(s.slug);
+    if (chosen.length) this.groups.push({ ...group, services: chosen.map((s) => ({ slug: s.slug, name: s.name, status: s.status })) });
+  }
+}
+
+export function diagnose(input: DiagnosisInput): Diagnosis {
+  const affected = input.services.filter(isProvider).filter((s) => bad(s.status));
   if (!affected.length) return { affected: 0, headline: null, scope: null, groups: [] };
+  const a = new Attribution(affected);
+  offlineRule(a, input.connectivity);
+  localRule(a, input.services);
+  providerRule(a);
+  routeRule(a, input.incidents ?? []);
+  accessRule(a, input);
+  placeRule(a, input.places ?? []);
+  for (const s of a.remaining()) a.assign({ scope: "SERVICE", label: s.name, detail: s.measuredReason ?? "Fora do normal só neste serviço.", action: null }, (x) => x.slug === s.slug);
+  const scope = SCOPE_ORDER.find((sc) => a.groups.some((g) => g.scope === sc)) ?? null;
+  return { affected: affected.length, headline: headlineOf(affected.length, a.groups, scope), scope, groups: a.groups };
+}
 
-  const groups: CauseGroup[] = [];
-  const left = new Map(affected.map((s) => [s.slug, s]));
-  const take = (pick: (s: DiagnosisService) => boolean) => {
-    const out = [...left.values()].filter(pick);
-    for (const s of out) left.delete(s.slug);
-    return out.map((s) => ({ slug: s.slug, name: s.name, status: s.status }));
-  };
-  const push = (g: Omit<CauseGroup, "services">, services: CauseGroup["services"]) => {
-    if (services.length) groups.push({ ...g, services });
-  };
+/** 1. Sem conexão: as medições estão paradas e o que aparece é o estado oficial; nada é culpa dos serviços. */
+function offlineRule(a: Attribution, connectivity: LocalConnectivity): void {
+  if (connectivity.state === "ok") return;
+  const dns = connectivity.state === "dns";
+  const why = connectivity.reason ?? (dns ? "O DNS deste servidor não resolve nomes." : "Este servidor não alcança a Internet.");
+  a.assign({ scope: "LOCAL", label: dns ? "DNS deste servidor" : "Conexão deste servidor", detail: why, action: "Confira o roteador, o cabo ou Wi-Fi e o DNS configurado; os serviços abaixo podem estar normais." }, () => true);
+}
 
-  // 1. Sem conexão: as medições estão paradas e o que aparece é o estado oficial; nada é culpa da rede.
-  if (input.connectivity.state !== "ok") {
-    const why = input.connectivity.reason ?? (input.connectivity.state === "dns" ? "O DNS deste servidor não resolve nomes." : "Este servidor não alcança a Internet.");
-    push({ scope: "LOCAL", label: input.connectivity.state === "dns" ? "DNS deste servidor" : "Conexão deste servidor", detail: why, action: "Confira o roteador, o cabo ou Wi-Fi e o DNS configurado; os serviços abaixo podem estar normais." }, take(() => true));
+/** 2. Rede local degradada: o que só foi visto daqui (o provedor não confirma) é efeito dela. */
+function localRule(a: Attribution, services: readonly DiagnosisService[]): void {
+  const local = services.find((s) => s.slug === LOCAL_SLUG);
+  if (!local || !bad(local.measuredStatus)) return;
+  const state = local.measuredStatus === "DOWN" ? "fora" : "degradada";
+  const why = local.measuredReason ? ` (${local.measuredReason})` : "";
+  a.assign(
+    { scope: "LOCAL", label: "Rede local", detail: `A rede local deste servidor está ${state}${why}: a lentidão dos serviços vem daqui.`, action: "Verifique o roteador, o switch e o cabo ou Wi-Fi até o servidor." },
+    (s) => !bad(s.officialState),
+  );
+}
+
+/** 3. O provedor confirmou. */
+function providerRule(a: Attribution): void {
+  for (const s of a.remaining().filter((x) => bad(x.officialState))) {
+    a.assign({ scope: "PROVIDER", label: s.name, detail: "O próprio provedor publicou problema na página de status.", action: null }, (x) => x.slug === s.slug);
   }
+}
 
-  // 2. Rede local degradada: o que só foi visto daqui (o provedor não confirma) é efeito dela.
-  const local = input.services.find((s) => s.slug === LOCAL_SLUG);
-  if (local && bad(local.measuredStatus)) {
-    push(
-      {
-        scope: "LOCAL",
-        label: "Rede local",
-        detail: `A rede local deste servidor está ${local.measuredStatus === "DOWN" ? "fora" : "degradada"}${local.measuredReason ? ` (${local.measuredReason})` : ""}: a lentidão dos serviços vem daqui.`,
-        action: "Verifique o roteador, o switch e o cabo ou Wi-Fi até o servidor.",
-      },
-      take((s) => !bad(s.officialState)),
-    );
-  }
-
-  // 3. O provedor confirmou.
-  for (const s of [...left.values()].filter((x) => bad(x.officialState))) {
-    push({ scope: "PROVIDER", label: s.name, detail: "O próprio provedor publicou problema na página de status.", action: null }, take((x) => x.slug === s.slug));
-  }
-
-  // 4. Rota mudou.
+/** 4. A rota até o serviço mudou: a lentidão vem do caminho novo. */
+function routeRule(a: Attribution, incidents: readonly DiagnosisIncident[]): void {
   const routed = new Map<string, string>();
-  for (const i of input.incidents ?? []) if (i.origin === "ROUTE" && !routed.has(i.serviceSlug)) routed.set(i.serviceSlug, i.title);
-  const rerouted = take((s) => routed.has(s.slug));
-  if (rerouted.length) {
-    const abroad = rerouted.some((s) => /→ fora do Brasil/.test(routed.get(s.slug) ?? ""));
-    push(
-      {
-        scope: "UPSTREAM",
-        label: abroad ? "Rota passou a sair do Brasil" : "Rota mudou",
-        detail: abroad
-          ? "O caminho até estes serviços passou a atravessar um cabo internacional: a latência maior vem da distância, não de falha do serviço."
-          : "O caminho até estes serviços mudou há pouco; a diferença de latência acompanha a rota nova.",
-        action: null,
-      },
-      rerouted,
-    );
+  for (const i of incidents) {
+    if (i.origin === "ROUTE" && !routed.has(i.serviceSlug)) routed.set(i.serviceSlug, i.title);
   }
+  const abroad = a.remaining().some((s) => /→ fora do Brasil/.test(routed.get(s.slug) ?? ""));
+  const detail = abroad
+    ? "O caminho até estes serviços passou a atravessar um cabo internacional: a latência maior vem da distância, não de falha do serviço."
+    : "O caminho até estes serviços mudou há pouco; a diferença de latência acompanha a rota nova.";
+  a.assign({ scope: "UPSTREAM", label: abroad ? "Rota passou a sair do Brasil" : "Rota mudou", detail, action: null }, (s) => routed.has(s.slug));
+}
 
-  // 5. Acesso à Internet: muitos lentos ao mesmo tempo, espalhados, com a rede local normal.
-  const measured = providers.filter((s) => s.measuredStatus && s.measuredStatus !== "UNKNOWN" && !s.measurementPaused);
-  const measuredBad = [...left.values()].filter((s) => bad(s.measuredStatus));
+/** 5. Acesso à Internet: muitos lentos ao mesmo tempo, espalhados por vários lugares, com a rede local normal. */
+function accessRule(a: Attribution, input: DiagnosisInput): void {
+  const measured = input.services.filter(isProvider).filter((s) => s.measuredStatus && s.measuredStatus !== "UNKNOWN" && !s.measurementPaused);
+  const measuredBad = a.remaining().filter((s) => bad(s.measuredStatus));
   const placeOf = placeIndex(input.places);
   const spread = new Set(measuredBad.map((s) => placeOf.get(s.slug) ?? `?${s.slug}`)).size;
-  if (measuredBad.length >= ACCESS_MIN_SERVICES && measuredBad.length >= measured.length * ACCESS_MIN_SHARE && spread >= ACCESS_MIN_PLACES) {
-    const dnsBad = input.services.filter((s) => s.category === "INTERNET" && s.slug !== LOCAL_SLUG && bad(s.measuredStatus)).length;
-    push(
-      {
-        scope: "ACCESS",
-        label: "Link ou operadora",
-        detail: `${plural(measuredBad.length, "serviço", "serviços")} de ${measured.length} medidos ficaram fora do normal juntos, por caminhos diferentes, com a rede local normal${dnsBad ? " e os DNS públicos também lentos" : ""}: o gargalo está entre o seu roteador e a Internet.`,
-        action: "Veja se algum download, backup ou atualização está ocupando o link; se continuar, abra chamado na operadora.",
-      },
-      take((s) => bad(s.measuredStatus)),
-    );
-  }
+  const wide = measuredBad.length >= ACCESS_MIN_SERVICES && measuredBad.length >= measured.length * ACCESS_MIN_SHARE;
+  if (!wide || spread < ACCESS_MIN_PLACES) return;
+  const dnsBad = input.services.some((s) => s.category === "INTERNET" && s.slug !== LOCAL_SLUG && bad(s.measuredStatus));
+  const count = plural(measuredBad.length, "serviço", "serviços");
+  a.assign(
+    {
+      scope: "ACCESS",
+      label: "Link ou operadora",
+      detail: `${count} de ${measured.length} medidos ficaram fora do normal juntos, por caminhos diferentes, com a rede local normal${dnsBad ? " e os DNS públicos também lentos" : ""}: o gargalo está entre o seu roteador e a Internet.`,
+      action: "Veja se algum download, backup ou atualização está ocupando o link; se continuar, abra chamado na operadora.",
+    },
+    (s) => bad(s.measuredStatus),
+  );
+}
 
-  // 6. Mesmo lugar (saída internacional ou PoP de CDN).
-  for (const p of input.places ?? []) {
-    if (p.kind !== "EXIT" && p.kind !== "EDGE") continue;
+/** 6. Dois ou mais atendidos pela mesma saída internacional ou pelo mesmo PoP de CDN. */
+function placeRule(a: Attribution, places: readonly DiagnosisPlace[]): void {
+  for (const p of places.filter((x) => x.kind === "EXIT" || x.kind === "EDGE")) {
     const slugs = new Set(p.services.map((s) => s.slug));
-    if ([...left.values()].filter((s) => slugs.has(s.slug)).length < 2) continue;
-    push(
-      {
-        scope: "UPSTREAM",
-        label: p.label,
-        detail: p.kind === "EXIT" ? "Estes serviços saem do país pelo mesmo ponto e pioraram juntos." : "Estes serviços são atendidos pela mesma borda do CDN e pioraram juntos.",
-        action: null,
-      },
-      take((s) => slugs.has(s.slug)),
-    );
+    if (a.remaining().filter((s) => slugs.has(s.slug)).length < 2) continue;
+    const detail = p.kind === "EXIT" ? "Estes serviços saem do país pelo mesmo ponto e pioraram juntos." : "Estes serviços são atendidos pela mesma borda do CDN e pioraram juntos.";
+    a.assign({ scope: "UPSTREAM", label: p.label, detail, action: null }, (s) => slugs.has(s.slug));
   }
-
-  // 7. Isolados.
-  for (const s of [...left.values()]) {
-    push({ scope: "SERVICE", label: s.name, detail: s.measuredReason ?? "Fora do normal só neste serviço.", action: null }, take((x) => x.slug === s.slug));
-  }
-
-  const scope = SCOPE_ORDER.find((sc) => groups.some((g) => g.scope === sc)) ?? null;
-  return { affected: affected.length, headline: headlineOf(affected.length, groups, scope), scope, groups };
 }
 
 function placeIndex(places: readonly DiagnosisPlace[] | null | undefined): Map<string, string> {
   const out = new Map<string, string>();
-  for (const p of places ?? []) for (const s of p.services) if (!out.has(s.slug)) out.set(s.slug, p.label);
+  for (const p of places ?? []) {
+    for (const s of p.services) {
+      if (!out.has(s.slug)) out.set(s.slug, p.label);
+    }
+  }
   return out;
 }
 
