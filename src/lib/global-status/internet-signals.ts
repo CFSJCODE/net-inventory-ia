@@ -3,7 +3,7 @@ import net from "node:net";
 import { prisma } from "@/lib/prisma";
 import { mapWithConcurrency } from "@/lib/network/concurrency";
 import { CATEGORY_LABEL } from "./catalog";
-import { parseAsOverview, parseNetworkInfo, parseRoutingStatus, parseWhatsMyIp, ripestatUrl, type ServiceRoute } from "./adapters/ripestat";
+import { parseAsOverview, parseCoveringPrefix, parseNetworkInfo, parseRoutingStatus, parseWhatsMyIp, ripestatUrl, visibilityStatus, type ServiceRoute } from "./adapters/ripestat";
 import { AUTO_GATEWAY, type ServiceCategory } from "./types";
 
 /**
@@ -108,6 +108,20 @@ async function prefixOf(host: string, nowMs: number): Promise<PrefixCache> {
 
 const errorText = (err: unknown) => (err instanceof Error ? (err.name === "TimeoutError" ? "RIPEstat não respondeu a tempo" : err.message) : String(err));
 
+/**
+ * Prefixo pouco visto: consulta o bloco maior do mesmo ASN que o cobre. Uma falha aqui não derruba a
+ * rota; fica só sem a cobertura (e o prefixo segue no estado da própria visibilidade).
+ */
+async function coveringOf(body: Parameters<typeof parseRoutingStatus>[0], prefix: string, asn: number | null, visibility: ReturnType<typeof parseRoutingStatus>): Promise<ServiceRoute["covering"]> {
+  if (visibilityStatus(visibility) === "OK") return null;
+  const cover = parseCoveringPrefix(body, asn);
+  if (!cover) return null;
+  const coverVisibility = await getJson<Parameters<typeof parseRoutingStatus>[0]>(ripestatUrl("routing-status", cover))
+    .then((b) => parseRoutingStatus(b, cover))
+    .catch(() => null);
+  return { prefix: cover, visibility: coverVisibility };
+}
+
 /** A rota BGP de cada serviço medido (sem os da conexão local e os da faixa "Internet no Brasil"). */
 export async function collectRoutes(nowMs = Date.now()): Promise<ServiceRoute[]> {
   const services = await prisma.statusService.findMany({
@@ -125,7 +139,9 @@ export async function collectRoutes(nowMs = Date.now()): Promise<ServiceRoute[]>
       const { prefix, asn } = await prefixOf(s.host, nowMs);
       if (!prefix) return { ...base, prefix: null, asn, visibility: null, error: `${s.host} sem prefixo anunciado` };
       try {
-        return { ...base, prefix, asn, visibility: parseRoutingStatus(await getJson(ripestatUrl("routing-status", prefix)), prefix), error: null };
+        const body = await getJson<Parameters<typeof parseRoutingStatus>[0]>(ripestatUrl("routing-status", prefix));
+        const visibility = parseRoutingStatus(body, prefix);
+        return { ...base, prefix, asn, visibility, covering: await coveringOf(body, prefix, asn, visibility), error: null };
       } catch (err) {
         return { ...base, prefix, asn, visibility: null, error: errorText(err) };
       }

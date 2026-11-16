@@ -42,10 +42,26 @@ export interface Visibility {
 }
 
 /** Coletores RIS que enxergam o prefixo (IPv4 ou IPv6, o que o prefixo for). */
-export function parseRoutingStatus(body: Envelope<{ visibility?: { v4?: { ris_peers_seeing?: number; total_ris_peers?: number }; v6?: { ris_peers_seeing?: number; total_ris_peers?: number } } }>, prefix: string): Visibility {
+type RoutingStatusBody = Envelope<{
+  visibility?: { v4?: { ris_peers_seeing?: number; total_ris_peers?: number }; v6?: { ris_peers_seeing?: number; total_ris_peers?: number } };
+  less_specifics?: { prefix?: string; origin?: string | number }[];
+}>;
+
+export function parseRoutingStatus(body: RoutingStatusBody, prefix: string): Visibility {
   const data = dataOf(body, "routing-status");
   const family = prefix.includes(":") ? data.visibility?.v6 : data.visibility?.v4;
   return { seeing: Number(family?.ris_peers_seeing ?? 0), total: Number(family?.total_ris_peers ?? 0) };
+}
+
+/**
+ * O bloco maior que cobre o prefixo, anunciado pelo mesmo ASN (o primeiro da lista do RIPEstat); null
+ * sem nenhum. CDNs como a Meta anunciam o /24 de cada PoP só na região (no IX.br, para os vizinhos) e o
+ * bloco grande para o mundo todo: o /24 visto por poucos coletores é o desenho normal, não queda.
+ */
+export function parseCoveringPrefix(body: RoutingStatusBody, asn: number | null): string | null {
+  const data = dataOf(body, "routing-status");
+  const covering = (data.less_specifics ?? []).find((l) => !!l.prefix && (asn === null || Number(l.origin) === asn));
+  return covering?.prefix ?? null;
 }
 
 export function parseWhatsMyIp(body: Envelope<{ ip?: string }>): string {
@@ -77,17 +93,38 @@ export interface ServiceRoute {
   prefix: string | null;
   asn: number | null;
   visibility: Visibility | null;
+  /**
+   * O bloco maior do mesmo ASN que cobre o prefixo, consultado só quando o prefixo é pouco visto. Com o
+   * bloco visível no mundo todo o prefixo é uma rota regional e o serviço segue alcançável.
+   */
+  covering?: { prefix: string; visibility: Visibility | null } | null;
   /** O que deu errado na descoberta (nome que não resolve, IP sem prefixo, RIPEstat fora). */
   error: string | null;
 }
 
+/** O estado da rota: o do prefixo, ou OK quando ele é regional e o bloco maior que o cobre é visto no mundo todo. */
+export function routeStatus(route: Pick<ServiceRoute, "prefix" | "visibility" | "covering">): ServiceStatus {
+  if (!route.prefix) return "UNKNOWN";
+  const own = visibilityStatus(route.visibility);
+  if (own === "OK" || own === "UNKNOWN") return own;
+  return route.covering && visibilityStatus(route.covering.visibility) === "OK" ? "OK" : own;
+}
+
 /** Texto de uma rota: "140.82.112.0/20 · AS36459 · vista por 243 de 244 coletores". */
-export function routeText(route: Pick<ServiceRoute, "prefix" | "asn" | "visibility" | "error">): string {
+export function routeText(route: Pick<ServiceRoute, "prefix" | "asn" | "visibility" | "covering" | "error">): string {
   if (!route.prefix) return route.error ?? "sem prefixo anunciado";
   const parts = [route.prefix];
   if (route.asn) parts.push(`AS${route.asn}`);
   if (route.visibility && route.visibility.total > 0) parts.push(`vista por ${route.visibility.seeing} de ${route.visibility.total} coletores`);
   else parts.push(route.error ?? "sem dados de visibilidade");
+  const cover = route.covering;
+  if (cover && visibilityStatus(route.visibility) !== "OK") {
+    parts.push(
+      visibilityStatus(cover.visibility) === "OK" && cover.visibility
+        ? `rota regional, coberta por ${cover.prefix} (vista por ${cover.visibility.seeing} de ${cover.visibility.total})`
+        : `bloco maior ${cover.prefix} também pouco visto`,
+    );
+  }
   return parts.join(" · ");
 }
 
@@ -101,7 +138,7 @@ export function bgpSnapshot(routes: readonly ServiceRoute[]): OfficialSnapshot {
     externalId: r.slug,
     name: `${r.name} · ${routeText(r)}`,
     groupName: r.group,
-    status: r.prefix ? visibilityStatus(r.visibility) : "UNKNOWN",
+    status: routeStatus(r),
     position,
   }));
   const known = components.filter((c) => c.status !== "UNKNOWN");

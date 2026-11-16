@@ -36,6 +36,15 @@ describe("diagnose", () => {
     ]);
   });
 
+  it("só o DNS do card \"Rede local\" lento não culpa a rede local (o resolvedor fica na Internet)", () => {
+    const d = diagnose({
+      services: [svc("rede-local", "DEGRADED", { category: "INTERNET", measuredReason: "DNS: p95 8,0× a mediana das 100 medições anteriores (153 ms)" }), svc("a", "DEGRADED")],
+      connectivity: OK_CONN,
+    });
+    expect(d.scope).not.toBe("LOCAL");
+    expect(d.groups.map((g) => [g.scope, g.services.map((s) => s.slug)])).toEqual([["SERVICE", ["a"]]]);
+  });
+
   it("muitos serviços lentos por caminhos diferentes, com a rede local normal, apontam o acesso", () => {
     const services = [healthyLocal, ...["a", "b", "c", "d", "e", "f"].map((s) => svc(s, "DEGRADED")), svc("g"), svc("h")];
     const d = diagnose({ services, connectivity: OK_CONN });
