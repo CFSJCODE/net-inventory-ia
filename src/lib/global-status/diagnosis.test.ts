@@ -43,6 +43,13 @@ describe("diagnose", () => {
     });
     expect(d.scope).not.toBe("LOCAL");
     expect(d.groups.map((g) => [g.scope, g.services.map((s) => s.slug)])).toEqual([["SERVICE", ["a"]]]);
+
+    // DNS fora com o card DOWN: o motivo é o do DNS mesmo com o gateway degradado, então segue culpando a rede local.
+    const down = diagnose({
+      services: [svc("rede-local", "DOWN", { category: "INTERNET", measuredReason: "DNS: 3 falhas seguidas" }), svc("a", "DEGRADED")],
+      connectivity: OK_CONN,
+    });
+    expect(down.scope).toBe("LOCAL");
   });
 
   it("muitos serviços lentos por caminhos diferentes, com a rede local normal, apontam o acesso", () => {
