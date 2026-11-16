@@ -9,7 +9,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 
 /**
  * "Rotas e trânsito" (fases 8 e 9): onde cada serviço é servido, por onde o tráfego sai do país, os pontos
- * de interconexão, o IX.br e os upstreams da operadora no BGP. Lê as rotas que o servidor já grava; não
+ * de interconexão, o IX.br e os vizinhos BGP da operadora. Lê as rotas que o servidor já grava; não
  * rastreia nada sozinha.
  */
 export function TransitSection({ onOpen }: { onOpen: (slug: string) => void }) {
@@ -100,7 +100,7 @@ export function TransitSection({ onOpen }: { onOpen: (slug: string) => void }) {
           </span>
           {data.upstreams.length > 0 && (
             <span>
-              Upstreams de {ispName} no BGP: {data.upstreams.map((u) => `${u.name ?? "AS"} (AS${u.asn})`).join(", ")}.
+              Vizinhos BGP de {ispName} (trânsito e peering): {data.upstreams.map((u) => `${u.name ?? "AS"} (AS${u.asn})`).join(", ")}.
               {exitOperators.size === 1 && summary.international > 0 && data.upstreams.length > 1 && ` As rotas medidas saem do país só por ${[...exitOperators][0]}.`}
             </span>
           )}

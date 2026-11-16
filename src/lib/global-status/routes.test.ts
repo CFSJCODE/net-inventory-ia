@@ -26,8 +26,9 @@ import { dropTempDb, migrateTempDb } from "./__fixtures__/temp-db";
 import { cityFromHostname, distanceKm } from "./route-cities";
 import { cymruOriginName, isPrivateIp, parseCymruAsName, parseCymruOrigin } from "./route-enrich";
 import { asPathOf, biggestStep, inferRoute, ownerMatches, rankCables, type RouteInput } from "./route-infer";
-import { ROUTE_INTERVAL_MS, cleanupRoutes, destinationRtt, nextDue, routesEnabled, runRouteTick, traceAndStore } from "./route-runner";
+import { analyzeAgentRoutes, ROUTE_INTERVAL_MS, cleanupRoutes, destinationRtt, nextDue, routesEnabled, runRouteTick, traceAndStore } from "./route-runner";
 import { buildCables, parseLengthKm } from "./subsea-cables";
+import { monthlyRoutes, rollupRouteDays } from "./route-daily";
 
 const db = fixture.prisma;
 
@@ -310,5 +311,55 @@ describe("agendador da rota", () => {
     expect(routesEnabled({})).toBe(true);
     expect(routesEnabled({ GLOBAL_STATUS_ROUTES: "off" })).toBe(false);
     expect(routesEnabled({ GLOBAL_STATUS_PROBES: "off" })).toBe(false);
+  });
+  it("completa a rota que o agente mandou (só IP e tempo) com ASN, cidade, veredito e cabo", async () => {
+    const s = await service();
+    const at = new Date("2026-11-15T22:10:00Z");
+    const raw = await db.routeTrace.create({
+      data: {
+        serviceId: s.id,
+        vantage: "agent:pc-1",
+        at,
+        host: "google.com",
+        destIp: "142.250.1.1",
+        tool: "icmp",
+        reached: true,
+        verdict: "PENDING",
+        summary: "",
+        hops: { create: MIAMI_ROUTE.map(({ ttl, ip, rttMs }) => ({ ttl, ip, rttMs })) },
+      },
+    });
+    expect(await analyzeAgentRoutes(at.getTime())).toBe(1);
+    const done = await db.routeTrace.findUniqueOrThrow({ where: { id: raw.id }, include: { hops: { orderBy: { ttl: "asc" } } } });
+    expect(done).toMatchObject({ verdict: "INTERNATIONAL", destRttMs: 107, cableName: "AMX-1", asPath: "28573 4230 15169", mode: "icmp" });
+    expect(done.hops.find((h) => h.ttl === 6)).toMatchObject({ city: "Miami", asn: 4230 });
+    // Nada mais pendente: a rodada seguinte não faz nada.
+    expect(await analyzeAgentRoutes(at.getTime())).toBe(0);
+  });
+
+  it("uma rota do agente que falha na análise não trava a fila", async () => {
+    const s = await service();
+    const { enrichHops } = await import("./route-enrich");
+    vi.mocked(enrichHops).mockRejectedValueOnce(new Error("rDNS fora do ar"));
+    const raw = await db.routeTrace.create({ data: { serviceId: s.id, vantage: "agent:pc-1", host: "google.com", reached: false, verdict: "PENDING", summary: "", hops: { create: [{ ttl: 1, ip: "192.168.0.1", rttMs: 1 }] } } });
+    await analyzeAgentRoutes();
+    expect(await db.routeTrace.findUniqueOrThrow({ where: { id: raw.id } })).toMatchObject({ verdict: "UNDETERMINED", summary: "Não foi possível analisar a rota do agente: rDNS fora do ar." });
+  });
+
+  it("resume o dia: rotas internacionais, saída do país e trocas de caminho", async () => {
+    const s = await service();
+    const svc = { id: s.id, slug: s.slug, name: s.name, host: "google.com", latencyMs: 110 };
+    const t0 = Date.parse("2026-11-15T15:00:00Z");
+    await traceAndStore(svc, t0);
+    await traceAndStore(svc, t0 + ROUTE_INTERVAL_MS);
+    fixture.hops = MIAMI_ROUTE.slice(0, 3);
+    fixture.trace = { ...fixture.trace!, hops: fixture.trace!.hops.slice(0, 3) };
+    await traceAndStore(svc, t0 + 2 * ROUTE_INTERVAL_MS);
+    await rollupRouteDays(t0 + 3 * ROUTE_INTERVAL_MS, true);
+    const day = await db.routeDaily.findFirstOrThrow({ where: { serviceId: s.id } });
+    expect(day).toMatchObject({ day: "2026-11-15", vantage: "server", traces: 3, international: 2, domestic: 1, pathChanges: 1 });
+    expect(day.topExit).toContain("Miami");
+    const month = await monthlyRoutes(s.id, t0 + 3 * ROUTE_INTERVAL_MS);
+    expect(month).toMatchObject({ days: 1, abroadDays: 1, pathChanges: 1 });
   });
 });

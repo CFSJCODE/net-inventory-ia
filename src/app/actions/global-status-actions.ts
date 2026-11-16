@@ -12,6 +12,8 @@ import { traceHost } from "@/lib/global-status/traceroute";
 import { parseEdge } from "@/lib/global-status/edge-pop";
 import { loadRouteOverview, type RouteOverview } from "@/lib/global-status/route-overview";
 import { pathHistory } from "@/lib/global-status/route-history";
+import { monthlyRoutes } from "@/lib/global-status/route-daily";
+import { atlasCompare, type AtlasComparison } from "@/lib/global-status/atlas";
 import { interconnectionText, interconnections } from "@/lib/global-status/route-peering";
 import { ROUTE_ORIGIN, readRouteToolState, routesEnabled, traceServiceNow, type RouteToolState } from "@/lib/global-status/route-runner";
 import { CABLE_MAP_PAGE } from "@/lib/global-status/subsea-cables";
@@ -404,6 +406,10 @@ export interface StatusRouteDetail {
   edge: { provider: string; pop: string | null; city: string | null } | null;
   /** Trechos de 7 dias com a mesma rota, do mais novo ao mais antigo (fase 9). */
   history: { from: string; to: string; asPath: string | null; place: string; traces: number }[];
+  /** Resumo dos últimos 30 dias (fase 10, tabela RouteDaily); null até o primeiro dia fechado. */
+  monthly: { days: number; abroadDays: number; pathChanges: number; exits: string[]; avgDestRttMs: number | null } | null;
+  /** A rota mais nova vista de cada agente (fase 10): o mesmo serviço a partir de outra rede. */
+  agents: { vantage: string; label: string; at: string; verdict: string; summary: string; reached: boolean; destRttMs: number | null; hops: number }[];
   hops: StatusRouteHopRow[];
   /** Página do mapa de cabos (atribuição dos dados dos cabos). */
   cableSource: string;
@@ -419,6 +425,33 @@ function parseIpList(json: string | null): string[] {
   }
 }
 
+/** A rota mais nova de cada agente até o serviço, já analisada pelo servidor (as pendentes ficam de fora). */
+async function loadAgentRoutes(serviceId: string): Promise<StatusRouteDetail["agents"]> {
+  const latest = await prisma.routeTrace.groupBy({
+    by: ["vantage"],
+    where: { serviceId, vantage: { startsWith: AGENT_VANTAGE_PREFIX }, verdict: { not: "PENDING" }, at: { gte: new Date(Date.now() - 2 * DAY_MS) } },
+    _max: { at: true },
+  });
+  if (!latest.length) return [];
+  const traces = await prisma.routeTrace.findMany({
+    where: { serviceId, OR: latest.map((l) => ({ vantage: l.vantage, at: l._max.at ?? new Date(0) })) },
+    include: { _count: { select: { hops: true } } },
+  });
+  const labels = await agentLabels(traces.map((t) => agentIdOf(t.vantage)).filter((id): id is string => !!id));
+  return traces
+    .map((t) => ({
+      vantage: t.vantage,
+      label: labels.get(agentIdOf(t.vantage) ?? "") ?? `Agente ${agentIdOf(t.vantage)?.slice(0, 8) ?? ""}`.trim(),
+      at: t.at.toISOString(),
+      verdict: t.verdict,
+      summary: t.summary,
+      reached: t.reached,
+      destRttMs: t.destRttMs,
+      hops: t._count.hops,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
 async function loadRoute(serviceId: string): Promise<StatusRouteDetail | null> {
   const t = await prisma.routeTrace.findFirst({ where: { serviceId, vantage: "server" }, orderBy: { at: "desc" }, include: { hops: { orderBy: { ttl: "asc" } } } });
   if (!t) return null;
@@ -432,6 +465,7 @@ async function loadRoute(serviceId: string): Promise<StatusRouteDetail | null> {
   const history = pathHistory(week.map((w) => ({ ...w, at: w.at.getTime() })))
     .slice(0, 8)
     .map((h) => ({ ...h, from: new Date(h.from).toISOString(), to: new Date(h.to).toISOString() }));
+  const [monthly, agents] = await Promise.all([monthlyRoutes(serviceId).catch(() => null), loadAgentRoutes(serviceId)]);
   return {
     at: t.at.toISOString(),
     host: t.host,
@@ -451,6 +485,8 @@ async function loadRoute(serviceId: string): Promise<StatusRouteDetail | null> {
     interconnections: interconnections(t.hops, { asn: destAsn, asName: null }).map(interconnectionText),
     edge: edge && { provider: edge.provider, pop: edge.pop, city: edge.city },
     history,
+    monthly,
+    agents,
     hops: t.hops.map((h) => ({ ttl: h.ttl, ip: h.ip, rttMs: h.rttMs, asn: h.asn, asName: h.asName, rdns: h.rdns, city: h.city, country: h.country, altIps: parseIpList(h.altIps), role: h.role })),
     cableSource: CABLE_MAP_PAGE,
   };
@@ -642,6 +678,18 @@ export async function getRouteOverview(): Promise<RouteOverview | null> {
   await requireSession();
   if (!probesEnabled(process.env.GLOBAL_STATUS_PROBES) || !routesEnabled()) return null;
   return loadRouteOverview();
+}
+
+/** Segunda opinião do RIPE Atlas (fase 10): sondas públicas no Brasil até o mesmo destino. Sob demanda, em cache por 6 h. */
+export async function compareRouteWithAtlas(slug: string): Promise<AtlasComparison | null> {
+  await requireSession();
+  if (typeof slug !== "string" || !slug || !routesEnabled()) return null;
+  const service = await prisma.statusService.findUnique({ where: { slug }, select: { id: true } });
+  if (!service) return null;
+  const t = await prisma.routeTrace.findFirst({ where: { serviceId: service.id, vantage: "server", error: null }, orderBy: { at: "desc" }, select: { host: true, destRttMs: true, verdict: true, asPath: true } });
+  if (!t) return null;
+  const ispAsn = Number(t.asPath?.split(" ")[0]) || null;
+  return atlasCompare(t.host, { rttMs: t.destRttMs, verdict: t.verdict, ispAsn });
 }
 
 /** Rastreia a rota até o serviço agora ("Rastrear rota"), grava e devolve a rota interpretada. */

@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Route } from "lucide-react";
-import { traceServiceRoute, type StatusRouteDetail, type StatusServiceDetail } from "@/app/actions/global-status-actions";
+import { compareRouteWithAtlas, traceServiceRoute, type StatusRouteDetail, type StatusServiceDetail } from "@/app/actions/global-status-actions";
 import { useCan } from "@/components/auth/user-provider";
 import { Button } from "@/components/ui/button";
 import type { PhaseSeries } from "@/lib/global-status/series";
@@ -243,6 +243,77 @@ function PathHistory({ route }: { route: StatusRouteDetail }) {
   );
 }
 
+/** Os últimos 30 dias da rota, do resumo diário (fase 10). */
+function MonthlySummary({ route }: { route: StatusRouteDetail }) {
+  const m = route.monthly;
+  if (!m) return null;
+  return (
+    <div className="flex flex-col gap-1 border-t pt-2">
+      <span className="font-medium text-foreground">Últimos {m.days} dias</span>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+        <InlineReading label="Dias servido de fora" value={String(m.abroadDays)} />
+        <InlineReading label="Trocas de caminho" value={String(m.pathChanges)} />
+        <InlineReading label="Média até o destino" value={formatLatency(m.avgDestRttMs)} />
+        {m.exits.length > 0 && <InlineReading label="Saídas do país" value={m.exits.join(", ")} />}
+      </div>
+    </div>
+  );
+}
+
+/** A rota vista de cada PC com o agente (fase 10): quando difere da do servidor, a diferença é da rede do PC. */
+function AgentRoutes({ route }: { route: StatusRouteDetail }) {
+  if (!route.agents.length) return null;
+  return (
+    <div className="flex flex-col gap-1 border-t pt-2">
+      <span className="font-medium text-foreground">Rota vista dos agentes</span>
+      <ol className="flex flex-col gap-0.5 text-muted-foreground">
+        {route.agents.map((a) => {
+          const verdict = VERDICT[a.verdict] ?? VERDICT.UNDETERMINED;
+          return (
+            <li key={a.vantage} className="flex items-center justify-between gap-3">
+              <span className="min-w-0 truncate" title={a.summary}>
+                <span className="text-foreground">{a.label}</span> · <span className={verdict.className}>{verdict.label}</span>
+              </span>
+              <span className="shrink-0 tabular-nums" title={formatDateTime(a.at)}>
+                {a.hops} salto{a.hops === 1 ? "" : "s"}
+                {a.destRttMs !== null && ` · ${formatLatency(a.destRttMs)}`} · {formatRelativeTime(a.at)}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+/** Segunda opinião (fase 10): as rotas que sondas públicas do RIPE Atlas no Brasil fizeram até o mesmo destino. */
+function AtlasCompare({ slug }: { slug: string }) {
+  const compare = useMutation({
+    mutationFn: async () => {
+      const result = await compareRouteWithAtlas(slug);
+      if (!result) throw new Error("Sem rota gravada do servidor para comparar.");
+      return result;
+    },
+  });
+  return (
+    <div className="flex flex-col gap-1 border-t pt-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium text-foreground">Comparar com o RIPE Atlas</span>
+        <Button variant="ghost" size="xs" onClick={() => compare.mutate()} disabled={compare.isPending}>
+          {compare.isPending && <Loader2 className="size-3 animate-spin" />}
+          {compare.isPending ? "Consultando…" : compare.data ? "Consultar de novo" : "Comparar"}
+        </Button>
+      </div>
+      {compare.isError && <p className="text-destructive">Não foi possível consultar o RIPE Atlas: {compare.error.message}</p>}
+      {compare.data ? (
+        <p className="text-muted-foreground">{compare.data.summary}</p>
+      ) : (
+        !compare.isPending && <p className="text-muted-foreground">Mostra se outras redes do Brasil chegam a este destino pelo mesmo caminho que a sua operadora.</p>
+      )}
+    </div>
+  );
+}
+
 /**
  * Rota até o destino (fase 5): a rota gravada mais nova (o servidor rastreia cada serviço a cada 30 min),
  * com onde o serviço é servido, o cabo submarino provável e os saltos agrupados por ASN.
@@ -337,6 +408,9 @@ export function RouteSection({ slug, route }: { slug: string; route: StatusRoute
           )}
           {silenceText(current) && <p className="text-muted-foreground">{silenceText(current)}</p>}
           <PathHistory route={current} />
+          <MonthlySummary route={current} />
+          <AgentRoutes route={current} />
+          <AtlasCompare slug={slug} />
           <div className="border-t pt-2 text-muted-foreground">
             {current.host}
             {current.destIp && current.destIp !== current.host ? ` (${current.destIp})` : ""} · {current.hops.length} salto{current.hops.length === 1 ? "" : "s"} ·{" "}

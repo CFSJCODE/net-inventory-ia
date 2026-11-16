@@ -42,3 +42,12 @@ public sealed record AgentProbeResult(
     double? LossPct = null, double? JitterMs = null, string? Error = null);
 public sealed record AgentProbeBatch(Guid AgentId, AgentProbeResult[] Results);
 public sealed record AgentProbeIngestResponse(int Accepted, int Ignored);
+
+/// <summary>Serviço cuja rota o agente rastreia (fase 10): o mesmo destino que o servidor rastreia.</summary>
+public sealed record AgentRouteTarget(string ServiceId, string Host);
+/// <summary>Um salto do rastreio do agente; Ip null = sem resposta naquele TTL.</summary>
+public sealed record AgentRouteHop(int Ttl, string? Ip, double? RttMs);
+/// <summary>Uma rota rastreada pelo agente. ASN, nome reverso, cidade e o veredito são calculados pelo motor.</summary>
+public sealed record AgentRouteResult(string ServiceId, string Host, DateTimeOffset At, string? DestIp, bool Reached, string Tool, AgentRouteHop[] Hops, string? Error = null);
+public sealed record AgentRouteBatch(Guid AgentId, AgentRouteResult[] Routes);
+public sealed record AgentRouteIngestResponse(int Accepted, int Ignored);

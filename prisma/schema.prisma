@@ -268,6 +268,7 @@ model StatusService {
   incidents      StatusIncident[]
   targets        ProbeTarget[]
   routes         RouteTrace[]
+  routeDays      RouteDaily[]
 }
 
 /// Componente declarado pelo provedor (ex.: "Git Operations", "São Paulo, Brazil - (GRU)").
@@ -452,4 +453,27 @@ model RouteHop {
   trace    RouteTrace @relation(fields: [traceId], references: [id], onDelete: Cascade)
 
   @@index([traceId])
+}
+
+/// Resumo diário das rotas de um serviço (fase 10): as rotas cruas ficam 7 dias; o resumo fica 400 dias.
+model RouteDaily {
+  serviceId     String
+  vantage       String   @default("server")
+  /// Dia no horário de Brasília (AAAA-MM-DD).
+  day           String
+  traces        Int
+  /// Rotas servidas de fora do país e no país (Brasil, borda de CDN ou cache da operadora).
+  international Int
+  domestic      Int
+  /// Trocas de caminho (ASNs ou lugar) dentro do dia.
+  pathChanges   Int
+  topVerdict    String?
+  topAsPath     String?
+  /// Saída internacional mais vista ("Embratel → Miami").
+  topExit       String?
+  avgDestRttMs  Float?
+  service       StatusService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([serviceId, vantage, day])
+  @@index([day])
 }
