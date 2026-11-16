@@ -145,12 +145,18 @@ function readingGauges(r: HostReading, t: AlertThresholds): EmailReading[] {
     const max = Math.max(t.tempC * 1.25, r.tempC);
     g.push({ label: "Temperatura", value: celsius(r.tempC), limit: `≥ ${celsius(t.tempC)}`, bar: { value: r.tempC / max, limit: t.tempC / max }, bad: r.tempC >= t.tempC });
   }
-  if (r.ifErrorsPerMin != null) {
-    const limit = t.ifErrorsPerMin ?? 10;
-    const max = Math.max(limit * 2, r.ifErrorsPerMin);
-    g.push({ label: `Erros de interface${r.ifErrorsPort ? ` (${r.ifErrorsPort})` : ""}`, value: `${r.ifErrorsPerMin}/min`, limit: `≥ ${limit}/min`, bar: { value: r.ifErrorsPerMin / max, limit: limit / max }, bad: r.ifErrorsPerMin >= limit });
-  }
+  const errors = interfaceErrorsGauge(r, t);
+  if (errors) g.push(errors);
   return g;
+}
+
+/** Medida dos erros de interface (Switch Health), quando o coletor leu a switch. */
+function interfaceErrorsGauge(r: HostReading, t: AlertThresholds): EmailReading | null {
+  if (r.ifErrorsPerMin == null) return null;
+  const limit = t.ifErrorsPerMin ?? 10;
+  const max = Math.max(limit * 2, r.ifErrorsPerMin);
+  const label = r.ifErrorsPort ? `Erros de interface (${r.ifErrorsPort})` : "Erros de interface";
+  return { label, value: `${r.ifErrorsPerMin}/min`, limit: `≥ ${limit}/min`, bar: { value: r.ifErrorsPerMin / max, limit: limit / max }, bad: r.ifErrorsPerMin >= limit };
 }
 
 function hasSnmpHardwareMetrics(r: HostReading): boolean {

@@ -261,32 +261,82 @@ function PortsTable({ view }: { view: SwitchHealthView }) {
 
 // ---------------------------------------------------------------- seção
 
+const HEALTH_RANK: Record<PortHealth, number> = { unknown: 0, ok: 1, warning: 2, critical: 3 };
+
+/** Pior estado entre as portas da última rodada. */
+function worstHealth(view: SwitchHealthView): PortHealth {
+  return (view.latest?.ports ?? []).reduce<PortHealth>((acc, p) => {
+    const h = portHealth(p, view.settings);
+    return HEALTH_RANK[h] > HEALTH_RANK[acc] ? h : acc;
+  }, "unknown");
+}
+
+function LatestMetrics({ latest, worst }: { latest: SwitchHealthView["latest"]; worst: PortHealth }) {
+  const ms = (v: number | null | undefined) => (v != null ? `${fmt(v)} ms` : "—");
+  return (
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      <Metric label="Erros/min (todas as portas)" value={fmt(latest?.errorsPerMin ?? null)} hint={latest?.worstPort ? `pior: ${latest.worstPort}` : undefined} tone={worst} />
+      <Metric label="CRC/min" value={fmt(latest?.crcPerMin ?? null)} />
+      <Metric label="Descartes/min" value={fmt(latest?.discardsPerMin ?? null)} />
+      <Metric label="Latência até a switch" value={ms(latest?.latencyMs)} />
+      <Metric label="Latência até o gateway" value={ms(latest?.gatewayLatencyMs)} />
+      <Metric label="Tráfego (entrada/saída)" value={fmtBps(latest?.inBps ?? null)} hint={`saída ${fmtBps(latest?.outBps ?? null)}`} />
+    </div>
+  );
+}
+
+function SwitchHealthBody({ view, worst, canManage }: { view: SwitchHealthView; worst: PortHealth; canManage: boolean }) {
+  const latest = view.latest;
+  const to = Date.now();
+  const from = to - view.rangeHours * 3_600_000;
+  return (
+    <CardContent className="flex flex-col gap-5">
+      {!view.settings.enabled && <p className="text-sm text-muted-foreground">O coletor está desligado. Ligue abaixo para começar a gravar os contadores.</p>}
+      {latest?.error && <p className="text-sm text-destructive">Última leitura falhou: {latest.error}</p>}
+      <LatestMetrics latest={latest} worst={worst} />
+
+      <HealthChart points={view.series} from={from} to={to} threshold={view.settings.errorsPerMin} />
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <CorrelationBlock title="Erros × latência até a switch (LAN)" c={view.correlation.lan} />
+        <CorrelationBlock title="Erros × latência até o gateway" c={view.correlation.gateway} />
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <h3 className="text-sm font-medium">Portas</h3>
+        <PortsTable view={view} />
+        {view.rangeHours === 168 && <p className="text-xs text-muted-foreground">Os totais por porta cobrem as últimas 48 h (é o tempo que os dados por porta ficam guardados).</p>}
+      </div>
+
+      {canManage && (
+        <div className="flex flex-col gap-2 border-t pt-4">
+          <h3 className="text-sm font-medium">Configuração</h3>
+          <p className="text-xs text-muted-foreground">O limite de erros vale para todas as switches e dispara o alerta por e-mail quando os alertas estão ligados em Alertas → Configurar e-mails (dois minutos seguidos acima do limite).</p>
+          <SettingsForm settings={view.settings} />
+        </div>
+      )}
+    </CardContent>
+  );
+}
+
+/** Há o que mostrar: rodadas gravadas, portas lidas agora ou uma falha de leitura recente. */
+const appliesToSwitch = (view: SwitchHealthView) => view.samples > 0 || (view.latest?.ports.length ?? 0) > 0 || !!view.latest?.error;
+
 /** Seção "Switch Health": erros de interface por porta ao longo do tempo, ao lado da latência. */
 export function SwitchHealthCard({ equipmentId }: { equipmentId: string }) {
   const canManage = useCan("settings.manage");
   const [range, setRange] = useState<`${SwitchHealthRange}`>("1");
-  const query = useQuery({
+  const { data: view } = useQuery({
     queryKey: ["switch-health", equipmentId, range],
     queryFn: () => unwrap(getSwitchHealth(equipmentId, Number(range))),
     refetchInterval: 30_000,
     refetchIntervalInBackground: true,
+    placeholderData: (previous) => previous,
   });
-  const view = query.data;
-  const latest = view?.latest ?? null;
-  const worst: PortHealth = latest && view
-    ? latest.ports.reduce<PortHealth>((acc, p) => {
-        const h = portHealth(p, view.settings);
-        const rank = { unknown: 0, ok: 1, warning: 2, critical: 3 };
-        return rank[h] > rank[acc] ? h : acc;
-      }, "unknown")
-    : "unknown";
-  const to = Date.now();
-  const from = to - Number(range) * 3_600_000;
-  // Só se mostra para switches: impressoras e roteadores sem porta física não entram no coletor.
-  const isSwitch = !!view && (view.samples > 0 || (latest?.ports.length ?? 0) > 0 || !!latest?.error);
 
   // Impressora, roteador sem porta física ou equipamento ainda não lido: a seção não se aplica.
-  if (!view || !isSwitch) return null;
+  if (!view || !appliesToSwitch(view)) return null;
+  const worst = worstHealth(view);
 
   return (
     <Card>
@@ -295,57 +345,17 @@ export function SwitchHealthCard({ equipmentId }: { equipmentId: string }) {
           <CardTitle className="flex items-center gap-2 text-base">
             <Activity className="h-4 w-4 text-primary" />
             Switch Health
-            {latest && !latest.error && <Badge variant="outline" className={cn("font-normal", HEALTH_STYLE[worst])}>{HEALTH_LABEL[worst]}</Badge>}
+            {view.latest && !view.latest.error && <Badge variant="outline" className={cn("font-normal", HEALTH_STYLE[worst])}>{HEALTH_LABEL[worst]}</Badge>}
           </CardTitle>
           <CardDescription>
-            Erros de interface (IF-MIB), CRC e descartes de cada porta, lidos a cada {view?.settings.intervalSec ?? 60} s, ao lado da latência até a switch e até o gateway no mesmo instante.
+            Erros de interface (IF-MIB), CRC e descartes de cada porta, lidos a cada {view.settings.intervalSec} s, ao lado da latência até a switch e até o gateway no mesmo instante.
           </CardDescription>
         </div>
         <Field label="Janela" htmlFor={`sh-range-${equipmentId}`}>
           <SimpleSelect id={`sh-range-${equipmentId}`} value={range} onChange={setRange} options={RANGES} className="sm:w-44" />
         </Field>
       </CardHeader>
-      <CardContent className="flex flex-col gap-5">
-        {query.isPending ? (
-          <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando…</p>
-        ) : query.isError ? (
-          <p className="text-sm text-destructive">{query.error.message}</p>
-        ) : view ? (
-          <>
-            {!view.settings.enabled && <p className="text-sm text-muted-foreground">O coletor está desligado. Ligue abaixo para começar a gravar os contadores.</p>}
-            {latest?.error && <p className="text-sm text-destructive">Última leitura falhou: {latest.error}</p>}
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-              <Metric label="Erros/min (todas as portas)" value={fmt(latest?.errorsPerMin ?? null)} hint={latest?.worstPort ? `pior: ${latest.worstPort}` : undefined} tone={worst} />
-              <Metric label="CRC/min" value={fmt(latest?.crcPerMin ?? null)} />
-              <Metric label="Descartes/min" value={fmt(latest?.discardsPerMin ?? null)} />
-              <Metric label="Latência até a switch" value={latest?.latencyMs != null ? `${fmt(latest.latencyMs)} ms` : "—"} />
-              <Metric label="Latência até o gateway" value={latest?.gatewayLatencyMs != null ? `${fmt(latest.gatewayLatencyMs)} ms` : "—"} />
-              <Metric label="Tráfego (entrada/saída)" value={fmtBps(latest?.inBps ?? null)} hint={`saída ${fmtBps(latest?.outBps ?? null)}`} />
-            </div>
-
-            <HealthChart points={view.series} from={from} to={to} threshold={view.settings.errorsPerMin} />
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <CorrelationBlock title="Erros × latência até a switch (LAN)" c={view.correlation.lan} />
-              <CorrelationBlock title="Erros × latência até o gateway" c={view.correlation.gateway} />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <h3 className="text-sm font-medium">Portas</h3>
-              <PortsTable view={view} />
-              {view.rangeHours === 168 && <p className="text-xs text-muted-foreground">Os totais por porta cobrem as últimas 48 h (é o tempo que os dados por porta ficam guardados).</p>}
-            </div>
-
-            {canManage && (
-              <div className="flex flex-col gap-2 border-t pt-4">
-                <h3 className="text-sm font-medium">Configuração</h3>
-                <p className="text-xs text-muted-foreground">O limite de erros vale para todas as switches e dispara o alerta por e-mail quando os alertas estão ligados em Alertas → Configurar e-mails (dois minutos seguidos acima do limite).</p>
-                <SettingsForm settings={view.settings} />
-              </div>
-            )}
-          </>
-        ) : null}
-      </CardContent>
+      <SwitchHealthBody view={view} worst={worst} canManage={canManage} />
     </Card>
   );
 }

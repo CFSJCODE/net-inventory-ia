@@ -144,9 +144,6 @@ async function measure(target: Target, prev: HostReading | undefined): Promise<H
   // Hora da medição deste equipamento (com muitos equipamentos, os últimos medem bem depois do início da rodada).
   const at = now();
   const online = ping.received > 0 || metrics !== null;
-  // Erros de interface vêm do coletor Switch Health (lê os contadores a cada minuto); aqui só se usa a última rodada.
-  // Independe da community: um equipamento SNMPv3 também é lido pelo coletor.
-  const health = latestHealthByIp(target.host);
   const latencyMs = ping.received > 0 ? ping.avgMs : null;
   return {
     at,
@@ -165,10 +162,33 @@ async function measure(target: Target, prev: HostReading | undefined): Promise<H
     // Hora e latência do último ping respondido andam juntas (o SNMP pode responder sem o ping).
     lastPingAt: latencyMs !== null ? at : (prev?.lastPingAt ?? null),
     lastLatencyMs: latencyMs ?? prev?.lastLatencyMs ?? null,
-    ifErrorsPerMin: health ? (health.worstPortErrorsPerMin ?? (health.errorsPerMin !== null ? 0 : null)) : null,
-    ifErrorsPort: health?.worstPort ?? null,
-    ifSampleAt: health?.at ?? null,
+    ...interfaceErrors(target.host),
   };
+}
+
+/**
+ * Erros de interface da última rodada do coletor Switch Health (lê os contadores a cada minuto). Independe
+ * da community: um equipamento SNMPv3 também é lido pelo coletor.
+ */
+function interfaceErrors(host: string): Pick<HostReading, "ifErrorsPerMin" | "ifErrorsPort" | "ifSampleAt"> {
+  const health = latestHealthByIp(host);
+  if (!health) return { ifErrorsPerMin: null, ifErrorsPort: null, ifSampleAt: null };
+  return {
+    ifErrorsPerMin: health.worstPortErrorsPerMin ?? (health.errorsPerMin !== null ? 0 : null),
+    ifErrorsPort: health.worstPort,
+    ifSampleAt: health.at,
+  };
+}
+
+/**
+ * Erros de interface: o coletor lê a cada minuto e a checagem roda a cada 15 s. Cada rodada do coletor conta
+ * uma vez só, senão uma única leitura ruim bastaria para as 2 seguidas do alerta. Devolve se esta é nova.
+ */
+function isNewSample(state: PersistedState, key: string, sampleAt: number | null | undefined): boolean {
+  state.samples ??= {};
+  if (sampleAt == null || state.samples[key] === sampleAt) return false;
+  state.samples[key] = sampleAt;
+  return true;
 }
 
 /** Mede todos os equipamentos agora e guarda as leituras (os e-mails e o teste mostram essas leituras). */
@@ -251,14 +271,7 @@ async function runChecks(): Promise<void> {
       const key = `${target.host}|${o.kind}`;
       seen.add(key);
       const prev = state.checks[key] ?? EMPTY_STATE;
-      // Erros de interface: o coletor lê a cada minuto e esta checagem roda a cada 15 s. Cada rodada do
-      // coletor conta uma vez só, senão uma única leitura ruim bastaria para as 2 seguidas do alerta.
-      if (o.kind === "ifErrors") {
-        state.samples ??= {};
-        const sampleAt = reading.ifSampleAt ?? null;
-        if (sampleAt === null || state.samples[key] === sampleAt) continue;
-        state.samples[key] = sampleAt;
-      }
+      if (o.kind === "ifErrors" && !isNewSample(state, key, reading.ifSampleAt)) continue;
       const { state: next, event } = evaluate(prev, o.bad, at, { ...RULES[o.kind], cooldownMs });
       next.value = o.value;
       state.checks[key] = next;
