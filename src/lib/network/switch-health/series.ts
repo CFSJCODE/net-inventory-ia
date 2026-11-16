@@ -38,6 +38,23 @@ export interface SeriesPoint {
 const avg = (v: number[]) => (v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 100) / 100 : null);
 const nums = (rows: HealthRow[], key: keyof Omit<HealthRow, "at" | "intervalSec">) => rows.map((r) => r[key]).filter((v): v is number => v !== null);
 
+/**
+ * Taxa média ponderada pela duração que cada rodada representa (intervalSec): uma rodada de 15 min sem erro
+ * pesa 15 vezes uma de 1 min, senão a média mudaria com o intervalo do coletor ou com falhas no meio.
+ */
+function weighted(rows: HealthRow[], key: "errorsPerMin" | "crcPerMin" | "discardsPerMin" | "inBps" | "outBps"): number | null {
+  let sum = 0;
+  let weight = 0;
+  for (const r of rows) {
+    const v = r[key];
+    if (v === null) continue;
+    const w = Math.max(1, r.intervalSec);
+    sum += v * w;
+    weight += w;
+  }
+  return weight ? Math.round((sum / weight) * 100) / 100 : null;
+}
+
 /** Agrupa as rodadas em passos de tamanho fixo entre `from` e `to`. Passo sem rodada fica de fora. */
 export function bucketSeries(rows: HealthRow[], from: number, to: number, maxPoints = MAX_POINTS): { stepMs: number; points: SeriesPoint[] } {
   const span = Math.max(1, to - from);
@@ -53,14 +70,14 @@ export function bucketSeries(rows: HealthRow[], from: number, to: number, maxPoi
     .sort(([a], [b]) => a - b)
     .map(([at, group]) => ({
       at,
-      // Taxa média do passo: um minuto com 60 erros num passo de 5 min dá 12/min, não some.
-      errorsPerMin: avg(nums(group, "errorsPerMin")),
-      crcPerMin: avg(nums(group, "crcPerMin")),
-      discardsPerMin: avg(nums(group, "discardsPerMin")),
+      // Taxa média do passo, ponderada pela duração de cada rodada; a latência é a média simples das medições.
+      errorsPerMin: weighted(group, "errorsPerMin"),
+      crcPerMin: weighted(group, "crcPerMin"),
+      discardsPerMin: weighted(group, "discardsPerMin"),
       latencyMs: avg(nums(group, "latencyMs")),
       gatewayLatencyMs: avg(nums(group, "gatewayLatencyMs")),
-      inBps: avg(nums(group, "inBps")),
-      outBps: avg(nums(group, "outBps")),
+      inBps: weighted(group, "inBps"),
+      outBps: weighted(group, "outBps"),
     }));
   return { stepMs, points };
 }

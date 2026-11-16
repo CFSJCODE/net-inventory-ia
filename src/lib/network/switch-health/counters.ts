@@ -184,7 +184,8 @@ export interface Correlation {
   latencyWithErrorsMs: number | null;
   latencyWithoutErrorsMs: number | null;
   minutesWithErrors: number;
-  verdict: "insufficient" | "none" | "weak" | "moderate" | "strong";
+  /** "inverse": a latência cai quando os erros sobem (r <= -0,4); não indica que os erros pesem na latência. */
+  verdict: "insufficient" | "none" | "inverse" | "weak" | "moderate" | "strong";
 }
 
 const mean = (v: number[]) => (v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10 : null);
@@ -203,8 +204,8 @@ export function correlate(points: CorrelationPoint[]): Correlation {
   if (pairs.length >= 10) {
     if (!withErr.length || r === null) verdict = "none";
     else {
-      const a = Math.abs(r);
-      verdict = a >= 0.7 ? "strong" : a >= 0.4 ? "moderate" : a >= 0.2 ? "weak" : "none";
+      // Só r positivo diz que a latência sobe com os erros; negativo forte vira "inverse".
+      verdict = r >= 0.7 ? "strong" : r >= 0.4 ? "moderate" : r >= 0.2 ? "weak" : r <= -0.4 ? "inverse" : "none";
     }
   }
   return {

@@ -37,6 +37,8 @@ export interface HostReading {
   /** Switch Health: erros de interface por minuto na pior porta e qual é (null sem coletor ou sem portas). */
   ifErrorsPerMin?: number | null;
   ifErrorsPort?: string | null;
+  /** Quando o coletor fez essa leitura (cada rodada conta uma vez nas checagens seguidas). */
+  ifSampleAt?: number | null;
 }
 
 export interface WatchedTarget {

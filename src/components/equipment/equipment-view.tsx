@@ -144,9 +144,11 @@ export function EquipmentDetailSection({ equipment }: { equipment: EquipmentRow 
         <>
           {detail.isError && <p className="text-sm text-destructive">Falha ao atualizar: {detail.error.message}. Mostrando a última leitura.</p>}
           <EquipmentStatusPanel data={detail.data} isFetching={detail.isFetching} onRefresh={() => detail.refetch()} controls={<AutoReadControl equipment={equipment} />} />
-          {detail.data.ports.length > 0 && <SwitchHealthCard equipmentId={equipment.id} />}
         </>
       ) : null}
+
+      {/* Fora da leitura ao vivo: com a switch sem responder, o histórico gravado continua visível. */}
+      <SwitchHealthCard equipmentId={equipment.id} />
     </section>
   );
 }

@@ -97,6 +97,11 @@ describe("correlação", () => {
     expect(c.minutesWithErrors).toBe(5);
   });
 
+  it("erros subindo com a latência caindo é relação inversa, não forte", () => {
+    const points = Array.from({ length: 10 }, (_, i) => ({ errorsPerMin: i, latencyMs: 10 - i }));
+    expect(correlate(points)).toMatchObject({ r: -1, verdict: "inverse" });
+  });
+
   it("sem erro nenhum não há relação; poucos pontos é insuficiente", () => {
     expect(correlate(Array.from({ length: 15 }, (_, i) => ({ errorsPerMin: 0, latencyMs: i }))).verdict).toBe("none");
     expect(correlate([{ errorsPerMin: 1, latencyMs: 1 }]).verdict).toBe("insufficient");
@@ -115,6 +120,16 @@ describe("série e portas", () => {
     expect(points).toHaveLength(1);
     expect(points[0].errorsPerMin).toBe(30);
     expect(points[0].latencyMs).toBe(6);
+  });
+
+  it("pondera as taxas pela duração de cada rodada", () => {
+    const base = { crcPerMin: null, discardsPerMin: null, inBps: null, outBps: null, gatewayLatencyMs: null, latencyMs: null };
+    const rows = [
+      { ...base, at: new Date(0), intervalSec: 60, errorsPerMin: 60 },
+      { ...base, at: new Date(60_000), intervalSec: 900, errorsPerMin: 0 },
+    ];
+    const { points } = bucketSeries(rows, 0, 3_600_000 * 4, 1);
+    expect(points[0].errorsPerMin).toBe(3.75); // 60 erros em 16 min
   });
 
   it("soma por porta e ordena as piores primeiro", () => {

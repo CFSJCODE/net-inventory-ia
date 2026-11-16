@@ -64,6 +64,8 @@ interface QueuedEmail {
 
 interface PersistedState {
   checks: Record<string, CheckState>;
+  /** Rodada do coletor Switch Health já contada em cada checagem de erros de interface (por chave). */
+  samples?: Record<string, number>;
   outbox: QueuedEmail[];
   /** Última leitura de cada equipamento (por IP). */
   readings: Record<string, HostReading>;
@@ -143,7 +145,8 @@ async function measure(target: Target, prev: HostReading | undefined): Promise<H
   const at = now();
   const online = ping.received > 0 || metrics !== null;
   // Erros de interface vêm do coletor Switch Health (lê os contadores a cada minuto); aqui só se usa a última rodada.
-  const health = target.equipment ? latestHealthByIp(target.host) : null;
+  // Independe da community: um equipamento SNMPv3 também é lido pelo coletor.
+  const health = latestHealthByIp(target.host);
   const latencyMs = ping.received > 0 ? ping.avgMs : null;
   return {
     at,
@@ -164,6 +167,7 @@ async function measure(target: Target, prev: HostReading | undefined): Promise<H
     lastLatencyMs: latencyMs ?? prev?.lastLatencyMs ?? null,
     ifErrorsPerMin: health ? (health.worstPortErrorsPerMin ?? (health.errorsPerMin !== null ? 0 : null)) : null,
     ifErrorsPort: health?.worstPort ?? null,
+    ifSampleAt: health?.at ?? null,
   };
 }
 
@@ -247,6 +251,14 @@ async function runChecks(): Promise<void> {
       const key = `${target.host}|${o.kind}`;
       seen.add(key);
       const prev = state.checks[key] ?? EMPTY_STATE;
+      // Erros de interface: o coletor lê a cada minuto e esta checagem roda a cada 15 s. Cada rodada do
+      // coletor conta uma vez só, senão uma única leitura ruim bastaria para as 2 seguidas do alerta.
+      if (o.kind === "ifErrors") {
+        state.samples ??= {};
+        const sampleAt = reading.ifSampleAt ?? null;
+        if (sampleAt === null || state.samples[key] === sampleAt) continue;
+        state.samples[key] = sampleAt;
+      }
       const { state: next, event } = evaluate(prev, o.bad, at, { ...RULES[o.kind], cooldownMs });
       next.value = o.value;
       state.checks[key] = next;
@@ -283,6 +295,7 @@ async function runChecks(): Promise<void> {
   // Checagem que deixou de existir (equipamento tirado da lista, SNMP descadastrado): esquece o estado,
   // senão ficaria como problema ativo para sempre.
   for (const key of Object.keys(state.checks)) if (!seen.has(key)) delete state.checks[key];
+  for (const key of Object.keys(state.samples ?? {})) if (!seen.has(key)) delete state.samples![key];
 
   await flushOutbox(state, config);
   await saveState(state);

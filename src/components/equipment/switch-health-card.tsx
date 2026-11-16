@@ -128,6 +128,7 @@ function HealthChart({ points, from, to, threshold }: { points: SeriesPoint[]; f
 const VERDICT: Record<Correlation["verdict"], string> = {
   insufficient: "Poucas rodadas para concluir (mínimo 10).",
   none: "Sem relação: a latência não acompanha os erros.",
+  inverse: "Relação inversa: a latência cai quando os erros sobem, então os erros não explicam a latência.",
   weak: "Relação fraca entre erros e latência.",
   moderate: "Relação moderada: os erros parecem pesar na latência.",
   strong: "Relação forte: a latência sobe junto com os erros.",
@@ -281,7 +282,8 @@ export function SwitchHealthCard({ equipmentId }: { equipmentId: string }) {
   // Só se mostra para switches: impressoras e roteadores sem porta física não entram no coletor.
   const isSwitch = !!view && (view.samples > 0 || (latest?.ports.length ?? 0) > 0 || !!latest?.error);
 
-  if (view && !isSwitch && !view.settings.enabled && !canManage) return null;
+  // Impressora, roteador sem porta física ou equipamento ainda não lido: a seção não se aplica.
+  if (!view || !isSwitch) return null;
 
   return (
     <Card>
