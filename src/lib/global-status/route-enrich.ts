@@ -104,7 +104,7 @@ async function txt(name: string): Promise<string | null> {
   return records.length ? records[0].join("") : null;
 }
 
-async function getJson<T>(url: string): Promise<T> {
+export async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { headers: { "user-agent": USER_AGENT, accept: "application/json" }, signal: AbortSignal.timeout(HTTP_TIMEOUT_MS), cache: "no-store" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as T;

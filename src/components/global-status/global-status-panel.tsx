@@ -28,6 +28,7 @@ import { BgpRoute, PhaseChart, RouteSection, VantageList } from "./detail-sectio
 import { ProbeTimeline } from "./probe-timeline";
 import { InternetHealthBar } from "./internet-health-bar";
 import { RegionalBar } from "./regional-bar";
+import { TransitSection } from "./transit-section";
 import { StatusConfigSheet } from "./status-config-sheet";
 import { Sparkline } from "./sparkline";
 import { HTTP_PHASE_STYLE, IMPACT_LABEL, IMPACT_STATUS, SERVICE_STATUS_STYLE, incidentStateLabel } from "./status-style";
@@ -573,6 +574,8 @@ export function GlobalStatusPanel() {
           </div>
         </section>
       ))}
+
+      {data.probes && <TransitSection onOpen={setOpenSlug} />}
 
       <ServiceDetailSheet service={services.find((s) => s.slug === openSlug) ?? null} measuring={data.probes} onClose={() => setOpenSlug(null)} />
       {canConfigure && <StatusConfigSheet open={configOpen} onClose={() => setConfigOpen(false)} />}

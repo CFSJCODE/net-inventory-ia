@@ -136,6 +136,7 @@ export function BgpRoute({ bgp }: { bgp: NonNullable<StatusServiceDetail["bgp"]>
 
 const VERDICT: Record<string, { label: string; className: string }> = {
   DOMESTIC: { label: "Servido no Brasil", className: "text-emerald-400" },
+  CDN_EDGE: { label: "Servido pela borda do CDN no Brasil", className: "text-emerald-400" },
   OPERATOR_CACHE: { label: "Cache na sua operadora", className: "text-emerald-400" },
   INTERNATIONAL: { label: "Servido de fora do Brasil", className: "text-sky-400" },
   UNDETERMINED: { label: "Origem indefinida", className: "text-muted-foreground" },
@@ -213,6 +214,19 @@ export function RouteSection({ slug, route }: { slug: string; route: StatusRoute
           </div>
           {/* O cabo, a confiança e os outros candidatos aparecem logo abaixo, em leituras: a frase para antes deles. */}
           <p className="text-muted-foreground">{current.cableName ? current.summary.split(" Cabo provável:")[0] : current.summary}</p>
+          {(current.edge || current.interconnections.length > 0) && (
+            <div className="flex flex-col gap-1 text-muted-foreground">
+              {current.edge && (
+                <InlineReading
+                  label="Borda que atendeu o HTTP"
+                  value={`${current.edge.provider}${current.edge.city ? ` em ${current.edge.city}` : ""}${current.edge.pop ? ` (${current.edge.pop})` : ""}`}
+                />
+              )}
+              {current.interconnections.map((text) => (
+                <InlineReading key={text} label="Interconexão" value={text} />
+              ))}
+            </div>
+          )}
           {current.cableName && (
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
               <InlineReading label="Cabo provável" value={current.cableName} />

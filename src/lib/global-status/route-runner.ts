@@ -2,10 +2,12 @@ import { prisma } from "@/lib/prisma";
 import { storedIsp } from "./internet-signals";
 import { probesEnabled } from "./probe-logic";
 import { getLocalConnectivity } from "./probe-runner";
+import { ixMatcher, refreshIxPrefixes } from "./ix-prefixes";
 import { asNameOf, enrichHops, isPrivateIp, originOf, type EnrichedHop } from "./route-enrich";
 import { asPathOf, inferRoute, type RouteInference } from "./route-infer";
 import { brazilCables } from "./subsea-cables";
 import { traceAllModes, traceBest, traceHost, type TraceResult } from "./traceroute";
+import { refreshUpstreams } from "./upstreams";
 import { serialized } from "./write-queue";
 
 /**
@@ -93,11 +95,13 @@ function state(): RouteRunnerState {
   return g.__globalStatusRoutes;
 }
 
-const VERDICT_WORD: Record<string, string> = { DOMESTIC: "no Brasil", OPERATOR_CACHE: "dentro da operadora", INTERNATIONAL: "fora do Brasil", UNDETERMINED: "indefinido" };
+const VERDICT_WORD: Record<string, string> = { DOMESTIC: "no Brasil", CDN_EDGE: "na borda do CDN no Brasil", OPERATOR_CACHE: "dentro da operadora", INTERNATIONAL: "fora do Brasil", UNDETERMINED: "indefinido" };
 
 /** O que descreve onde o serviço está, para comparar duas rotas. */
 function placeOf(t: { verdict: string; destCountry: string | null; cableId: string | null }): string {
-  return `${t.verdict}|${t.destCountry ?? ""}|${t.cableId ?? ""}`;
+  // No Brasil pela borda do CDN ou por um servidor: o mesmo lugar (a fase 8 só deu nome a quem atende).
+  const verdict = t.verdict === "CDN_EDGE" ? "DOMESTIC" : t.verdict;
+  return `${verdict}|${t.destCountry ?? ""}|${t.cableId ?? ""}`;
 }
 
 function placeText(t: { verdict: string; cableName: string | null }): string {
@@ -127,13 +131,18 @@ export async function traceAndStore(service: ServiceForRoute, nowMs = Date.now()
     return null;
   }
 
-  const hops: EnrichedHop[] = trace.ok ? await enrichHops(trace.hops, nowMs) : [];
+  const enriched: EnrichedHop[] = trace.ok ? await enrichHops(trace.hops, nowMs) : [];
+  // Salto dentro do bloco de um ponto de troca (IX.br): papel IX, mesmo sem nome reverso.
+  const ix = ixMatcher((await refreshIxPrefixes(nowMs).catch(() => null))?.prefixes ?? []);
+  const hops = enriched.map((h) => (ix.match(h.ip) ? { ...h, role: "IX" as const } : h));
   const destIp = trace.address;
   const destOrigin = destIp && !isPrivateIp(destIp) ? await originOf(destIp, nowMs) : { asn: null, country: null };
   const destAsn = destOrigin.asn;
   const destAsName = destAsn ? await asNameOf(destAsn, nowMs) : null;
   const destRegistry = destOrigin.country;
   const [isp, cables] = await Promise.all([storedIsp(), brazilCables(nowMs)]);
+  // Uma vez por dia: os upstreams da operadora pelo BGP (tela "Trânsito internacional").
+  void refreshUpstreams(isp?.asn ?? null, nowMs).catch(() => undefined);
   const destRttMs = destinationRtt(trace, service.latencyMs);
   const inference: RouteInference = trace.ok
     ? inferRoute({ hops, destRttMs, destAsn, destAsName, destRegistryCountry: destRegistry, isp: isp ? { asn: isp.asn, name: isp.name } : null, cables })

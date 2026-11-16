@@ -364,6 +364,8 @@ model ProbeCheck {
   ttlSec     Int?
   /// DNS composto: JSON com a resposta de cada resolvedor (sistema, 8.8.8.8, 1.1.1.1).
   dnsAnswers String?
+  /// HTTP (fase 8): borda do CDN que atendeu, pelos cabeçalhos ("Cloudflare GRU", "Akamai").
+  edge       String?
   target     ProbeTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
 
   @@index([targetId, at])

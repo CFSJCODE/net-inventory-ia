@@ -18,6 +18,8 @@ vi.mock("./route-enrich", async (importOriginal) => ({
   asNameOf: vi.fn(async () => "GOOGLE"),
 }));
 vi.mock("./subsea-cables", async (importOriginal) => ({ ...(await importOriginal<typeof import("./subsea-cables")>()), brazilCables: vi.fn(async () => fixture.cables) }));
+vi.mock("./ix-prefixes", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ix-prefixes")>()), refreshIxPrefixes: vi.fn(async () => null) }));
+vi.mock("./upstreams", async (importOriginal) => ({ ...(await importOriginal<typeof import("./upstreams")>()), refreshUpstreams: vi.fn(async () => null) }));
 vi.mock("./probe-runner", () => ({ getLocalConnectivity: vi.fn(async () => ({ state: "ok", since: null, reason: null })) }));
 
 import { dropTempDb, migrateTempDb } from "./__fixtures__/temp-db";
@@ -119,7 +121,7 @@ describe("rota: degrau da travessia", () => {
 
 describe("rota: inferência", () => {
   it("abaixo de 30 ms é servido no Brasil, pelo limite físico", () => {
-    const r = inferRoute(input({ hops: MIAMI_ROUTE.slice(0, 3), destRttMs: 12, destAsn: 15169 }));
+    const r = inferRoute(input({ hops: MIAMI_ROUTE.slice(0, 3), destRttMs: 12, destAsn: 64500 }));
     expect(r.verdict).toBe("DOMESTIC");
     expect(r.destCountry).toBe("BR");
     expect(r.summary).toContain("São Paulo");
@@ -260,7 +262,7 @@ describe("agendador da rota", () => {
     await traceAndStore(svc, t0 + 30 * 60_000);
     const open = await db.statusIncident.findMany({ where: { serviceId: s.id, origin: "ROUTE" } });
     expect(open).toHaveLength(1);
-    expect(open[0]).toMatchObject({ title: "Rota mudou: fora do Brasil, cabo AMX-1 → no Brasil", resolvedAt: null, impact: "MINOR" });
+    expect(open[0]).toMatchObject({ title: "Rota mudou: fora do Brasil, cabo AMX-1 → na borda do CDN no Brasil", resolvedAt: null, impact: "MINOR" });
 
     // A mesma rota de novo não abre outro aviso.
     await traceAndStore(svc, t0 + 60 * 60_000);

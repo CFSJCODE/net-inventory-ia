@@ -9,6 +9,9 @@ import { getLocalConnectivity, runProbesNow } from "@/lib/global-status/probe-ru
 import { defaultGateway } from "@/lib/global-status/probes";
 import { buildPhaseSeries, buildSeries, latencySummary, mainLatencyTarget, tailPoints, uptimeFromTotals, uptimeOf, type PhaseSeries, type RollupPoint, type SparkSeries } from "@/lib/global-status/series";
 import { traceHost } from "@/lib/global-status/traceroute";
+import { parseEdge } from "@/lib/global-status/edge-pop";
+import { loadRouteOverview, type RouteOverview } from "@/lib/global-status/route-overview";
+import { interconnectionText, interconnections } from "@/lib/global-status/route-peering";
 import { ROUTE_ORIGIN, readRouteToolState, routesEnabled, traceServiceNow, type RouteToolState } from "@/lib/global-status/route-runner";
 import { CABLE_MAP_PAGE } from "@/lib/global-status/subsea-cables";
 import { BUCKET_MS, bucketStart } from "@/lib/global-status/stats";
@@ -394,6 +397,10 @@ export interface StatusRouteDetail {
   mode: string | null;
   /** Rota que não chegou: o TTL do último roteador que respondeu. */
   lastVisibleTtl: number | null;
+  /** Onde a rota passa de uma rede para outra (fase 8): "Embratel → Google em Rio de Janeiro (peering direto)". */
+  interconnections: string[];
+  /** Borda do CDN que atendeu a última sonda HTTP do servidor (fase 8). */
+  edge: { provider: string; pop: string | null; city: string | null } | null;
   hops: StatusRouteHopRow[];
   /** Página do mapa de cabos (atribuição dos dados dos cabos). */
   cableSource: string;
@@ -412,6 +419,9 @@ function parseIpList(json: string | null): string[] {
 async function loadRoute(serviceId: string): Promise<StatusRouteDetail | null> {
   const t = await prisma.routeTrace.findFirst({ where: { serviceId }, orderBy: { at: "desc" }, include: { hops: { orderBy: { ttl: "asc" } } } });
   if (!t) return null;
+  const lastEdge = await prisma.probeCheck.findFirst({ where: { vantage: "server", edge: { not: null }, target: { serviceId, kind: "HTTP" } }, orderBy: { at: "desc" }, select: { edge: true } });
+  const edge = parseEdge(lastEdge?.edge);
+  const destAsn = Number(t.asPath?.split(" ").pop()) || null;
   return {
     at: t.at.toISOString(),
     host: t.host,
@@ -428,6 +438,8 @@ async function loadRoute(serviceId: string): Promise<StatusRouteDetail | null> {
     error: t.error,
     mode: t.mode,
     lastVisibleTtl: t.lastVisibleTtl,
+    interconnections: interconnections(t.hops, { asn: destAsn, asName: null }).map(interconnectionText),
+    edge: edge && { provider: edge.provider, pop: edge.pop, city: edge.city },
     hops: t.hops.map((h) => ({ ttl: h.ttl, ip: h.ip, rttMs: h.rttMs, asn: h.asn, asName: h.asName, rdns: h.rdns, city: h.city, country: h.country, altIps: parseIpList(h.altIps), role: h.role })),
     cableSource: CABLE_MAP_PAGE,
   };
@@ -612,6 +624,13 @@ export async function getGlobalStatusDetail(slug: string): Promise<StatusService
     // O nome do componente é "<serviço> · <rota>": no detalhe do próprio serviço fica só a rota.
     bgp: route ? { text: route.name.startsWith(`${service.name} · `) ? route.name.slice(service.name.length + 3) : route.name, status: route.status as ServiceStatus } : null,
   };
+}
+
+/** Rotas e trânsito de todos os serviços (fases 8 e 9): seção "Rotas e trânsito" da página. */
+export async function getRouteOverview(): Promise<RouteOverview | null> {
+  await requireSession();
+  if (!probesEnabled(process.env.GLOBAL_STATUS_PROBES) || !routesEnabled()) return null;
+  return loadRouteOverview();
 }
 
 /** Rastreia a rota até o serviço agora ("Rastrear rota"), grava e devolve a rota interpretada. */

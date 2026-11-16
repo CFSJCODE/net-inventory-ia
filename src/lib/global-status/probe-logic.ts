@@ -780,6 +780,8 @@ export interface CheckRow {
   ttlSec?: number | null;
   /** DNS composto: JSON com a resposta de cada resolvedor (DnsAnswer[]). */
   dnsAnswers?: string | null;
+  /** HTTP: borda do CDN que atendeu (fase 8). */
+  edge?: string | null;
 }
 
 /** O que muda na linha do alvo a cada medição. */
@@ -901,6 +903,7 @@ export function recordResult(state: TargetState, result: ProbeResult, at: Date, 
       certDays: check.certDays,
       error: lastError,
       ...dnsFields(result),
+      ...(result.edge ? { edge: result.edge.slice(0, 40) } : {}),
     },
     update: { status: verdict.status, statusReason: verdict.reason, lastCheckAt: at, lastLatencyMs: latencyMs, lastError },
   };

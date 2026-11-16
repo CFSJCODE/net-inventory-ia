@@ -177,6 +177,8 @@ export interface ProbeResult {
   ttlSec?: number | null;
   /** DNS composto: a resposta de cada resolvedor. */
   dnsAnswers?: DnsAnswer[] | null;
+  /** HTTP: borda do CDN que atendeu ("Cloudflare GRU"), pelos cabeçalhos (fase 8). */
+  edge?: string | null;
   /** Frase curta em português quando ok = false. */
   error?: string | null;
   /** Etapa da falha (não é gravado; separa falha de DNS local de falha do serviço). */
