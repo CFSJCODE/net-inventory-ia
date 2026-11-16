@@ -20,6 +20,7 @@ import {
   clearedServiceData,
   connectivityValue,
   groupBaseline,
+  groupSeasonal,
   hydrateTarget,
   isInternetTarget,
   isPausedTarget,
@@ -54,7 +55,7 @@ import {
   type TickProgress,
 } from "./probe-logic";
 import { defaultGateway, runProbe } from "./probes";
-import { BUCKET_MS, WINDOW_SIZE, type RecentCheck } from "./stats";
+import { BUCKET_MS, WINDOW_SIZE, seasonalWindows, type RecentCheck, type SeasonalBase } from "./stats";
 import type { LocalConnectivity, ProbeKind } from "./types";
 import { getGlobalStatusSettings } from "./settings";
 import { TRAIL_MAX, type WindowSample } from "./window-stats";
@@ -94,6 +95,8 @@ interface RunnerState {
   announced: boolean;
   /** Linha de base de latência de cada alvo (medianas das janelas das últimas 24 h). */
   baselines: Map<string, number[]>;
+  /** Linha de base por horário (mesmo horário nos 7 dias anteriores), relida junto com a de 24 h. */
+  seasonal: Map<string, SeasonalBase>;
   baselinesAt: number;
   /** N da janela deslizante (configuração da página), relido junto com a linha de base. */
   windowSize?: number;
@@ -126,6 +129,7 @@ function runner(): RunnerState {
     targetsAt: 0,
     announced: false,
     baselines: new Map(),
+    seasonal: new Map(),
     baselinesAt: 0,
     connectivity: { state: "ok", since: null, reason: null },
     savedConnectivity: null,
@@ -306,6 +310,12 @@ async function refreshBaselines(r: RunnerState, now: number): Promise<void> {
     select: { targetId: true, p50Ms: true },
   });
   r.baselines = groupBaseline(rollups);
+  // Mesmo horário (±1 h) nos 7 dias anteriores: só 14 h de janelas por alvo, numa consulta só.
+  const seasonal = await prisma.probeRollup.findMany({
+    where: { vantage: SERVER_VANTAGE, p50Ms: { not: null }, OR: seasonalWindows(now).map((w) => ({ bucket: { gte: w.from, lt: w.to } })) },
+    select: { targetId: true, p50Ms: true, p95Ms: true },
+  });
+  r.seasonal = groupSeasonal(seasonal);
   r.windowSize = (await getGlobalStatusSettings()).probeWindow;
   r.baselinesAt = now;
 }
@@ -351,7 +361,7 @@ async function tick(r: RunnerState, force: boolean): Promise<void> {
 
   if (settled) {
     // O estado em memória muda antes de gravar: se a gravação falhar, ele segue valendo como calculado.
-    const outcome = recordTick(r.targets, settled.record, r.baselines, r.windowSize);
+    const outcome = recordTick(r.targets, settled.record, r.baselines, r.windowSize, r.seasonal);
     r.targets = outcome.targets;
     const decidedAt = Date.now();
     const { connectivity, change } = nextConnectivity(r.connectivity, settled.decision, decidedAt);

@@ -11,6 +11,7 @@ import {
   type GlobalStatusData,
   type StatusComponentRow,
   type StatusIncidentRow,
+  type StatusServiceDetail,
   type StatusServiceRow,
   type StatusTargetRow,
 } from "@/app/actions/global-status-actions";
@@ -26,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { formatLatency, formatPercent, formatUptime, isWorseThanOfficial } from "./format";
 import { BgpRoute, PhaseChart, RouteSection, VantageList } from "./detail-sections";
 import { ProbeTimeline } from "./probe-timeline";
+import { DiagnosisBar } from "./diagnosis-bar";
 import { InternetHealthBar } from "./internet-health-bar";
 import { RegionalBar } from "./regional-bar";
 import { TransitSection } from "./transit-section";
@@ -438,6 +440,54 @@ function ComponentList({ components }: { components: StatusComponentRow[] }) {
   );
 }
 
+/** Cabeçalho do detalhe: nome, estado, frase oficial e links. */
+function ServiceDetailHeader({ service }: { service: StatusServiceRow }) {
+  return (
+    <SheetHeader>
+      <SheetTitle className="flex items-center gap-2">
+        {service.name}
+        <StatusPill status={service.status} />
+      </SheetTitle>
+      <SheetDescription>
+        {service.hasSource ? (
+          <>
+            {service.officialStatus ?? "Sem resposta da fonte oficial ainda."}
+            {service.lastCheckAt && <> · consultado {formatRelativeTime(service.lastCheckAt)}</>}
+          </>
+        ) : (
+          "Sem fonte oficial de status: o estado vem das medições deste servidor."
+        )}
+      </SheetDescription>
+      {service.pageUrl && (
+        <a href={service.pageUrl} target="_blank" rel="noreferrer" className="inline-flex w-fit items-center gap-1 text-xs text-primary hover:underline">
+          Página oficial de status <ExternalLink className="size-3" />
+        </a>
+      )}
+      {service.lastError && <p className="text-xs text-amber-400">Última consulta falhou: {service.lastError}</p>}
+    </SheetHeader>
+  );
+}
+
+/** Corpo do detalhe: medições, rotas, incidentes e componentes, conforme o que o serviço tem. */
+function ServiceDetailBody({ service, measuring, data }: { service: StatusServiceRow; measuring: boolean; data: StatusServiceDetail }) {
+  return (
+    <>
+      {/* A faixa "Internet no Brasil" é a visão de fora: não tem medições daqui. */}
+      {measuring && service.category !== REGIONAL_CATEGORY && <TargetList targets={data.targets} />}
+      {/* Fase 6: as quatro leituras no mesmo relógio, só para serviços com HTTPS medido. */}
+      {measuring && data.targets.some((t) => t.kind === "HTTP") && <ProbeTimeline key={`timeline-${service.slug}`} slug={service.slug} vantages={data.vantages} />}
+      {measuring && data.vantages && <VantageList vantages={data.vantages} />}
+      {measuring && data.phases && <PhaseChart phases={data.phases} />}
+      {data.bgp && <BgpRoute bgp={data.bgp} />}
+      {(data.traceable || data.route) && <RouteSection key={`route-${service.slug}`} slug={service.slug} route={data.route} />}
+      {/* Sem fonte oficial só há os incidentes detectados pelas medições, e nenhum componente publicado. */}
+      {(service.hasSource || data.incidents.length > 0) && <IncidentList incidents={data.incidents} />}
+      {/* key: volta para "só os afetados" ao trocar de serviço. */}
+      {service.hasSource && <ComponentList key={`components-${service.slug}`} components={data.components} />}
+    </>
+  );
+}
+
 function ServiceDetailSheet({ service, measuring, onClose }: { service: StatusServiceRow | null; measuring: boolean; onClose: () => void }) {
   const { data, isLoading } = useQuery({
     queryKey: ["global-status-detail", service?.slug],
@@ -451,47 +501,11 @@ function ServiceDetailSheet({ service, measuring, onClose }: { service: StatusSe
       <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
         {service && (
           <>
-            <SheetHeader>
-              <SheetTitle className="flex items-center gap-2">
-                {service.name}
-                <StatusPill status={service.status} />
-              </SheetTitle>
-              <SheetDescription>
-                {service.hasSource ? (
-                  <>
-                    {service.officialStatus ?? "Sem resposta da fonte oficial ainda."}
-                    {service.lastCheckAt && <> · consultado {formatRelativeTime(service.lastCheckAt)}</>}
-                  </>
-                ) : (
-                  "Sem fonte oficial de status: o estado vem das medições deste servidor."
-                )}
-              </SheetDescription>
-              {service.pageUrl && (
-                <a href={service.pageUrl} target="_blank" rel="noreferrer" className="inline-flex w-fit items-center gap-1 text-xs text-primary hover:underline">
-                  Página oficial de status <ExternalLink className="size-3" />
-                </a>
-              )}
-              {service.lastError && <p className="text-xs text-amber-400">Última consulta falhou: {service.lastError}</p>}
-            </SheetHeader>
+            <ServiceDetailHeader service={service} />
 
             <div className="flex flex-col gap-6 px-4 pb-6">
               {isLoading && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
-              {data && (
-                <>
-                  {/* A faixa "Internet no Brasil" é a visão de fora: não tem medições daqui. */}
-                  {measuring && service.category !== REGIONAL_CATEGORY && <TargetList targets={data.targets} />}
-                  {/* Fase 6: as quatro leituras no mesmo relógio, só para serviços com HTTPS medido. */}
-                  {measuring && data.targets.some((t) => t.kind === "HTTP") && <ProbeTimeline key={`timeline-${service.slug}`} slug={service.slug} vantages={data.vantages} />}
-                  {measuring && data.vantages && <VantageList vantages={data.vantages} />}
-                  {measuring && data.phases && <PhaseChart phases={data.phases} />}
-                  {data.bgp && <BgpRoute bgp={data.bgp} />}
-                  {(data.traceable || data.route) && <RouteSection key={`route-${service.slug}`} slug={service.slug} route={data.route} />}
-                  {/* Sem fonte oficial só há os incidentes detectados pelas medições, e nenhum componente publicado. */}
-                  {(service.hasSource || data.incidents.length > 0) && <IncidentList incidents={data.incidents} />}
-                  {/* key: volta para "só os afetados" ao trocar de serviço. */}
-                  {service.hasSource && <ComponentList key={`components-${service.slug}`} components={data.components} />}
-                </>
-              )}
+              {data && <ServiceDetailBody service={service} measuring={measuring} data={data} />}
             </div>
           </>
         )}
@@ -562,6 +576,7 @@ export function GlobalStatusPanel() {
       <InternetHealthBar services={internet} connectivity={data.connectivity} onOpen={setOpenSlug} />
       <RegionalBar services={regional} onOpen={setOpenSlug} />
       <Counters services={providers} />
+      <DiagnosisBar data={data} onOpen={setOpenSlug} />
       <IncidentTicker incidents={data.incidents} onOpen={setOpenSlug} />
 
       {byCategory.map(([category, list]) => (
